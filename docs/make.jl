@@ -1,18 +1,29 @@
-using Documenter
 using ContourDynamics
+using Documenter, DocumenterVitepress
 
-makedocs(
-    sitename = "ContourDynamics.jl",
+makedocs(;
     modules = [ContourDynamics],
+    authors = "Subhajit Kar",
+    repo = "https://github.com/subhk/ContourDynamics.jl",
+    sitename = "ContourDynamics.jl",
+    format = DocumenterVitepress.MarkdownVitepress(
+        repo = "https://github.com/subhk/ContourDynamics.jl",
+        devbranch = "main",
+        devurl = "dev",
+    ),
     pages = [
         "Home" => "index.md",
         "Tutorials" => [
             "2D Euler Vortex Patch" => "tutorial_euler.md",
             "Quasi-Geostrophic" => "tutorial_qg.md",
         ],
+        "Examples" => "examples.md",
         "API Reference" => "api.md",
     ],
-    format = Documenter.HTML(
-        prettyurls = get(ENV, "CI", nothing) == "true",
-    ),
+    warnonly = true,
+)
+
+DocumenterVitepress.deploydocs(;
+    repo = "github.com/subhk/ContourDynamics.jl",
+    push_preview = true,
 )
