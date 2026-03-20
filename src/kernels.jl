@@ -107,7 +107,7 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
             pv = c.pv
             for j in 1:nc
                 a = c.nodes[j]
-                b = c.nodes[mod1(j + 1, nc)]
+                b = next_node(c, j)
                 v = v + pv * segment_velocity(kernel, domain, xi, a, b)
             end
         end
@@ -129,7 +129,7 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
         nc < 2 && continue
         for j in 1:nc
             a = c.nodes[j]
-            b = c.nodes[mod1(j + 1, nc)]
+            b = next_node(c, j)
             v = v + c.pv * segment_velocity(prob.kernel, prob.domain, x, a, b)
         end
     end
@@ -282,7 +282,7 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                         nsc < 2 && continue
                         for sj in 1:nsc
                             a = sc.nodes[sj]
-                            b = sc.nodes[mod1(sj + 1, nsc)]
+                            b = next_node(sc, sj)
                             v_mode = v_mode + source_weight * sc.pv *
                                 segment_velocity(mode_kernel, domain, x, a, b)
                         end
