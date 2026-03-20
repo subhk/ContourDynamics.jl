@@ -96,10 +96,33 @@ function _trace_contour(field::AbstractMatrix{T}, xs, ys, level::T,
 end
 
 function ContourDynamics.gridfield_from_contours(prob::ContourProblem{K,D,T},
-                                                  nx::Int, ny::Int) where {K,D,T}
+                                                  nx::Int, ny::Int;
+                                                  xlims=nothing, ylims=nothing) where {K,D,T}
+    # Compute bounding box from contour geometry with 10% padding
+    if xlims === nothing || ylims === nothing
+        xmin = typemax(T); xmax = typemin(T)
+        ymin = typemax(T); ymax = typemin(T)
+        for c in prob.contours
+            for node in c.nodes
+                xmin = min(xmin, node[1])
+                xmax = max(xmax, node[1])
+                ymin = min(ymin, node[2])
+                ymax = max(ymax, node[2])
+            end
+        end
+        pad_x = max(T(0.1) * (xmax - xmin), eps(T))
+        pad_y = max(T(0.1) * (ymax - ymin), eps(T))
+        if xlims === nothing
+            xlims = (xmin - pad_x, xmax + pad_x)
+        end
+        if ylims === nothing
+            ylims = (ymin - pad_y, ymax + pad_y)
+        end
+    end
+
     field = zeros(T, nx, ny)
-    xs = range(-T(2), T(2), length=nx)
-    ys = range(-T(2), T(2), length=ny)
+    xs = range(T(xlims[1]), T(xlims[2]), length=nx)
+    ys = range(T(ylims[1]), T(ylims[2]), length=ny)
 
     for c in prob.contours
         for (ix, x) in enumerate(xs)

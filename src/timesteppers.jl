@@ -95,16 +95,26 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
     velocity!(vel, prob)
 
     if !stepper.initialized
-        # Bootstrap with forward Euler
+        # Bootstrap with RK2 (midpoint method) for 2nd-order accuracy,
+        # matching the leapfrog's order instead of dropping to 1st-order Euler.
+        # Half-step: y_mid = y_n + dt/2 * v(y_n)
+        _scatter_shifted!(prob, nodes_current, vel, dt / 2)
+        vel_mid = Vector{SVector{2,T}}(undef, N)
+        velocity!(vel_mid, prob)
+        # Full step: y_{n+1} = y_n + dt * v(y_mid)
         stepper.nodes_prev .= nodes_current
-        all_nodes = [nodes_current[i] + dt * vel[i] for i in 1:N]
-        _scatter_nodes!(prob, all_nodes)
+        @inbounds for i in 1:N
+            nodes_current[i] = nodes_current[i] + dt * vel_mid[i]
+        end
+        _scatter_nodes!(prob, nodes_current)
         stepper.initialized = true
     else
         # Leapfrog: y_{n+1} = y_{n-1} + 2*dt * v(y_n)
-        all_nodes = [stepper.nodes_prev[i] + 2 * dt * vel[i] for i in 1:N]
-        stepper.nodes_prev .= nodes_current
-        _scatter_nodes!(prob, all_nodes)
+        @inbounds for i in 1:N
+            nodes_current[i], stepper.nodes_prev[i] =
+                stepper.nodes_prev[i] + 2 * dt * vel[i], nodes_current[i]
+        end
+        _scatter_nodes!(prob, nodes_current)
     end
 
     return prob
