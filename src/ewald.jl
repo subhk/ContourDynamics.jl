@@ -174,7 +174,7 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
                 r_vec = x - s_pt - shift
                 r2 = r_vec[1]^2 + r_vec[2]^2
                 if r2 > eps(T)
-                    G_val -= inv4pi * _expint_e1(alpha^2 * r2)
+                    G_val += inv4pi * _expint_e1(alpha^2 * r2)
                 end
             end
         end
