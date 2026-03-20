@@ -79,26 +79,20 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
     @assert length(vel) == N "vel length ($(length(vel))) must equal total nodes ($N)"
 
-    # Build offset table so thread i can find its target node without
-    # allocating a flat copy of all nodes.
-    offsets = Vector{Int}(undef, length(contours))
-    off = 0
-    for (ci, c) in enumerate(contours)
-        offsets[ci] = off
-        off += nnodes(c)
+    # Build cumulative offset table for O(log C) node lookup via binary search.
+    nc = length(contours)
+    cum_offsets = Vector{Int}(undef, nc + 1)
+    cum_offsets[1] = 0
+    for ci in 1:nc
+        cum_offsets[ci + 1] = cum_offsets[ci] + nnodes(contours[ci])
     end
 
     # Thread over target nodes — each node accumulates its velocity independently
     @inbounds Threads.@threads for i in 1:N
-        # Locate target node (contour_idx, local_idx) from flat index i
-        xi = zero(SVector{2,T})
-        for (ci, c) in enumerate(contours)
-            local_i = i - offsets[ci]
-            if 1 <= local_i <= nnodes(c)
-                xi = c.nodes[local_i]
-                break
-            end
-        end
+        # Binary search: find contour ci such that cum_offsets[ci] < i <= cum_offsets[ci+1]
+        ci = searchsortedlast(cum_offsets, i - 1, 1, nc, Base.Order.Forward)
+        local_i = i - cum_offsets[ci]
+        xi = contours[ci].nodes[local_i]
 
         v = zero(SVector{2,T})
         for c in contours
