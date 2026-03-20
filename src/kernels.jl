@@ -244,6 +244,11 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     P = kernel.eigenvectors
     P_inv = kernel.eigenvectors_inv
 
+    # Pre-allocate scratch buffers sized to the largest layer
+    max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
+    target_nodes = Vector{SVector{2,T}}(undef, max_nodes)
+    mode_vel = Vector{SVector{2,T}}(undef, max_nodes)
+
     for mode in 1:N
         lam = evals[mode]
 
@@ -259,11 +264,10 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
             projection_weight = P[target_layer, mode]
             abs(projection_weight) < eps(T) && continue
 
-            # Flatten target nodes for threading
+            # Flatten target nodes into pre-allocated buffer
             n_target = sum(nnodes(tc) for tc in target_contours; init=0)
             n_target == 0 && continue
 
-            target_nodes = Vector{SVector{2,T}}(undef, n_target)
             idx = 0
             for tc in target_contours
                 for ti in 1:nnodes(tc)
@@ -272,7 +276,6 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                 end
             end
 
-            mode_vel = Vector{SVector{2,T}}(undef, n_target)
             @inbounds Threads.@threads for ti in 1:n_target
                 x = target_nodes[ti]
                 v_mode = zero(SVector{2,T})
