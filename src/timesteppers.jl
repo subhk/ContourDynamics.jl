@@ -301,3 +301,43 @@ function resize_buffers!(stepper::RK4Stepper{T}, prob::MultiLayerContourProblem)
     resize!(stepper.k4, N); fill!(stepper.k4, z)
     return stepper
 end
+
+function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{T}) where {NL, T}
+    dt = stepper.dt
+    Ntot = total_nodes(prob)
+    nodes_current = _collect_all_nodes(prob)
+
+    vel_tuple = _make_vel_tuple(prob)
+    velocity!(vel_tuple, prob)
+    flat_vel = Vector{SVector{2,T}}(undef, Ntot)
+    _collect_velocities!(flat_vel, vel_tuple)
+
+    if !stepper.initialized
+        _scatter_shifted!(prob, nodes_current, flat_vel, dt / 2)
+        vel_tuple2 = _make_vel_tuple(prob)
+        velocity!(vel_tuple2, prob)
+        flat_vel_mid = Vector{SVector{2,T}}(undef, Ntot)
+        _collect_velocities!(flat_vel_mid, vel_tuple2)
+        stepper.nodes_prev .= nodes_current
+        @inbounds for i in 1:Ntot
+            nodes_current[i] = nodes_current[i] + dt * flat_vel_mid[i]
+        end
+        _scatter_nodes!(prob, nodes_current)
+        stepper.initialized = true
+    else
+        @inbounds for i in 1:Ntot
+            nodes_current[i], stepper.nodes_prev[i] =
+                stepper.nodes_prev[i] + 2 * dt * flat_vel[i], nodes_current[i]
+        end
+        _scatter_nodes!(prob, nodes_current)
+    end
+    return prob
+end
+
+function resize_buffers!(stepper::LeapfrogStepper{T}, prob::MultiLayerContourProblem) where {T}
+    N = total_nodes(prob)
+    z = zero(SVector{2, T})
+    resize!(stepper.nodes_prev, N); fill!(stepper.nodes_prev, z)
+    stepper.initialized = false
+    return stepper
+end
