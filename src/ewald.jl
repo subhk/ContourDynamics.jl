@@ -93,9 +93,47 @@ function clear_ewald_cache!()
 end
 
 """
+    _expint_e1(x)
+
+Compute the exponential integral E₁(x) = ∫_x^∞ e^{-t}/t dt for x > 0.
+"""
+function _expint_e1(x::T) where {T<:AbstractFloat}
+    if x <= zero(T)
+        return T(Inf)
+    end
+    if x < one(T)
+        # Series: E₁(x) = -γ - ln(x) - Σ_{n=1}^∞ (-x)^n / (n * n!)
+        γ = T(Base.MathConstants.eulergamma)
+        s = -γ - log(x)
+        term = one(T)
+        for n in 1:50
+            term *= -x / T(n)
+            s += term / T(n)
+            abs(term / n) < eps(T) * abs(s) && break
+        end
+        return s
+    else
+        # Continued fraction for large x
+        ex = exp(-x)
+        cf = zero(T)
+        for k in 30:-1:1
+            cf = T(k) / (one(T) + T(k) / (x + cf))
+        end
+        return ex / (x + cf)
+    end
+end
+
+"""
     segment_velocity(kernel::EulerKernel, domain::PeriodicDomain, x, a, b)
 
 Velocity at point `x` from segment `a→b` in a periodic domain using Ewald summation.
+
+Uses the Ewald decomposition of the periodic Green's function G_per = G_real + G_fourier:
+- Real space: G_real(r) = (1/4π) Σ_images E₁(α²|r+shift|²)
+- Fourier space: G_fourier(r) = (1/A) Σ_{k≠0} exp(-k²/(4α²)) cos(k·r) / k²
+
+The contour dynamics velocity integrates G along the segment:
+  v_seg = ∫_a^b G_per(x - s) (-ds_y, ds_x)
 """
 function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -107,46 +145,52 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
     ds_len = sqrt(ds[1]^2 + ds[2]^2)
     ds_len < eps(T) && return zero(SVector{2,T})
 
+    # 3-point Gauss-Legendre quadrature on [-1,1]
     g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     mid = (a + b) / 2
     half_ds = ds / 2
+    # Parameterize: s(t) = mid + t*half_ds, ds' = half_ds dt
+    # (-ds'_y, ds'_x) = (-half_ds_y, half_ds_x) dt
+    half_ds_perp = SVector{2,T}(-half_ds[2], half_ds[1])
+
+    inv4pi = one(T) / (4 * T(π))
 
     v = zero(SVector{2,T})
-    inv2pi = one(T) / (2 * T(π))
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
+        G_val = zero(T)
 
-        # Real-space sum over periodic images
+        # Real-space sum: G_real = (1/4π) Σ_images E₁(α²r²)
         for px in -cache.n_images:cache.n_images
             for py in -cache.n_images:cache.n_images
                 shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-                r_vec = s_pt + shift - x
+                r_vec = x - s_pt - shift
                 r2 = r_vec[1]^2 + r_vec[2]^2
-                r2 < eps(T) && continue
-                r = sqrt(r2)
-
-                screening = erfc(alpha * r) / r2
-                perp = SVector{2,T}(-r_vec[2], r_vec[1])
-                v = v + g_weights[q] * inv2pi * screening * perp
+                if r2 > eps(T)
+                    G_val += inv4pi * _expint_e1(alpha^2 * r2)
+                end
             end
         end
 
-        # Fourier-space sum
+        # Fourier-space sum: G_fourier = Σ_{k≠0} coeff_k * cos(k·r)
         for (mi, kxi) in enumerate(cache.kx)
             for (ni, kyi) in enumerate(cache.ky)
                 coeff = cache.fourier_coeffs[mi, ni]
                 abs(coeff) < eps(T) && continue
-
-                phase_diff = (kxi * s_pt[1] + kyi * s_pt[2]) - (kxi * x[1] + kyi * x[2])
-                s_phase = sin(phase_diff)
-                v = v + g_weights[q] * coeff * SVector{2,T}(-kyi, kxi) * s_phase
+                r_vec = x - s_pt
+                phase = kxi * r_vec[1] + kyi * r_vec[2]
+                G_val += coeff * cos(phase)
             end
         end
+
+        v = v + g_weights[q] * G_val * half_ds_perp
     end
 
-    return v * (ds_len / 2)
+    # Sign: the contour dynamics velocity is v_seg = -∫ G (-dy', dx'),
+    # and we computed ∫ G (-dy', dx'), so negate.
+    return -v
 end
 
 function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
@@ -164,40 +208,45 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     mid = (a + b) / 2
     half_ds = ds / 2
+    half_ds_perp = SVector{2,T}(-half_ds[2], half_ds[1])
+
+    inv2pi = one(T) / (2 * T(π))
 
     v = zero(SVector{2,T})
-    inv2pi = one(T) / (2 * T(π))
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
+        G_val = zero(T)
 
+        # Real-space: QG Green's function G(r) = -(1/2π) K₀(r/Ld), screened by erfc
         for px in -cache.n_images:cache.n_images
             for py in -cache.n_images:cache.n_images
                 shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-                r_vec = s_pt + shift - x
+                r_vec = x - s_pt - shift
                 r2 = r_vec[1]^2 + r_vec[2]^2
-                r2 < eps(T) && continue
-                r = sqrt(r2)
-
-                rr = r / Ld
-                K1_val = besselk(1, rr)
-                screening = erfc(alpha * r)
-                perp = SVector{2,T}(-r_vec[2], r_vec[1]) / r
-                v = v + g_weights[q] * inv2pi / Ld * K1_val * screening * perp
+                if r2 > eps(T)
+                    r = sqrt(r2)
+                    rr = r / Ld
+                    K0_val = besselk(0, rr)
+                    screening = erfc(alpha * r)
+                    G_val += -inv2pi * K0_val * screening
+                end
             end
         end
 
+        # Fourier-space sum
         for (mi, kxi) in enumerate(cache.kx)
             for (ni, kyi) in enumerate(cache.ky)
                 coeff = cache.fourier_coeffs[mi, ni]
                 abs(coeff) < eps(T) && continue
-
-                phase_diff = (kxi * s_pt[1] + kyi * s_pt[2]) - (kxi * x[1] + kyi * x[2])
-                s_phase = sin(phase_diff)
-                v = v + g_weights[q] * coeff * SVector{2,T}(-kyi, kxi) * s_phase
+                r_vec = x - s_pt
+                phase = kxi * r_vec[1] + kyi * r_vec[2]
+                G_val += coeff * cos(phase)
             end
         end
+
+        v = v + g_weights[q] * G_val * half_ds_perp
     end
 
-    return v * (ds_len / 2)
+    return -v
 end
