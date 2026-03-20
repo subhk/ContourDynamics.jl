@@ -89,30 +89,33 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
         # Split: pinch off to create two contours
         c = contours[ci]
         nc = nnodes(c)
-        # Split into nodes[i..j] and nodes[j..i] (wrapping)
+        # Split into nodes[i..j] and nodes[j..i] (wrapping), avoiding duplicate
+        # boundary nodes.  Each sub-contour includes both pinch-point nodes
+        # exactly once (as first and last traversed node).
         if i < j
             nodes1 = c.nodes[i:j]
-            nodes2 = vcat(c.nodes[j:nc], c.nodes[1:i])
+            nodes2 = vcat(c.nodes[(j+1):nc], c.nodes[1:i])
         else
             nodes1 = c.nodes[j:i]
-            nodes2 = vcat(c.nodes[i:nc], c.nodes[1:j])
+            nodes2 = vcat(c.nodes[(i+1):nc], c.nodes[1:j])
         end
         if length(nodes1) >= 3 && length(nodes2) >= 3
             contours[ci] = PVContour(nodes1, c.pv)
             push!(contours, PVContour(nodes2, c.pv))
         end
     else
-        # Merge: combine two contours into one
+        # Merge: combine two contours into one.
+        # Stitch at closest points, traversing each contour once without
+        # duplicating the splice-point nodes.
         c1 = contours[ci]
         c2 = contours[cj]
-        # Stitch at the closest points
         n1 = nnodes(c1)
         n2 = nnodes(c2)
         new_nodes = vcat(
             c1.nodes[1:i],
             c2.nodes[j:n2],
-            c2.nodes[1:j],
-            c1.nodes[i:n1]
+            c2.nodes[1:(j-1)],
+            c1.nodes[(i+1):n1]
         )
         contours[ci] = PVContour(new_nodes, c1.pv)
         deleteat!(contours, cj)

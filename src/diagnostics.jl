@@ -143,13 +143,15 @@ end
 function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
-    s = zero(T)
-    @inbounds for i in 1:nci
+    # Thread over outer segments, each thread accumulates a partial sum
+    partial = zeros(T, nci)
+    @inbounds Threads.@threads for i in 1:nci
         i_next = mod1(i + 1, nci)
         dxi = ci.nodes[i_next][1] - ci.nodes[i][1]
         dyi = ci.nodes[i_next][2] - ci.nodes[i][2]
         mx_i = (ci.nodes[i][1] + ci.nodes[i_next][1]) / 2
         my_i = (ci.nodes[i][2] + ci.nodes[i_next][2]) / 2
+        local_s = zero(T)
         for j in 1:ncj
             j_next = mod1(j + 1, ncj)
             dxj = cj.nodes[j_next][1] - cj.nodes[j][1]
@@ -161,10 +163,11 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
             r2 = dx^2 + dy^2
             r2 < eps(T) && continue
             dot_ds = dxi * dxj + dyi * dyj
-            s += log(sqrt(r2)) * dot_ds
+            local_s += log(sqrt(r2)) * dot_ds
         end
+        partial[i] = local_s
     end
-    return s
+    return sum(partial)
 end
 
 function energy(prob::ContourProblem{QGKernel{T}, D, T}) where {D, T}
@@ -185,13 +188,14 @@ end
 function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
-    s = zero(T)
-    @inbounds for i in 1:nci
+    partial = zeros(T, nci)
+    @inbounds Threads.@threads for i in 1:nci
         i_next = mod1(i + 1, nci)
         dxi = ci.nodes[i_next][1] - ci.nodes[i][1]
         dyi = ci.nodes[i_next][2] - ci.nodes[i][2]
         mx_i = (ci.nodes[i][1] + ci.nodes[i_next][1]) / 2
         my_i = (ci.nodes[i][2] + ci.nodes[i_next][2]) / 2
+        local_s = zero(T)
         for j in 1:ncj
             j_next = mod1(j + 1, ncj)
             dxj = cj.nodes[j_next][1] - cj.nodes[j][1]
@@ -203,10 +207,11 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
             r = sqrt(dx^2 + dy^2)
             r < eps(T) * Ld && continue
             dot_ds = dxi * dxj + dyi * dyj
-            s += besselk(0, r / Ld) * dot_ds
+            local_s += besselk(0, r / Ld) * dot_ds
         end
+        partial[i] = local_s
     end
-    return s
+    return sum(partial)
 end
 
 function circulation(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}

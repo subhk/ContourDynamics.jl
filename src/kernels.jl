@@ -249,32 +249,42 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
             projection_weight = P[target_layer, mode]
             abs(projection_weight) < eps(T) && continue
 
-            target_idx = 0
+            # Flatten target nodes for threading
+            n_target = sum(nnodes(tc) for tc in target_contours; init=0)
+            n_target == 0 && continue
+
+            target_nodes = Vector{SVector{2,T}}(undef, n_target)
+            idx = 0
             for tc in target_contours
                 for ti in 1:nnodes(tc)
-                    target_idx += 1
-                    x = tc.nodes[ti]
-                    v_mode = zero(SVector{2,T})
+                    idx += 1
+                    target_nodes[idx] = tc.nodes[ti]
+                end
+            end
 
-                    for source_layer in 1:N
-                        source_weight = P_inv[mode, source_layer]
-                        abs(source_weight) < eps(T) && continue
-
-                        for sc in prob.layers[source_layer]
-                            nsc = nnodes(sc)
-                            nsc < 2 && continue
-                            for sj in 1:nsc
-                                a = sc.nodes[sj]
-                                b = sc.nodes[mod1(sj + 1, nsc)]
-                                v_mode = v_mode + source_weight * sc.pv *
-                                    segment_velocity(mode_kernel, domain, x, a, b)
-                            end
+            mode_vel = Vector{SVector{2,T}}(undef, n_target)
+            @inbounds Threads.@threads for ti in 1:n_target
+                x = target_nodes[ti]
+                v_mode = zero(SVector{2,T})
+                for source_layer in 1:N
+                    source_weight = P_inv[mode, source_layer]
+                    abs(source_weight) < eps(T) && continue
+                    for sc in prob.layers[source_layer]
+                        nsc = nnodes(sc)
+                        nsc < 2 && continue
+                        for sj in 1:nsc
+                            a = sc.nodes[sj]
+                            b = sc.nodes[mod1(sj + 1, nsc)]
+                            v_mode = v_mode + source_weight * sc.pv *
+                                segment_velocity(mode_kernel, domain, x, a, b)
                         end
                     end
-
-                    vel[target_layer][target_idx] = vel[target_layer][target_idx] +
-                        projection_weight * v_mode
                 end
+                mode_vel[ti] = v_mode
+            end
+
+            for ti in 1:n_target
+                vel[target_layer][ti] = vel[target_layer][ti] + projection_weight * mode_vel[ti]
             end
         end
     end
