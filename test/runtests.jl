@@ -153,7 +153,7 @@ include("test_utils.jl")
         end
 
         @testset "evolve! with callbacks" begin
-            c = circular_patch(1.0, 64, 1.0)
+            c = circular_patch(1.0, 256, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
             stepper = RK4Stepper(0.01, total_nodes(prob))
             params = SurgeryParams(0.01, 0.01, 0.2, 1e-8, 100)
