@@ -66,19 +66,21 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         return ODEProblem(rhs!, u0, tspan, prob)
     end
 
-    # Surgery callback: apply every n_surgery accepted steps
-    step_count = Ref(0)
+    # Surgery callback: apply every n_surgery accepted steps.
+    # Use integrator.iter (the solver's own step counter) to avoid
+    # mutable closure state that can be called outside accepted-step context.
     function condition(u, t, integrator)
-        step_count[] += 1
-        return step_count[] % surgery_params.n_surgery == 0
+        return integrator.iter > 0 && integrator.iter % surgery_params.n_surgery == 0
     end
     function affect!(integrator)
         ContourDynamics.unflatten_nodes!(integrator.p, integrator.u)
         surgery!(integrator.p, surgery_params)
-        # Re-flatten after surgery (node count may have changed)
         new_u = ContourDynamics.flatten_nodes(integrator.p)
-        resize!(integrator, length(new_u))
-        integrator.u .= new_u
+        # Set u first, then resize (OrdinaryDiffEq callback convention)
+        if length(new_u) != length(integrator.u)
+            resize!(integrator, length(new_u))
+        end
+        copyto!(integrator.u, new_u)
     end
     cb = DiscreteCallback(condition, affect!)
 

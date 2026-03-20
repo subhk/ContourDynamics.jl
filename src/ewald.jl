@@ -83,15 +83,15 @@ _cache_key(domain::PeriodicDomain, k::QGKernel) = (domain.Lx, domain.Ly, QGKerne
 
 function _get_ewald_cache(domain::PeriodicDomain, kernel::AbstractKernel)
     key = _cache_key(domain, kernel)
-    lock(_ewald_cache_lock) do
+    return lock(_ewald_cache_lock) do
         if !haskey(_ewald_caches, key)
             if length(_ewald_caches) >= _EWALD_CACHE_MAX
                 empty!(_ewald_caches)
             end
             _ewald_caches[key] = build_ewald_cache(domain, kernel)
         end
+        _ewald_caches[key]
     end
-    return _ewald_caches[key]
 end
 
 """Clear all cached Ewald data."""
