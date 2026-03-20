@@ -100,3 +100,49 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
     end
     return v
 end
+
+"""
+    segment_velocity(::QGKernel, ::UnboundedDomain, x, a, b)
+
+Velocity at point `x` due to a vortex sheet segment from `a` to `b`
+using the QG Green's function G(r) = -1/(2π) K₀(r/Ld).
+
+Uses 3-point Gauss-Legendre quadrature along the segment.
+"""
+function segment_velocity(kernel::QGKernel{T}, ::UnboundedDomain,
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
+    Ld = kernel.Ld
+    ds = b - a
+    ds_len = sqrt(ds[1]^2 + ds[2]^2)
+    if ds_len < eps(T)
+        return zero(SVector{2,T})
+    end
+
+    # 3-point Gauss-Legendre on [-1, 1]
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+
+    mid = (a + b) / 2
+    half_ds = ds / 2
+
+    v = zero(SVector{2,T})
+    inv2pi = one(T) / (2 * T(π))
+
+    for q in 1:3
+        s = mid + g_nodes[q] * half_ds
+        r_vec = s - x
+        r = sqrt(r_vec[1]^2 + r_vec[2]^2)
+
+        if r < eps(T) * Ld
+            continue
+        end
+
+        rr = r / Ld
+        K1_val = besselk(1, rr)
+        perp = SVector{2,T}(r_vec[2], -r_vec[1]) / r
+
+        v = v + g_weights[q] * (inv2pi / Ld) * K1_val * perp
+    end
+
+    return v * (ds_len / 2)
+end

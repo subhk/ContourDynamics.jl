@@ -59,4 +59,45 @@ include("test_utils.jl")
             @test abs(vel[i][1]*pos[1] + vel[i][2]*pos[2]) < 0.02
         end
     end
+
+    @testset "QG Kernel" begin
+        c = circular_patch(1.0, 128, 1.0)
+        prob_euler = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        prob_qg = ContourProblem(QGKernel(100.0), UnboundedDomain(), [c])
+
+        vel_euler = zeros(SVector{2, Float64}, 128)
+        vel_qg = zeros(SVector{2, Float64}, 128)
+        velocity!(vel_euler, prob_euler)
+        velocity!(vel_qg, prob_qg)
+
+        # Large Ld → QG approaches Euler
+        for i in 1:128
+            @test vel_qg[i] ≈ vel_euler[i] rtol=0.05
+        end
+
+        # Small Ld → QG velocity weaker than Euler
+        prob_qg_small = ContourProblem(QGKernel(0.5), UnboundedDomain(), [c])
+        vel_qg_small = zeros(SVector{2, Float64}, 128)
+        velocity!(vel_qg_small, prob_qg_small)
+
+        euler_speed = sqrt(vel_euler[1][1]^2 + vel_euler[1][2]^2)
+        qg_speed = sqrt(vel_qg_small[1][1]^2 + vel_qg_small[1][2]^2)
+        @test qg_speed < euler_speed
+    end
+
+    @testset "Per-Contour Diagnostics" begin
+        c = circular_patch(1.0, 256, 1.0)
+        @test vortex_area(c) ≈ π rtol=1e-4
+
+        cx = centroid(c)
+        @test abs(cx[1]) < 1e-10
+        @test abs(cx[2]) < 1e-10
+
+        e = elliptical_patch(2.0, 1.0, 256, 1.0)
+        @test vortex_area(e) ≈ 2π rtol=1e-4
+
+        ratio, angle = ellipse_moments(e)
+        @test ratio ≈ 2.0 rtol=0.01
+        @test abs(angle) < 0.05
+    end
 end
