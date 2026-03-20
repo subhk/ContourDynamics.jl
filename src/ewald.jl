@@ -71,14 +71,23 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
-# Cache storage
-const _ewald_caches = Dict{UInt64, EwaldCache}()
+# Cache storage — keyed by concrete (Lx, Ly, kernel_type, Ld) tuple to
+# avoid hash collisions.  Ld = 0 for EulerKernel.
+const _EwaldCacheKey = Tuple{Any, Any, DataType, Any}   # (Lx, Ly, kernel type, Ld)
+const _ewald_caches = Dict{_EwaldCacheKey, EwaldCache}()
 const _ewald_cache_lock = ReentrantLock()
+const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
+
+_cache_key(domain::PeriodicDomain, ::EulerKernel) = (domain.Lx, domain.Ly, EulerKernel, 0)
+_cache_key(domain::PeriodicDomain, k::QGKernel) = (domain.Lx, domain.Ly, QGKernel, k.Ld)
 
 function _get_ewald_cache(domain::PeriodicDomain, kernel::AbstractKernel)
-    key = hash((domain.Lx, domain.Ly, kernel))
+    key = _cache_key(domain, kernel)
     lock(_ewald_cache_lock) do
         if !haskey(_ewald_caches, key)
+            if length(_ewald_caches) >= _EWALD_CACHE_MAX
+                empty!(_ewald_caches)
+            end
             _ewald_caches[key] = build_ewald_cache(domain, kernel)
         end
     end
