@@ -102,7 +102,7 @@ function _expint_e1(x::T) where {T<:AbstractFloat}
         return T(Inf)
     end
     if x < one(T)
-        # Series: E₁(x) = -γ - ln(x) - Σ_{n=1}^∞ (-x)^n / (n * n!)
+        # Series: E₁(x) = -γ - ln(x) + Σ_{n=1}^∞ (-1)^{n+1} x^n / (n * n!)
         γ = T(Base.MathConstants.eulergamma)
         s = -γ - log(x)
         term = one(T)
@@ -128,12 +128,14 @@ end
 
 Velocity at point `x` from segment `a→b` in a periodic domain using Ewald summation.
 
-Uses the Ewald decomposition of the periodic Green's function G_per = G_real + G_fourier:
-- Real space: G_real(r) = (1/4π) Σ_images E₁(α²|r+shift|²)
-- Fourier space: G_fourier(r) = (1/A) Σ_{k≠0} exp(-k²/(4α²)) cos(k·r) / k²
+The contour dynamics segment velocity for the Euler kernel is:
+  v_seg = ds * ∫₀¹ G_per(x - s(t)) dt
 
-The contour dynamics velocity integrates G along the segment:
-  v_seg = ∫_a^b G_per(x - s) (-ds_y, ds_x)
+where G_per is the periodic Green's function and ds = b - a.
+
+The Ewald decomposition splits G_per = G_real + G_fourier:
+- Real space: G_real(r) = -(1/(2π)) Σ_images (1/2) E₁(α²|r+shift|²)
+- Fourier space: G_fourier(r) = (1/A) Σ_{k≠0} exp(-k²/(4α²)) cos(k·r) / k²
 """
 function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -150,31 +152,34 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     mid = (a + b) / 2
     half_ds = ds / 2
-    # Parameterize: s(t) = mid + t*half_ds, ds' = half_ds dt
-    # (-ds'_y, ds'_x) = (-half_ds_y, half_ds_x) dt
-    half_ds_perp = SVector{2,T}(-half_ds[2], half_ds[1])
 
     inv4pi = one(T) / (4 * T(π))
 
-    v = zero(SVector{2,T})
+    G_integral = zero(T)
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
         G_val = zero(T)
 
-        # Real-space sum: G_real = (1/4π) Σ_images E₁(α²r²)
+        # Real-space sum: G(r) = -(1/(2π)) log(r) = -(1/(4π)) log(r²)
+        # Ewald real part: -(1/(4π)) Σ_images E₁(α²r²)
+        # Note: E₁(α²r²) ≈ -log(α²r²) - γ for small α²r² → E₁ behaves like -log(r²) + const
+        # So -(1/(4π)) E₁(α²r²) behaves like (1/(4π)) log(r²) + const = -G(r) + const
+        # The Green's function is G(r) = -(1/(2π))log(r), so log(r²) = -4πG(r).
+        # We need to compute the periodic sum of G, which equals:
+        # G_per = Σ_images -(1/(4π)) E₁(α²|r+shift|²) + Fourier correction
         for px in -cache.n_images:cache.n_images
             for py in -cache.n_images:cache.n_images
                 shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
                 r_vec = x - s_pt - shift
                 r2 = r_vec[1]^2 + r_vec[2]^2
                 if r2 > eps(T)
-                    G_val += inv4pi * _expint_e1(alpha^2 * r2)
+                    G_val -= inv4pi * _expint_e1(alpha^2 * r2)
                 end
             end
         end
 
-        # Fourier-space sum: G_fourier = Σ_{k≠0} coeff_k * cos(k·r)
+        # Fourier-space sum
         for (mi, kxi) in enumerate(cache.kx)
             for (ni, kyi) in enumerate(cache.ky)
                 coeff = cache.fourier_coeffs[mi, ni]
@@ -185,12 +190,12 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
             end
         end
 
-        v = v + g_weights[q] * G_val * half_ds_perp
+        G_integral += g_weights[q] * G_val
     end
 
-    # Sign: the contour dynamics velocity is v_seg = -∫ G (-dy', dx'),
-    # and we computed ∫ G (-dy', dx'), so negate.
-    return -v
+    # v_seg = ds * (1/2) * G_integral
+    # The 1/2 comes from the change of variables: ∫₀¹ dt = (1/2) ∫_{-1}^{1} dt'
+    return half_ds * G_integral
 end
 
 function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
@@ -208,17 +213,16 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     mid = (a + b) / 2
     half_ds = ds / 2
-    half_ds_perp = SVector{2,T}(-half_ds[2], half_ds[1])
 
     inv2pi = one(T) / (2 * T(π))
 
-    v = zero(SVector{2,T})
+    G_integral = zero(T)
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
         G_val = zero(T)
 
-        # Real-space: QG Green's function G(r) = -(1/2π) K₀(r/Ld), screened by erfc
+        # Real-space: QG Green's function G(r) = -(1/2π) K₀(r/Ld), screened
         for px in -cache.n_images:cache.n_images
             for py in -cache.n_images:cache.n_images
                 shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
@@ -229,7 +233,7 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                     rr = r / Ld
                     K0_val = besselk(0, rr)
                     screening = erfc(alpha * r)
-                    G_val += -inv2pi * K0_val * screening
+                    G_val -= inv2pi * K0_val * screening
                 end
             end
         end
@@ -245,8 +249,8 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
             end
         end
 
-        v = v + g_weights[q] * G_val * half_ds_perp
+        G_integral += g_weights[q] * G_val
     end
 
-    return -v
+    return half_ds * G_integral
 end
