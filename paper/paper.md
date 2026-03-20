@@ -30,8 +30,10 @@ evolve as material contours. This *contour dynamics* approach, introduced by
 @zabusky1979 for the 2D Euler equations and extended to the QG system by
 @dritschel1988, has three compelling properties for idealized GFD studies:
 (1) it is *exactly* Lagrangian, conserving PV along material surfaces without
-numerical diffusion; (2) it is *Hamiltonian*, allowing energy-conserving
-symplectic integration over arbitrarily long times; and (3) it automatically
+numerical diffusion; (2) the underlying equations are *Hamiltonian*, so that
+symplectic time-steppers (e.g. leapfrog) conserve energy to high accuracy
+between surgery events, while even non-symplectic schemes like RK4 benefit
+from the absence of numerical diffusion; and (3) it automatically
 concentrates resolution on the dynamically active contour boundaries rather
 than wasting computation on quiescent interior regions.
 
@@ -40,9 +42,9 @@ implementation of this method, supporting three flow regimes — 2D Euler,
 single-layer quasi-geostrophic (QG) with arbitrary Rossby deformation radius $L_d$,
 and N-layer QG — in both unbounded and doubly-periodic domains. The package
 includes adaptive node management, *contour surgery* [@dritschel1988] for
-long-time topologically-stable integrations, and exact analytical diagnostics
-(energy, enstrophy, vortex geometry) computed from the contour geometry without
-any gridding.
+long-time topologically-stable integrations, and grid-free diagnostics
+(area, circulation, enstrophy, and vortex geometry computed exactly from
+contour nodes; energy via Gauss-Legendre quadrature of contour integrals).
 
 # Statement of Need
 
