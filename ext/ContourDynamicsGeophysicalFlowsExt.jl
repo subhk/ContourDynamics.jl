@@ -36,63 +36,167 @@ end
 function _marching_squares(field::AbstractMatrix{T}, xs, ys, level::T) where {T}
     nx, ny = size(field)
     contour_sets = Vector{SVector{2,T}}[]
-    visited = falses(nx-1, ny-1)
+    # Track which edges have been used. Edges are indexed by cell (i,j) and side:
+    #   side 1 = bottom (y=ys[j]),  side 2 = right (x=xs[i+1]),
+    #   side 3 = top    (y=ys[j+1]), side 4 = left  (x=xs[i])
+    visited_edges = falses(nx-1, ny-1, 4)
 
     for i in 1:(nx-1), j in 1:(ny-1)
-        visited[i,j] && continue
-        v = (field[i,j] >= level, field[i+1,j] >= level,
-             field[i+1,j+1] >= level, field[i,j+1] >= level)
-        case = v[1] + 2*v[2] + 4*v[3] + 8*v[4]
+        case = _cell_case(field, i, j, level)
         (case == 0 || case == 15) && continue
-
-        nodes = _trace_contour(field, xs, ys, level, i, j, visited)
-        if length(nodes) >= 3
-            push!(contour_sets, nodes)
+        # Try tracing from each edge of this cell
+        for side in 1:4
+            visited_edges[i, j, side] && continue
+            _has_crossing(case, side) || continue
+            nodes = _trace_contour(field, xs, ys, level, i, j, side, visited_edges)
+            length(nodes) >= 3 && push!(contour_sets, nodes)
         end
     end
 
     return contour_sets
 end
 
+# Cell corner layout:  (i,j+1)=f01 --- (i+1,j+1)=f11
+#                         |                |
+#                      (i,j)=f00  ---  (i+1,j)=f10
+# Case = bit0*f00_above + bit1*f10_above + bit2*f11_above + bit3*f01_above
+@inline function _cell_case(field, i, j, level)
+    return Int(field[i,j] >= level) +
+           2 * Int(field[i+1,j] >= level) +
+           4 * Int(field[i+1,j+1] >= level) +
+           8 * Int(field[i,j+1] >= level)
+end
+
+# Which edges does a given marching-squares case cross?
+# Edges: 1=bottom, 2=right, 3=top, 4=left
+@inline function _has_crossing(case::Int, side::Int)
+    # Lookup table: for each case, which edges are crossed
+    #  case  edges
+    #  1     1,4    6     2,4    11    2,4
+    #  2     1,2    7     3,4    12    3,4
+    #  3     2,4    8     3,4    13    1,4
+    #  4     2,3    9     1,4    14    1,2
+    #  5     1,3(×2) 10   1,3(×2) 15   none
+    crossing = (
+        (true,false,false,true),   # 1
+        (true,true,false,false),   # 2
+        (false,true,false,true),   # 3
+        (false,true,true,false),   # 4
+        (true,true,true,true),     # 5  saddle
+        (false,true,false,true),   # 6
+        (false,false,true,true),   # 7
+        (false,false,true,true),   # 8
+        (true,false,false,true),   # 9
+        (true,true,true,true),     # 10 saddle
+        (false,true,false,true),   # 11
+        (false,false,true,true),   # 12
+        (true,false,false,true),   # 13
+        (true,true,false,false),   # 14
+    )
+    (case < 1 || case > 14) && return false
+    return crossing[case][side]
+end
+
+@inline function _case_edges(case::Int)
+    # Returns the pair(s) of edges crossed for each case
+    table = (
+        (1,4), (1,2), (2,4), (2,3), (1,2,3,4), (2,4), (3,4),  # 1-7
+        (3,4), (1,4), (1,2,3,4), (2,4), (3,4), (1,4), (1,2),  # 8-14
+    )
+    return table[case]
+end
+
+# Neighbor cell when crossing a given edge
+@inline function _neighbor(i, j, side)
+    side == 1 && return (i, j-1, 3)   # cross bottom → neighbor's top
+    side == 2 && return (i+1, j, 4)   # cross right  → neighbor's left
+    side == 3 && return (i, j+1, 1)   # cross top    → neighbor's bottom
+    return (i-1, j, 2)                # cross left   → neighbor's right
+end
+
 function _trace_contour(field::AbstractMatrix{T}, xs, ys, level::T,
-                        start_i, start_j, visited) where {T}
+                        start_i, start_j, start_side, visited_edges) where {T}
     nodes = SVector{2,T}[]
     nx, ny = size(field)
-    i, j = start_i, start_j
+
+    # Shift field values by level so we interpolate against zero
+    # (done inline in _edge_point_level below)
+
+    i, j, entry_side = start_i, start_j, start_side
 
     for _ in 1:10000
         (i < 1 || i >= nx || j < 1 || j >= ny) && break
-        visited[i,j] && length(nodes) > 2 && break
-        visited[i,j] = true
 
-        f00, f10, f01 = field[i,j], field[i+1,j], field[i,j+1]
-        x0, x1 = xs[i], xs[i+1]
-        y0, y1 = ys[j], ys[j+1]
+        case = _cell_case(field, i, j, level)
+        (case == 0 || case == 15) && break
 
-        t_x = (level - f00) / (f10 - f00 + eps(T))
-        t_y = (level - f00) / (f01 - f00 + eps(T))
-        t_x = clamp(t_x, zero(T), one(T))
-        t_y = clamp(t_y, zero(T), one(T))
+        # Record the crossing point where we enter this cell
+        visited_edges[i, j, entry_side] && length(nodes) > 2 && break
+        visited_edges[i, j, entry_side] = true
+        push!(nodes, _edge_point_level(T, field, xs, ys, i, j, entry_side, level))
 
-        push!(nodes, SVector{2,T}(x0 + t_x * (x1 - x0), y0 + t_y * (y1 - y0)))
-
-        moved = false
-        for (di, dj) in ((1,0), (0,1), (-1,0), (0,-1))
-            ni, nj = i + di, j + dj
-            (ni < 1 || ni >= nx || nj < 1 || nj >= ny) && continue
-            visited[ni,nj] && continue
-            f_check = field[ni,nj]
-            f_check2 = field[ni+1,nj+1]
-            if (f_check - level) * (f_check2 - level) <= 0
-                i, j = ni, nj
-                moved = true
-                break
+        # Determine exit side
+        edges = _case_edges(case)
+        if length(edges) == 2
+            exit_side = edges[1] == entry_side ? edges[2] : edges[1]
+        else
+            # Saddle case (5 or 10): disambiguate using center value
+            center = (field[i,j] + field[i+1,j] + field[i+1,j+1] + field[i,j+1]) / 4
+            if center >= level
+                # Connect 1↔2 and 3↔4 for case 5; 1↔4 and 2↔3 for case 10
+                if case == 5
+                    pairs = ((1,2), (3,4))
+                else
+                    pairs = ((1,4), (2,3))
+                end
+            else
+                if case == 5
+                    pairs = ((1,4), (2,3))
+                else
+                    pairs = ((1,2), (3,4))
+                end
             end
+            exit_side = 0
+            for (a, b) in pairs
+                a == entry_side && (exit_side = b; break)
+                b == entry_side && (exit_side = a; break)
+            end
+            exit_side == 0 && break
         end
-        moved || break
+
+        visited_edges[i, j, exit_side] = true
+
+        # Move to neighbor through exit edge
+        ni, nj, neighbor_entry = _neighbor(i, j, exit_side)
+        i, j, entry_side = ni, nj, neighbor_entry
     end
 
     return nodes
+end
+
+@inline function _edge_point_level(::Type{T}, field, xs, ys, i, j, side, level) where {T}
+    f00, f10 = field[i,j] - level, field[i+1,j] - level
+    f11, f01 = field[i+1,j+1] - level, field[i,j+1] - level
+    x0, x1 = T(xs[i]), T(xs[i+1])
+    y0, y1 = T(ys[j]), T(ys[j+1])
+    if side == 1      # bottom: y=y0, interp x between f00 and f10
+        t = _safe_frac(T, -f00, f10 - f00)
+        return SVector{2,T}(x0 + t * (x1 - x0), y0)
+    elseif side == 2  # right: x=x1, interp y between f10 and f11
+        t = _safe_frac(T, -f10, f11 - f10)
+        return SVector{2,T}(x1, y0 + t * (y1 - y0))
+    elseif side == 3  # top: y=y1, interp x between f01 and f11
+        t = _safe_frac(T, -f01, f11 - f01)
+        return SVector{2,T}(x0 + t * (x1 - x0), y1)
+    else              # left: x=x0, interp y between f00 and f01
+        t = _safe_frac(T, -f00, f01 - f00)
+        return SVector{2,T}(x0, y0 + t * (y1 - y0))
+    end
+end
+
+@inline function _safe_frac(::Type{T}, num, denom) where {T}
+    abs(denom) < eps(T) && return T(0.5)
+    return clamp(num / denom, zero(T), one(T))
 end
 
 function ContourDynamics.gridfield_from_contours(prob::ContourProblem{K,D,T},
