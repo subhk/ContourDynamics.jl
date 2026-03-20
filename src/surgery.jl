@@ -38,45 +38,76 @@ end
 # ── Contour Reconnection ────────────────────────────────
 
 """
+    _segment_min_dist2(a1, b1, a2, b2)
+
+Minimum squared distance between segments `a1→b1` and `a2→b2`.
+Projects each segment's closest point onto the other and returns the smallest
+squared distance found.
+"""
+function _segment_min_dist2(a1::SVector{2,T}, b1::SVector{2,T},
+                            a2::SVector{2,T}, b2::SVector{2,T}) where {T}
+    d1 = b1 - a1
+    d2 = b2 - a2
+    best = typemax(T)
+    # Test four endpoint-to-segment projections + segment-segment
+    for (p, a, d) in ((a1, a2, d2), (b1, a2, d2), (a2, a1, d1), (b2, a1, d1))
+        len2 = d[1]^2 + d[2]^2
+        if len2 < eps(T)
+            r = p - a
+        else
+            t = clamp(((p[1]-a[1])*d[1] + (p[2]-a[2])*d[2]) / len2, zero(T), one(T))
+            r = p - (a + t * d)
+        end
+        dist2 = r[1]^2 + r[2]^2
+        dist2 < best && (best = dist2)
+    end
+    return best
+end
+
+"""
     find_close_segments(contours, spatial_index, delta)
 
-Find pairs of contour segments within distance `delta` using the spatial index.
-Returns vector of `(ci, i, cj, j)` tuples.
+Find pairs of contour segments whose closest approach is within `delta`,
+using the spatial index for candidate filtering.
+Returns vector of `(ci, i, cj, j)` tuples where `i`,`j` are segment indices
+(each segment goes from node `i` to `next_node(c, i)`).
 """
 function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T}, delta::T) where {T}
     close_pairs = Tuple{Int,Int,Int,Int}[]
     delta2 = delta^2
+    seen = Set{Tuple{Int,Int,Int,Int}}()
 
     for (ci, c) in enumerate(contours)
-        # Skip spanning contours — they should not be reconnected
         is_spanning(c) && continue
         nc = nnodes(c)
         for i in 1:nc
-            bx = floor(Int, c.nodes[i][1] / delta)
-            by = floor(Int, c.nodes[i][2] / delta)
+            a_i = c.nodes[i]
+            b_i = next_node(c, i)
+            mid_i = (a_i + b_i) / 2
+            bx = floor(Int, mid_i[1] / delta)
+            by = floor(Int, mid_i[2] / delta)
 
-            # Check neighboring bins
             for dbx in -1:1, dby in -1:1
                 key = (bx + dbx, by + dby)
                 haskey(idx.bins, key) || continue
                 for (cj, j) in idx.bins[key]
-                    # Avoid duplicate pairs and adjacent nodes on same contour
-                    (ci, i) >= (cj, j) && continue
-                    # Skip spanning contours
+                    # Canonical ordering to avoid duplicates
+                    pair = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
+                    pair in seen && continue
                     is_spanning(contours[cj]) && continue
                     if ci == cj
                         ncj = nnodes(contours[cj])
-                        # Skip adjacent or near-adjacent nodes
                         dist_along = min(abs(i - j), ncj - abs(i - j))
                         dist_along <= 2 && continue
                     else
-                        # Different PV → skip
                         contours[ci].pv != contours[cj].pv && continue
                     end
 
-                    d = contours[ci].nodes[i] - contours[cj].nodes[j]
-                    if d[1]^2 + d[2]^2 < delta2
-                        push!(close_pairs, (ci, i, cj, j))
+                    a_j = contours[cj].nodes[j]
+                    b_j = next_node(contours[cj], j)
+                    if _segment_min_dist2(a_i, b_i, a_j, b_j) < delta2
+                        push!(seen, pair)
+                        push!(close_pairs, pair)
                     end
                 end
             end
