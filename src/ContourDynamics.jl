@@ -9,6 +9,7 @@ include("domains.jl")
 include("contours.jl")
 include("surgery.jl")
 include("kernels.jl")
+include("ewald.jl")
 include("diagnostics.jl")
 include("timesteppers.jl")
 
@@ -23,6 +24,7 @@ export velocity!, velocity, segment_velocity
 export vortex_area, centroid, ellipse_moments
 export energy, enstrophy, circulation, angular_momentum
 export remesh, arc_lengths, surgery!
+export EwaldCache, build_ewald_cache, clear_ewald_cache!
 export timestep!, resize_buffers!, evolve!
 
 end # module

@@ -172,6 +172,23 @@ include("test_utils.jl")
 
     include("test_conservation.jl")
 
+    @testset "Periodic Domain (Ewald)" begin
+        c = circular_patch(0.1, 64, 1.0)
+        prob_unbounded = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        prob_periodic = ContourProblem(EulerKernel(), PeriodicDomain(10.0, 10.0), [c])
+
+        vel_u = zeros(SVector{2, Float64}, 64)
+        vel_p = zeros(SVector{2, Float64}, 64)
+        velocity!(vel_u, prob_unbounded)
+        velocity!(vel_p, prob_periodic)
+
+        for i in 1:64
+            @test vel_p[i] ≈ vel_u[i] rtol=0.1
+        end
+    end
+
+    include("test_merger.jl")
+
     @testset "Multi-Layer QG" begin
         Ld = SVector(1.0)
         H = SVector(1.0, 1.0)
