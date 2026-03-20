@@ -1,3 +1,5 @@
+extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
+
 @testset "Vortex Merger" begin
     # Two equal circular vortex patches separated by ~3.0 radii → should merge
     R = 1.0
@@ -12,7 +14,7 @@
     prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
 
     dt = 0.05
-    nsteps = 200
+    nsteps = extended ? 200 : 50
     stepper = RK4Stepper(dt, total_nodes(prob))
     params = SurgeryParams(0.05, 0.02, 0.3, 1e-4, 5)
 

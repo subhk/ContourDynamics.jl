@@ -1,3 +1,5 @@
+extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
+
 @testset "Conservation" begin
     @testset "Circular Patch Steady State (Euler)" begin
         # A single circular patch is an exact steady state of 2D Euler
@@ -8,7 +10,7 @@
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
 
         dt = 0.01
-        nsteps = 10000  # 10^4 timesteps per spec
+        nsteps = extended ? 10000 : 500
         stepper = RK4Stepper(dt, total_nodes(prob))
         params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)
 
@@ -25,7 +27,8 @@
         c1 = centroid(prob.contours[1])
 
         # Energy drift should be O(dt^4) for RK4
-        @test abs(E1 - E0) / abs(E0) < 1e-6
+        energy_tol = extended ? 1e-6 : 1e-7
+        @test abs(E1 - E0) / abs(E0) < energy_tol
 
         # Area should be conserved very precisely
         @test A1 ≈ A0 rtol=1e-8
@@ -44,7 +47,7 @@
         prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
 
         dt = 0.01
-        nsteps = 500
+        nsteps = extended ? 500 : 100
         stepper = RK4Stepper(dt, total_nodes(prob))
         params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)
 

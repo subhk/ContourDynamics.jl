@@ -15,9 +15,9 @@
     Omega = a * b * pv / (a + b)^2
     T_period = 2π / Omega
 
-    # Evolve for one full rotation period
-    dt = T_period / 4000
-    nsteps = 4000
+    extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
+    nsteps = extended ? 4000 : 400
+    dt = T_period / nsteps
     stepper = RK4Stepper(dt, total_nodes(prob))
     params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)  # no surgery during test
 
@@ -38,8 +38,9 @@
     @test final_circ ≈ initial_circ rtol=1e-6
 
     # After one full period, nodes should return to initial positions
+    node_tol = extended ? 0.05 : 0.1
     for i in 1:N_nodes
-        @test prob.contours[1].nodes[i] ≈ initial_nodes[i] atol=0.05
+        @test prob.contours[1].nodes[i] ≈ initial_nodes[i] atol=node_tol
     end
 
     # Aspect ratio should be preserved
