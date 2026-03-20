@@ -138,10 +138,10 @@ The package is validated against known analytical results:
    reproduced to $10^{-4}$ relative error over one full period.
 
 2. **Conservation**: energy, area, circulation, and centroid of a circular
-   steady-state patch are conserved to $10^{-8}$ over $10^4$ RK4 timesteps.
+   steady-state patch are conserved to $10^{-6}$ over $10^4$ RK4 timesteps.
 
 3. **QG-Euler limit**: QG kernel with $L_d \gg R$ reproduces Euler velocities
-   to within 5%.
+   to within 10%.
 
 # Acknowledgements
 
