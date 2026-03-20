@@ -12,12 +12,12 @@ struct EwaldCache{T<:AbstractFloat}
 end
 
 """
-    build_ewald_cache(domain::PeriodicDomain, kernel::EulerKernel; n_fourier=16, n_images=4)
+    build_ewald_cache(domain::PeriodicDomain, kernel::EulerKernel; n_fourier=8, n_images=2)
 
 Precompute Fourier-space coefficients for Ewald summation.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
-                           n_fourier::Int=16, n_images::Int=4) where {T}
+                           n_fourier::Int=8, n_images::Int=2) where {T}
     Lx, Ly = domain.Lx, domain.Ly
     alpha = sqrt(T(π)) / min(Lx, Ly)
 
@@ -41,12 +41,12 @@ function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
 end
 
 """
-    build_ewald_cache(domain::PeriodicDomain, kernel::QGKernel; n_fourier=16, n_images=4)
+    build_ewald_cache(domain::PeriodicDomain, kernel::QGKernel; n_fourier=8, n_images=2)
 
 Ewald cache for QG kernel in periodic domain.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
-                           n_fourier::Int=16, n_images::Int=4) where {T}
+                           n_fourier::Int=8, n_images::Int=2) where {T}
     Lx, Ly = domain.Lx, domain.Ly
     Ld = kernel.Ld
     alpha = sqrt(T(π)) / min(Lx, Ly)
