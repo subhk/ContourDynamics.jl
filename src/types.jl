@@ -5,8 +5,20 @@
 
 abstract type AbstractKernel end
 
+"""
+    EulerKernel <: AbstractKernel
+
+Kernel for 2-D Euler (barotropic) vortex dynamics, using the Green's function
+`G(r) = -log(r) / (2π)`.
+"""
 struct EulerKernel <: AbstractKernel end
 
+"""
+    QGKernel{T}(Ld)
+
+Kernel for single-layer quasi-geostrophic dynamics with deformation radius `Ld`.
+Uses the modified Bessel function `K₀(r/Ld)` as the Green's function.
+"""
 struct QGKernel{T<:AbstractFloat} <: AbstractKernel
     Ld::T
     function QGKernel(Ld::T) where {T<:AbstractFloat}
@@ -15,6 +27,13 @@ struct QGKernel{T<:AbstractFloat} <: AbstractKernel
     end
 end
 
+"""
+    MultiLayerQGKernel{N,M,T}(Ld, coupling, H)
+
+Kernel for `N`-layer quasi-geostrophic dynamics with `M = N-1` deformation radii `Ld`,
+layer coupling matrix `coupling`, and layer thicknesses `H`.  The constructor
+eigen-decomposes the coupling matrix for efficient velocity evaluation.
+"""
 struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     Ld::SVector{M, T}
     coupling::SMatrix{N, N, T}
@@ -33,10 +52,24 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     end
 end
 
+"""
+    nlayers(kernel_or_problem)
+
+Return the number of layers in a [`MultiLayerQGKernel`](@ref) or
+[`MultiLayerContourProblem`](@ref).
+"""
 nlayers(::MultiLayerQGKernel{N}) where {N} = N
 
 # ── Contours ─────────────────────────────────────────────
 
+"""
+    PVContour{T}(nodes, pv[, wrap])
+
+A piecewise-linear contour carrying a potential-vorticity jump `pv`.
+`nodes` is the ordered list of vertices.  For contours that span a periodic
+domain, `wrap` gives the shift vector that closes the final segment back to
+`nodes[1]`; it defaults to zero for ordinary closed contours.
+"""
 struct PVContour{T<:AbstractFloat}
     nodes::Vector{SVector{2, T}}
     pv::T
@@ -47,6 +80,11 @@ end
 PVContour(nodes::Vector{SVector{2, T}}, pv::T) where {T<:AbstractFloat} =
     PVContour(nodes, pv, zero(SVector{2, T}))
 
+"""
+    nnodes(c::PVContour)
+
+Number of nodes (vertices) in contour `c`.
+"""
 nnodes(c::PVContour) = length(c.nodes)
 is_spanning(c::PVContour) = any(!iszero, c.wrap)
 
@@ -59,8 +97,19 @@ end
 
 abstract type AbstractDomain end
 
+"""
+    UnboundedDomain <: AbstractDomain
+
+An infinite, unbounded two-dimensional domain.
+"""
 struct UnboundedDomain <: AbstractDomain end
 
+"""
+    PeriodicDomain{T}(Lx, Ly)
+
+A doubly-periodic rectangular domain with half-widths `Lx` and `Ly`,
+i.e. the domain `[-Lx, Lx) × [-Ly, Ly)`.
+"""
 struct PeriodicDomain{T<:Real} <: AbstractDomain
     Lx::T
     Ly::T
@@ -72,12 +121,24 @@ end
 
 # ── Problem Structs ──────────────────────────────────────
 
+"""
+    ContourProblem{K,D,T}(kernel, domain, contours)
+
+A single-layer contour-dynamics problem with a velocity `kernel`, computational
+`domain`, and a vector of [`PVContour`](@ref)s.
+"""
 struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat}
     kernel::K
     domain::D
     contours::Vector{PVContour{T}}
 end
 
+"""
+    MultiLayerContourProblem{N,K,D,T}(kernel, domain, layers)
+
+An `N`-layer contour-dynamics problem.  Each element of the `layers` tuple
+holds the contours for one layer.
+"""
 struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat}
     kernel::K
     domain::D
@@ -86,7 +147,12 @@ end
 
 nlayers(::MultiLayerContourProblem{N}) where {N} = N
 
-# Total node count across all contours
+"""
+    total_nodes(prob)
+
+Total number of nodes across all contours in a [`ContourProblem`](@ref) or
+[`MultiLayerContourProblem`](@ref).
+"""
 function total_nodes(prob::ContourProblem)
     s = 0
     for c in prob.contours
@@ -107,6 +173,17 @@ end
 
 # ── Surgery Parameters ───────────────────────────────────
 
+"""
+    SurgeryParams{T}(delta, mu, Delta_max, area_min, n_surgery)
+
+Parameters controlling contour surgery.
+
+- `delta`: proximity threshold for detecting close contour segments.
+- `mu`: minimum segment length after remeshing.
+- `Delta_max`: maximum segment length after remeshing.
+- `area_min`: minimum enclosed area; contours smaller than this are removed.
+- `n_surgery`: number of time-steps between surgery passes.
+"""
 struct SurgeryParams{T<:AbstractFloat}
     delta::T
     mu::T
@@ -127,6 +204,12 @@ end
 
 abstract type AbstractTimeStepper end
 
+"""
+    RK4Stepper{T}(dt, n)
+
+Classical fourth-order Runge–Kutta time stepper with step size `dt`.
+Allocates internal buffers for `n` nodes.
+"""
 struct RK4Stepper{T<:AbstractFloat} <: AbstractTimeStepper
     dt::T
     k1::Vector{SVector{2, T}}
@@ -140,6 +223,12 @@ function RK4Stepper(dt::T, n::Int) where {T<:AbstractFloat}
     RK4Stepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n))
 end
 
+"""
+    LeapfrogStepper{T}(dt, n)
+
+Leapfrog (second-order centred) time stepper with step size `dt`.
+The first step is bootstrapped with a forward-Euler half-step.
+"""
 mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
     dt::T
     nodes_prev::Vector{SVector{2, T}}
