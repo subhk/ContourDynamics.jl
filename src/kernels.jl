@@ -131,12 +131,15 @@ end
 """
     segment_velocity(::QGKernel, ::UnboundedDomain, x, a, b)
 
-Velocity at point `x` due to a vortex sheet segment from `a` to `b`
+Velocity at point `x` due to a vortex patch contour segment from `a` to `b`
 using the QG Green's function G(r) = -1/(2π) K₀(r/Ld).
 
-Uses singular subtraction: the 1/r singularity is handled analytically
-(matching the Euler kernel), and the smooth remainder
-[K₁(r/Ld)/Ld - 1/r] is integrated with 5-point Gauss-Legendre quadrature.
+The contour dynamics velocity is:
+  v_seg = (1/(2π)) ∫₀¹ K₀(|x-P(t)|/Ld) ds dt
+
+Uses singular subtraction: the log singularity in K₀ is handled analytically
+(matching the Euler kernel), and the smooth remainder [K₀(r/Ld) + log(r/Ld)]
+is integrated with 5-point Gauss-Legendre quadrature.
 """
 function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -147,10 +150,20 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
         return zero(SVector{2,T})
     end
 
-    # Analytic Euler contribution (handles the 1/r² = K₁(r/Ld)/Ld |_{Ld→∞} singularity)
+    # Analytic Euler contribution (handles the log singularity)
     v_euler = segment_velocity(EulerKernel(), domain, x, a, b)
 
     # 5-point Gauss-Legendre on [-1, 1] for the smooth correction
+    # Correction integrand: K₀(r/Ld) + log(r/Ld) which is smooth at r=0
+    # (since K₀(s) ~ -log(s/2) - γ as s→0)
+    # The full QG integral is:
+    #   v_seg = (1/(2π)) ds ∫₀¹ K₀(r/Ld) dt
+    #         = (1/(2π)) ds ∫₀¹ [-log(r) + (K₀(r/Ld) + log(r))] dt
+    # The -log(r) part gives the Euler contribution (with appropriate factors).
+    # The correction is: (1/(2π)) ds ∫₀¹ [K₀(r/Ld) + log(r/Ld)] dt
+    # Note: the log(Ld) term integrates to a constant times ds, which sums to
+    # zero around a closed contour.
+
     g5_n2 = sqrt(T(3) / T(7) - T(2) / T(7) * sqrt(T(6) / T(5)))
     g5_n3 = sqrt(T(3) / T(7) + T(2) / T(7) * sqrt(T(6) / T(5)))
     g5_w1 = T(128) / T(225)
@@ -163,7 +176,7 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     mid = (a + b) / 2
     half_ds = ds / 2
 
-    v_corr = zero(SVector{2,T})
+    corr_integral = zero(T)
     inv2pi = one(T) / (2 * T(π))
 
     for q in 1:5
@@ -172,25 +185,33 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
         r2 = r_vec[1]^2 + r_vec[2]^2
 
         if r2 < eps(T)^2
+            # K₀(s) + log(s) → log(2) - γ as s→0, finite
+            corr_integral += g_weights[q] * (log(T(2)) - T(Base.MathConstants.eulergamma))
             continue
         end
 
         r = sqrt(r2)
         rr = r / Ld
-        # QG density: (1/2π) * K₁(rr)/Ld * (r_y,-r_x)/r,  where rr = r/Ld
-        # Note: K₁(rr)/Ld = K₁(rr)*rr/r  (since 1/Ld = rr/r)
-        # Euler density: (1/2π) * (r_y,-r_x)/r²
-        # Correction = (QG - Euler) density:
-        #   (1/2π) * [K₁(rr)*rr/r - 1/r] * (r_y,-r_x)/r
-        # = (1/2π) * (K₁(rr)*rr - 1)/r² * (r_y,-r_x)
-        # For rr→0: K₁(x)*x → 1, so (K₁(rr)*rr - 1) → 0  (smooth)
-        K1_rr = besselk(1, rr) * rr  # K₁(rr)*rr → 1 as rr→0
-        correction_factor = (K1_rr - one(T)) / r2
-        perp = SVector{2,T}(r_vec[2], -r_vec[1])   # unnormalized, length r
-
-        v_corr = v_corr + g_weights[q] * inv2pi * correction_factor * perp
+        # K₀(rr) + log(rr) is smooth and bounded near rr=0
+        corr_integral += g_weights[q] * (besselk(0, rr) + log(rr))
     end
 
-    v_corr = v_corr * (ds_len / 2)
+    # Scale: the Gauss quadrature approximates ∫₋₁¹ f(t) dt, and our
+    # parameterization maps [-1,1] to [0,1] via t → (1+t)/2, giving factor 1/2.
+    # But the segment parameterization is already handled by the mid/half_ds.
+    # So: ∫₀¹ correction dt ≈ (1/2) * sum(w_i * f(t_i))
+    corr_integral *= T(0.5)  # [-1,1] to [0,1] Jacobian
+
+    # v_corr = (1/(2π)) * ds * corr_integral
+    # But we need the negative sign to match the Euler convention
+    # v_seg_QG = v_Euler + v_corr where v_Euler already has the correct sign
+    # From the derivation: v = (q/(2π)) oint K₀ (dx',dy') for CCW contour with positive PV
+    # The Euler part is v_Euler = -(q/(4π)) t_hat * (F(u_a) - F(u_b))
+    # which equals (q/(2π)) oint (-log(r)) (dx',dy')
+    # So the correction adds: (q/(2π)) oint [K₀(r/Ld) + log(r)] (dx',dy')
+    # = (q/(2π)) * ds * corr_integral
+    # But we multiply by pv in velocity!, so segment_velocity should return per-unit-pv.
+    v_corr = inv2pi * ds * corr_integral
+
     return v_euler + v_corr
 end
