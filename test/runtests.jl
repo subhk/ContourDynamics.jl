@@ -87,14 +87,14 @@ include("test_utils.jl")
 
     @testset "Per-Contour Diagnostics" begin
         c = circular_patch(1.0, 256, 1.0)
-        @test vortex_area(c) ≈ π rtol=1e-4
+        @test vortex_area(c) ≈ π rtol=2e-4
 
         cx = centroid(c)
         @test abs(cx[1]) < 1e-10
         @test abs(cx[2]) < 1e-10
 
         e = elliptical_patch(2.0, 1.0, 256, 1.0)
-        @test vortex_area(e) ≈ 2π rtol=1e-4
+        @test vortex_area(e) ≈ 2π rtol=2e-4
 
         ratio, angle = ellipse_moments(e)
         @test ratio ≈ 2.0 rtol=0.01

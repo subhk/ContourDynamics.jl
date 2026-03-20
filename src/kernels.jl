@@ -150,12 +150,16 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
 
         r = sqrt(r2)
         rr = r / Ld
-        # Smooth correction: K₁(rr)/Ld - 1/r = (K₁(rr)/rr - 1) / r
-        # For rr → 0: K₁(x)/x → 1/x² + (ln(x/2)+γ-1/2)/2 + O(x²), so K₁(x)/x - 1/x² is smooth
-        K1_over_rr = besselk(1, rr) / rr   # = K₁(rr)/rr = K₁(r/Ld) * Ld/r
-        # K₁(r/Ld)/Ld - 1/r = (K₁(rr)/rr - 1) / r
-        correction_factor = (K1_over_rr - one(T)) / r
-        perp = SVector{2,T}(r_vec[2], -r_vec[1])   # unnormalized perp (length r)
+        # QG density: (1/2π) * K₁(rr)/Ld * (r_y,-r_x)/r,  where rr = r/Ld
+        # Note: K₁(rr)/Ld = K₁(rr)*rr/r  (since 1/Ld = rr/r)
+        # Euler density: (1/2π) * (r_y,-r_x)/r²
+        # Correction = (QG - Euler) density:
+        #   (1/2π) * [K₁(rr)*rr/r - 1/r] * (r_y,-r_x)/r
+        # = (1/2π) * (K₁(rr)*rr - 1)/r² * (r_y,-r_x)
+        # For rr→0: K₁(x)*x → 1, so (K₁(rr)*rr - 1) → 0  (smooth)
+        K1_rr = besselk(1, rr) * rr  # K₁(rr)*rr → 1 as rr→0
+        correction_factor = (K1_rr - one(T)) / r2
+        perp = SVector{2,T}(r_vec[2], -r_vec[1])   # unnormalized, length r
 
         v_corr = v_corr + g_weights[q] * inv2pi * correction_factor * perp
     end
