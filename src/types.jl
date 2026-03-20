@@ -19,10 +19,17 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     Ld::SVector{M, T}
     coupling::SMatrix{N, N, T}
     H::SVector{N, T}
+    eigenvalues::SVector{N, T}
+    eigenvectors::SMatrix{N, N, T}
+    eigenvectors_inv::SMatrix{N, N, T}
     function MultiLayerQGKernel(Ld::SVector{M, T}, coupling::SMatrix{N, N, T}, H::SVector{N, T}) where {N, M, T<:AbstractFloat}
         M == N - 1 || throw(ArgumentError("Number of deformation radii M=$M must equal N-1=$(N-1)"))
         all(>(zero(T)), H) || throw(ArgumentError("Layer thicknesses must be positive"))
-        new{N, M, T}(Ld, coupling, H)
+        eig = eigen(Symmetric(Matrix(coupling)))
+        eigenvalues = SVector{N,T}(eig.values)
+        eigenvectors = SMatrix{N,N,T}(eig.vectors)
+        eigenvectors_inv = SMatrix{N,N,T}(inv(eig.vectors))
+        new{N, M, T}(Ld, coupling, H, eigenvalues, eigenvectors, eigenvectors_inv)
     end
 end
 
