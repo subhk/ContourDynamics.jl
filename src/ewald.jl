@@ -73,7 +73,7 @@ end
 
 # Cache storage — keyed by concrete (Lx, Ly, kernel_type, Ld) tuple to
 # avoid hash collisions.  Ld = 0 for EulerKernel.
-const _EwaldCacheKey = Tuple{Any, Any, DataType, Any}   # (Lx, Ly, kernel type, Ld)
+const _EwaldCacheKey = Tuple{Any, Any, Any, Any}   # (Lx, Ly, kernel type, Ld)
 const _ewald_caches = Dict{_EwaldCacheKey, EwaldCache}()
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
