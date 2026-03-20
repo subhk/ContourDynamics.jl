@@ -39,4 +39,24 @@ include("test_utils.jl")
         @test rk.dt == 0.01
         @test length(rk.k1) == 64
     end
+
+    @testset "Euler Kernel" begin
+        c = circular_patch(1.0, 128, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        vel = zeros(SVector{2, Float64}, total_nodes(prob))
+        velocity!(vel, prob)
+
+        # Velocity at each node: tangential, magnitude = pv*R/2 = 0.5
+        expected_speed = 0.5
+        for i in 1:nnodes(c)
+            speed = sqrt(vel[i][1]^2 + vel[i][2]^2)
+            @test speed ≈ expected_speed rtol=0.02
+        end
+
+        # Check tangential direction: velocity perpendicular to position
+        for i in 1:nnodes(c)
+            pos = c.nodes[i]
+            @test abs(vel[i][1]*pos[1] + vel[i][2]*pos[2]) < 0.02
+        end
+    end
 end

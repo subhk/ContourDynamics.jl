@@ -6,6 +6,7 @@ using SpecialFunctions
 
 include("types.jl")
 include("domains.jl")
+include("kernels.jl")
 
 export AbstractKernel, EulerKernel, QGKernel, MultiLayerQGKernel
 export PVContour, nnodes
@@ -14,5 +15,6 @@ export ContourProblem, MultiLayerContourProblem
 export SurgeryParams
 export AbstractTimeStepper, RK4Stepper, LeapfrogStepper
 export nlayers, total_nodes
+export velocity!, velocity, segment_velocity
 
 end # module
