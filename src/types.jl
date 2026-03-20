@@ -40,9 +40,20 @@ nlayers(::MultiLayerQGKernel{N}) where {N} = N
 struct PVContour{T<:AbstractFloat}
     nodes::Vector{SVector{2, T}}
     pv::T
+    wrap::SVector{2, T}   # periodic shift for closing segment; (0,0) for closed contours
 end
 
+# Backward-compatible constructor for closed contours
+PVContour(nodes::Vector{SVector{2, T}}, pv::T) where {T<:AbstractFloat} =
+    PVContour(nodes, pv, zero(SVector{2, T}))
+
 nnodes(c::PVContour) = length(c.nodes)
+is_spanning(c::PVContour) = any(!iszero, c.wrap)
+
+"""Get the next node after index `j`, handling periodic wrap for spanning contours."""
+@inline function next_node(c::PVContour{T}, j::Int) where {T}
+    j < length(c.nodes) ? c.nodes[j + 1] : c.nodes[1] + c.wrap
+end
 
 # ── Domains ──────────────────────────────────────────────
 
