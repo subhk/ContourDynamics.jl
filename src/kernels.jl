@@ -41,7 +41,7 @@ function segment_velocity(::EulerKernel, ::UnboundedDomain,
     n_hat = SVector{2,T}(-t_hat[2], t_hat[1])
 
     inv2pi = one(T) / (2 * T(π))
-    return inv2pi * (theta * n_hat - log_ratio * t_hat)
+    return -inv2pi * (theta * t_hat + log_ratio * n_hat)
 end
 
 """
