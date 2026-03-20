@@ -50,6 +50,39 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
     return PVContour(new_nodes, c.pv, c.wrap)
 end
 
+"""
+    beta_staircase(beta, domain::PeriodicDomain, n_steps; T=Float64)
+
+Create spanning contours that discretize the background PV gradient `βy`
+into a PV staircase on a periodic domain.
+
+Returns a `Vector{PVContour{T}}` of horizontal spanning contours, each carrying
+PV jump `Δq = β * Δy` where `Δy = 2*Ly / n_steps`.  Nodes run left-to-right
+at evenly spaced y-levels from `-Ly + Δy` to `Ly - Δy` (excluding boundaries).
+
+The `wrap` field is set to `(2*Lx, 0)` so the closing segment connects the
+rightmost node back to the leftmost node shifted by one period.
+"""
+function beta_staircase(beta::T, domain::PeriodicDomain{T}, n_steps::Int;
+                        nodes_per_contour::Int=64) where {T}
+    Lx, Ly = domain.Lx, domain.Ly
+    dy = 2 * Ly / n_steps
+    dq = beta * dy  # PV jump per contour
+
+    contours = PVContour{T}[]
+    wrap = SVector{2,T}(2 * Lx, zero(T))
+
+    for k in 1:(n_steps - 1)
+        y_k = -Ly + k * dy
+        # Nodes evenly spaced from -Lx to +Lx (not including +Lx, which is the wrap image of -Lx)
+        nodes = [SVector{2,T}(-Lx + (2 * Lx) * T(i - 1) / T(nodes_per_contour), y_k)
+                 for i in 1:nodes_per_contour]
+        push!(contours, PVContour(nodes, dq, wrap))
+    end
+
+    return contours
+end
+
 function arc_lengths(c::PVContour{T}) where {T}
     n = nnodes(c)
     lengths = Vector{T}(undef, n)
