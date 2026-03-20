@@ -5,19 +5,30 @@ struct SpatialIndex{T<:AbstractFloat}
     bin_size::T
 end
 
-"""Build a spatial index for all contour segments, binned by grid of size `delta`."""
+"""
+Build a spatial index for all contour segments, binned by grid of size `delta`.
+Each segment is binned at its endpoint *and* at its midpoint so that long segments
+whose interiors cross a bin boundary are discoverable via neighbour-bin queries.
+"""
 function build_spatial_index(contours::Vector{PVContour{T}}, delta::T) where {T}
     bins = Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}}()
 
     for (ci, c) in enumerate(contours)
-        for ni in 1:nnodes(c)
-            bx = floor(Int, c.nodes[ni][1] / delta)
-            by = floor(Int, c.nodes[ni][2] / delta)
-            key = (bx, by)
-            if !haskey(bins, key)
-                bins[key] = Tuple{Int,Int}[]
+        nc = nnodes(c)
+        for ni in 1:nc
+            a = c.nodes[ni]
+            b = next_node(c, ni)
+            mid = (a + b) / 2
+            # Bin the node and the segment midpoint
+            for pt in (a, mid)
+                bx = floor(Int, pt[1] / delta)
+                by = floor(Int, pt[2] / delta)
+                key = (bx, by)
+                if !haskey(bins, key)
+                    bins[key] = Tuple{Int,Int}[]
+                end
+                push!(bins[key], (ci, ni))
             end
-            push!(bins[key], (ci, ni))
         end
     end
 
