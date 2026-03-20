@@ -89,6 +89,11 @@ function beta_staircase(beta::T, domain::PeriodicDomain{T}, n_steps::Int;
     return contours
 end
 
+"""
+    arc_lengths(c::PVContour)
+
+Return a vector of segment lengths for each consecutive node pair in contour `c`.
+"""
 function arc_lengths(c::PVContour{T}) where {T}
     n = nnodes(c)
     lengths = Vector{T}(undef, n)
