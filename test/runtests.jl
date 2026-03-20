@@ -171,4 +171,28 @@ include("test_utils.jl")
     include("test_kirchhoff.jl")
 
     include("test_conservation.jl")
+
+    @testset "Multi-Layer QG" begin
+        Ld = SVector(1.0)
+        H = SVector(1.0, 1.0)
+        coupling = SMatrix{2,2}(1.0, -0.5, -0.5, 1.0)
+
+        kernel = MultiLayerQGKernel(Ld, coupling, H)
+        @test nlayers(kernel) == 2
+
+        c1 = circular_patch(1.0, 64, 1.0)
+        c2 = circular_patch(0.5, 64, -1.0)
+        domain = UnboundedDomain()
+        prob = MultiLayerContourProblem(kernel, domain, ([c1], [c2]))
+
+        @test nlayers(prob) == 2
+        @test total_nodes(prob) == 128
+
+        vel = (zeros(SVector{2, Float64}, 64), zeros(SVector{2, Float64}, 64))
+        velocity!(vel, prob)
+
+        @test all(v -> all(isfinite, v), vel[1])
+        @test all(v -> all(isfinite, v), vel[2])
+        @test any(v -> sqrt(v[1]^2 + v[2]^2) > 1e-10, vel[1])
+    end
 end

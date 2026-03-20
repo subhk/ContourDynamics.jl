@@ -147,3 +147,116 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
     end
     return prob
 end
+
+function _collect_all_nodes(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    nodes = SVector{2,T}[]
+    for i in 1:N
+        for c in prob.layers[i]
+            append!(nodes, c.nodes)
+        end
+    end
+    return nodes
+end
+
+function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SVector{2,T}}) where {N, T}
+    idx = 1
+    for i in 1:N
+        for c in prob.layers[i]
+            for j in 1:nnodes(c)
+                c.nodes[j] = all_nodes[idx]
+                idx += 1
+            end
+        end
+    end
+end
+
+function _collect_velocities(vel::NTuple{N, Vector{SVector{2,T}}}) where {N, T}
+    flat = SVector{2,T}[]
+    for i in 1:N
+        append!(flat, vel[i])
+    end
+    return flat
+end
+
+function _make_vel_tuple(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    ntuple(i -> zeros(SVector{2,T}, sum(nnodes(c) for c in prob.layers[i]; init=0)), Val(N))
+end
+
+function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) where {N, T}
+    dt = stepper.dt
+    Ntot = total_nodes(prob)
+    nodes_orig = _collect_all_nodes(prob)
+
+    vel_tuple = _make_vel_tuple(prob)
+
+    # k1
+    velocity!(vel_tuple, prob)
+    k1 = _collect_velocities(vel_tuple)
+
+    # k2
+    all_nodes = [nodes_orig[i] + (dt / 2) * k1[i] for i in 1:Ntot]
+    _scatter_nodes!(prob, all_nodes)
+    velocity!(vel_tuple, prob)
+    k2 = _collect_velocities(vel_tuple)
+
+    # k3
+    all_nodes = [nodes_orig[i] + (dt / 2) * k2[i] for i in 1:Ntot]
+    _scatter_nodes!(prob, all_nodes)
+    velocity!(vel_tuple, prob)
+    k3 = _collect_velocities(vel_tuple)
+
+    # k4
+    all_nodes = [nodes_orig[i] + dt * k3[i] for i in 1:Ntot]
+    _scatter_nodes!(prob, all_nodes)
+    velocity!(vel_tuple, prob)
+    k4 = _collect_velocities(vel_tuple)
+
+    # Update
+    all_nodes = [nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]) for i in 1:Ntot]
+    _scatter_nodes!(prob, all_nodes)
+    return prob
+end
+
+function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) where {N}
+    for i in 1:N
+        contours = prob.layers[i]
+        for j in eachindex(contours)
+            contours[j] = remesh(contours[j], params)
+        end
+        for _ in 1:100
+            idx = build_spatial_index(contours, params.delta)
+            close_pairs = find_close_segments(contours, idx, params.delta)
+            isempty(close_pairs) && break
+            reconnect!(contours, close_pairs)
+        end
+        remove_filaments!(contours, params.area_min)
+    end
+    return prob
+end
+
+function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
+                 params::SurgeryParams; nsteps::Int, callbacks=nothing)
+    for step in 1:nsteps
+        timestep!(prob, stepper)
+        if step % params.n_surgery == 0
+            surgery!(prob, params)
+            resize_buffers!(stepper, prob)
+        end
+        if callbacks !== nothing
+            for cb in callbacks
+                cb(prob, step)
+            end
+        end
+    end
+    return prob
+end
+
+function resize_buffers!(stepper::RK4Stepper{T}, prob::MultiLayerContourProblem) where {T}
+    N = total_nodes(prob)
+    z = zero(SVector{2, T})
+    resize!(stepper.k1, N); fill!(stepper.k1, z)
+    resize!(stepper.k2, N); fill!(stepper.k2, z)
+    resize!(stepper.k3, N); fill!(stepper.k3, z)
+    resize!(stepper.k4, N); fill!(stepper.k4, z)
+    return stepper
+end

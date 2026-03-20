@@ -208,3 +208,70 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     end
     return s
 end
+
+function circulation(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    s = zero(T)
+    for i in 1:N
+        for c in prob.layers[i]
+            s += c.pv * vortex_area(c)
+        end
+    end
+    return s
+end
+
+function enstrophy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    s = zero(T)
+    for i in 1:N
+        for c in prob.layers[i]
+            s += c.pv^2 * vortex_area(c)
+        end
+    end
+    return s / 2
+end
+
+function angular_momentum(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    s = zero(T)
+    for i in 1:N
+        for c in prob.layers[i]
+            s += c.pv * _second_moment_r2(c)
+        end
+    end
+    return s
+end
+
+function energy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    kernel = prob.kernel
+    evals = kernel.eigenvalues
+    P_inv = kernel.eigenvectors_inv
+    E = zero(T)
+
+    for mode in 1:N
+        lam = evals[mode]
+        for li in 1:N
+            wi = P_inv[mode, li]
+            abs(wi) < eps(T) && continue
+            for lj in 1:N
+                wj = P_inv[mode, lj]
+                abs(wj) < eps(T) && continue
+                for ci in prob.layers[li]
+                    nci = nnodes(ci)
+                    nci < 2 && continue
+                    for cj in prob.layers[lj]
+                        ncj = nnodes(cj)
+                        ncj < 2 && continue
+                        if abs(lam) < eps(T) * 100
+                            pair_E = _energy_contour_pair_euler(ci, cj)
+                        else
+                            Ld_mode = one(T) / sqrt(abs(lam))
+                            pair_E = _energy_contour_pair_qg(ci, cj, Ld_mode)
+                        end
+                        E += wi * wj * ci.pv * cj.pv * pair_E
+                    end
+                end
+            end
+        end
+    end
+
+    inv4pi = one(T) / (4 * T(π))
+    return -inv4pi * E
+end

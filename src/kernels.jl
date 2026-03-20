@@ -215,3 +215,69 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
 
     return v_euler + v_corr
 end
+
+"""
+    velocity!(vel, prob::MultiLayerContourProblem)
+
+Compute velocity at all nodes across all layers using modal decomposition.
+"""
+function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
+                   prob::MultiLayerContourProblem{N}) where {N, T}
+    kernel = prob.kernel
+    domain = prob.domain
+
+    for i in 1:N
+        fill!(vel[i], zero(SVector{2,T}))
+    end
+
+    evals = kernel.eigenvalues
+    P = kernel.eigenvectors
+    P_inv = kernel.eigenvectors_inv
+
+    for mode in 1:N
+        lam = evals[mode]
+
+        if abs(lam) < eps(T) * 100
+            mode_kernel = EulerKernel()
+        else
+            Ld_mode = one(T) / sqrt(abs(lam))
+            mode_kernel = QGKernel(Ld_mode)
+        end
+
+        for target_layer in 1:N
+            target_contours = prob.layers[target_layer]
+            projection_weight = P[target_layer, mode]
+            abs(projection_weight) < eps(T) && continue
+
+            target_idx = 0
+            for tc in target_contours
+                for ti in 1:nnodes(tc)
+                    target_idx += 1
+                    x = tc.nodes[ti]
+                    v_mode = zero(SVector{2,T})
+
+                    for source_layer in 1:N
+                        source_weight = P_inv[mode, source_layer]
+                        abs(source_weight) < eps(T) && continue
+
+                        for sc in prob.layers[source_layer]
+                            nsc = nnodes(sc)
+                            nsc < 2 && continue
+                            for sj in 1:nsc
+                                a = sc.nodes[sj]
+                                b = sc.nodes[mod1(sj + 1, nsc)]
+                                v_mode = v_mode + source_weight * sc.pv *
+                                    segment_velocity(mode_kernel, domain, x, a, b)
+                            end
+                        end
+                    end
+
+                    vel[target_layer][target_idx] = vel[target_layer][target_idx] +
+                        projection_weight * v_mode
+                end
+            end
+        end
+    end
+
+    return vel
+end
