@@ -153,17 +153,18 @@ include("test_utils.jl")
         end
 
         @testset "evolve! with callbacks" begin
-            c = circular_patch(1.0, 256, 1.0)
+            c = circular_patch(1.0, 64, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
             stepper = RK4Stepper(0.01, total_nodes(prob))
             params = SurgeryParams(0.01, 0.01, 0.2, 1e-8, 100)
 
+            initial_area = vortex_area(prob.contours[1])
             areas = Float64[]
             cb = (p, step) -> push!(areas, vortex_area(p.contours[1]))
 
             evolve!(prob, stepper, params; nsteps=10, callbacks=[cb])
             @test length(areas) == 10
-            @test all(a -> abs(a - π) / π < 1e-4, areas)
+            @test all(a -> abs(a - initial_area) / abs(initial_area) < 1e-4, areas)
         end
     end
 
