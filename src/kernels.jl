@@ -68,7 +68,7 @@ function segment_velocity(::EulerKernel, ::UnboundedDomain,
     # v_seg = (1/(4π)) * (dx', dy') * I = (1/(4π)) * ds * I
     # = (1/(4π)) * t_hat * |ds| * I = (1/(4π)) * t_hat * (F(u_a) - F(u_b))
     inv4pi = one(T) / (4 * T(π))
-    return inv4pi * t_hat * (F(u_a) - F(u_b))
+    return -inv4pi * t_hat * (F(u_a) - F(u_b))
 end
 
 """
