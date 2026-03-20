@@ -2,10 +2,11 @@
 #
 # Two co-rotating circular vortex patches placed close enough to merge
 # via contour surgery. This demonstrates the complete contour dynamics
-# + surgery pipeline.
+# + surgery pipeline with JLD2 output.
 
 using ContourDynamics
 using StaticArrays
+using JLD2
 
 # --- Setup ---
 T = Float64
@@ -23,38 +24,35 @@ end
 c1 = PVContour(circular_nodes(-sep / 2, 0.0, R, N), pv)
 c2 = PVContour(circular_nodes(+sep / 2, 0.0, R, N), pv)
 
-kernel = EulerKernel{T}()
-domain = UnboundedDomain{T}()
+kernel = EulerKernel()
+domain = UnboundedDomain()
 prob = ContourProblem(kernel, domain, [c1, c2])
 
-# --- Time integration with surgery ---
+# --- Time integration with surgery + file output ---
 dt = 0.01
-surgery_params = SurgeryParams{T}()
+surgery_params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 5)
 stepper = RK4Stepper(dt, total_nodes(prob))
-
 nsteps = 500
-surgery_interval = 5
 
 println("Vortex merger: 2 patches, $(2N) total nodes")
-println("Running $nsteps steps (dt=$dt) with surgery every $surgery_interval steps...")
+println("Running $nsteps steps (dt=$dt), saving every 50 iterations...")
+
+# Save contour state every 50 steps
+recorder = jld2_recorder("vortex_merger.jld2"; save_every=50, dt=dt)
 
 circ0 = circulation(prob)
-
-for step in 1:nsteps
-    timestep!(prob, stepper)
-    if step % surgery_interval == 0
-        surgery!(prob, surgery_params)
-        resize_buffers!(stepper, prob)
-    end
-    if step % 100 == 0
-        nc = length(prob.contours)
-        nn = total_nodes(prob)
-        circ = circulation(prob)
-        E = energy(prob)
-        println("  step $step: $nc contours, $nn nodes, Γ=$(round(circ; digits=4)), E=$(round(E; digits=6))")
-    end
-end
-
+evolve!(prob, stepper, surgery_params; nsteps=nsteps, callbacks=[recorder])
 circ_final = circulation(prob)
+
 println("\nDone. Circulation conserved: |ΔΓ/Γ₀| = $(abs(circ_final - circ0) / abs(circ0))")
 println("Final state: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes")
+
+# --- Load and inspect saved data ---
+snaps = load_simulation("vortex_merger.jld2")
+println("\nSaved $(length(snaps)) snapshots to vortex_merger.jld2")
+for s in snaps
+    d = s.diagnostics
+    println("  step=$(s.step)  t=$(round(s.time; digits=2))  " *
+            "contours=$(length(s.contours))  nodes=$(d.total_nodes)  " *
+            "E=$(round(d.energy; digits=6))  Γ=$(round(d.circulation; digits=4))")
+end

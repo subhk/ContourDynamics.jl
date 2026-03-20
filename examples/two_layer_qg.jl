@@ -7,6 +7,7 @@
 using ContourDynamics
 using StaticArrays
 using LinearAlgebra
+using JLD2
 
 T = Float64
 N = 100
@@ -28,7 +29,7 @@ println("  Deformation radius: Ld = $(Ld[1])")
 nodes = [SVector{2,T}(R * cos(2π * k / N), R * sin(2π * k / N)) for k in 0:(N-1)]
 c_upper = PVContour(nodes, pv)
 
-domain = UnboundedDomain{T}()
+domain = UnboundedDomain()
 
 # Layer 1 has the vortex, layer 2 is empty
 layer1 = ContourProblem(kernel, domain, [c_upper])
@@ -37,22 +38,26 @@ prob = MultiLayerContourProblem((layer1, layer2))
 
 dt = 0.01
 stepper = RK4Stepper(dt, total_nodes(prob))
-
 nsteps = 200
-println("\nRunning $nsteps steps (dt=$dt)...")
 
-for step in 1:nsteps
-    timestep!(prob, stepper)
-    if step % 50 == 0
-        c = centroid(prob.layers[1].contours[1])
-        E = energy(prob)
-        Γ = circulation(prob)
-        println("  step $step: centroid=($(round(c[1]; digits=4)), $(round(c[2]; digits=4))), " *
-                "E=$(round(E; digits=6)), Γ=$(round(Γ; digits=4))")
-    end
-end
+println("\nRunning $nsteps steps (dt=$dt), saving every t=0.5...")
+
+# Save based on physical time interval
+recorder = jld2_recorder("two_layer_qg.jld2"; save_dt=0.5, dt=dt)
+
+evolve!(prob, stepper, SurgeryParams(0.01, 0.005, 0.2, 1e-6, nsteps + 1);
+        nsteps=nsteps, callbacks=[recorder])
 
 println("\nDone. Final state:")
 for (i, layer) in enumerate(prob.layers)
     println("  Layer $i: $(length(layer.contours)) contour(s), $(total_nodes(layer)) nodes")
+end
+
+# --- Inspect saved data ---
+snaps = load_simulation("two_layer_qg.jld2")
+println("\nSaved $(length(snaps)) snapshots to two_layer_qg.jld2")
+for s in snaps
+    d = s.diagnostics
+    println("  t=$(round(s.time; digits=2))  nodes=$(d.total_nodes)  " *
+            "E=$(round(d.energy; digits=6))  Γ=$(round(d.circulation; digits=4))")
 end

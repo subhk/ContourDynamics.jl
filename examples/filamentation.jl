@@ -6,6 +6,7 @@
 
 using ContourDynamics
 using StaticArrays
+using JLD2
 
 T = Float64
 N = 200         # nodes on the ellipse
@@ -17,37 +18,33 @@ pv = 2π
 nodes = [SVector{2,T}(a * cos(2π * k / N), b * sin(2π * k / N)) for k in 0:(N-1)]
 contour = PVContour(nodes, pv)
 
-kernel = EulerKernel{T}()
-domain = UnboundedDomain{T}()
+kernel = EulerKernel()
+domain = UnboundedDomain()
 prob = ContourProblem(kernel, domain, [contour])
 
 dt = 0.005
-surgery_params = SurgeryParams{T}()
+surgery_params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 10)
 stepper = RK4Stepper(dt, total_nodes(prob))
-
 nsteps = 1000
-surgery_interval = 10
 
 println("Filamentation: ellipse a=$a, b=$b (ratio=$(a/b))")
-println("Running $nsteps steps (dt=$dt) with surgery every $surgery_interval steps...")
+println("Running $nsteps steps (dt=$dt), saving every t=0.5...")
+
+# Save based on physical time interval
+recorder = jld2_recorder("filamentation.jld2"; save_dt=0.5, dt=dt)
 
 area0 = sum(vortex_area, prob.contours)
-circ0 = circulation(prob)
-
-for step in 1:nsteps
-    timestep!(prob, stepper)
-    if step % surgery_interval == 0
-        surgery!(prob, surgery_params)
-        resize_buffers!(stepper, prob)
-    end
-    if step % 200 == 0
-        nc = length(prob.contours)
-        nn = total_nodes(prob)
-        area = sum(vortex_area, prob.contours)
-        println("  step $step: $nc contours, $nn nodes, area=$(round(area; digits=6))")
-    end
-end
+evolve!(prob, stepper, surgery_params; nsteps=nsteps, callbacks=[recorder])
 
 area_final = sum(vortex_area, prob.contours)
 println("\nDone. Area change: |ΔA/A₀| = $(abs(area_final - area0) / abs(area0))")
 println("Final state: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes")
+
+# --- Inspect saved data ---
+snaps = load_simulation("filamentation.jld2")
+println("\nSaved $(length(snaps)) snapshots to filamentation.jld2")
+for s in snaps
+    d = s.diagnostics
+    println("  t=$(round(s.time; digits=2))  contours=$(length(s.contours))  " *
+            "nodes=$(d.total_nodes)  E=$(round(d.energy; digits=6))")
+end
