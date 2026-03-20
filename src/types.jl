@@ -43,11 +43,11 @@ abstract type AbstractDomain end
 
 struct UnboundedDomain <: AbstractDomain end
 
-struct PeriodicDomain{T<:AbstractFloat} <: AbstractDomain
+struct PeriodicDomain{T<:Real} <: AbstractDomain
     Lx::T
     Ly::T
-    function PeriodicDomain(Lx::T, Ly::T) where {T<:AbstractFloat}
-        Lx > zero(T) && Ly > zero(T) || throw(ArgumentError("Domain half-widths must be positive"))
+    function PeriodicDomain(Lx::T, Ly::T) where {T<:Real}
+        Lx > zero(Float64) && Ly > zero(Float64) || throw(ArgumentError("Domain half-widths must be positive"))
         new{T}(Lx, Ly)
     end
 end
