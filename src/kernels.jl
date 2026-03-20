@@ -89,21 +89,21 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     N = length(all_nodes)
     @assert length(vel) == N "vel length ($(length(vel))) must equal total nodes ($N)"
 
-    for i in 1:N
-        vel[i] = zero(SVector{2,T})
-    end
-
-    for c in contours
-        nc = nnodes(c)
-        nc < 2 && continue
-        pv = c.pv
-        for j in 1:nc
-            a = c.nodes[j]
-            b = c.nodes[mod1(j + 1, nc)]
-            @inbounds Threads.@threads for i in 1:N
-                vel[i] = vel[i] + pv * segment_velocity(kernel, domain, all_nodes[i], a, b)
+    # Thread over target nodes — each node accumulates its velocity independently
+    @inbounds Threads.@threads for i in 1:N
+        v = zero(SVector{2,T})
+        xi = all_nodes[i]
+        for c in contours
+            nc = nnodes(c)
+            nc < 2 && continue
+            pv = c.pv
+            for j in 1:nc
+                a = c.nodes[j]
+                b = c.nodes[mod1(j + 1, nc)]
+                v = v + pv * segment_velocity(kernel, domain, xi, a, b)
             end
         end
+        vel[i] = v
     end
 
     return vel
