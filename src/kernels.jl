@@ -107,9 +107,11 @@ end
 Velocity at point `x` due to a vortex sheet segment from `a` to `b`
 using the QG Green's function G(r) = -1/(2π) K₀(r/Ld).
 
-Uses 3-point Gauss-Legendre quadrature along the segment.
+Uses singular subtraction: the 1/r singularity is handled analytically
+(matching the Euler kernel), and the smooth remainder
+[K₁(r/Ld)/Ld - 1/r] is integrated with 5-point Gauss-Legendre quadrature.
 """
-function segment_velocity(kernel::QGKernel{T}, ::UnboundedDomain,
+function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
     Ld = kernel.Ld
     ds = b - a
@@ -118,38 +120,46 @@ function segment_velocity(kernel::QGKernel{T}, ::UnboundedDomain,
         return zero(SVector{2,T})
     end
 
-    # 5-point Gauss-Legendre on [-1, 1]
-    g5_n1 = T(0)
+    # Analytic Euler contribution (handles the 1/r² = K₁(r/Ld)/Ld |_{Ld→∞} singularity)
+    v_euler = segment_velocity(EulerKernel(), domain, x, a, b)
+
+    # 5-point Gauss-Legendre on [-1, 1] for the smooth correction
     g5_n2 = sqrt(T(3) / T(7) - T(2) / T(7) * sqrt(T(6) / T(5)))
     g5_n3 = sqrt(T(3) / T(7) + T(2) / T(7) * sqrt(T(6) / T(5)))
     g5_w1 = T(128) / T(225)
     g5_w2 = (T(322) + T(13) * sqrt(T(70))) / T(900)
     g5_w3 = (T(322) - T(13) * sqrt(T(70))) / T(900)
 
-    g_nodes = SVector{5,T}(-g5_n3, -g5_n2, g5_n1, g5_n2, g5_n3)
+    g_nodes = SVector{5,T}(-g5_n3, -g5_n2, zero(T), g5_n2, g5_n3)
     g_weights = SVector{5,T}(g5_w3, g5_w2, g5_w1, g5_w2, g5_w3)
 
     mid = (a + b) / 2
     half_ds = ds / 2
 
-    v = zero(SVector{2,T})
+    v_corr = zero(SVector{2,T})
     inv2pi = one(T) / (2 * T(π))
 
     for q in 1:5
         s = mid + g_nodes[q] * half_ds
         r_vec = s - x
-        r = sqrt(r_vec[1]^2 + r_vec[2]^2)
+        r2 = r_vec[1]^2 + r_vec[2]^2
 
-        if r < eps(T) * Ld
+        if r2 < eps(T)^2
             continue
         end
 
+        r = sqrt(r2)
         rr = r / Ld
-        K1_val = besselk(1, rr)
-        perp = SVector{2,T}(r_vec[2], -r_vec[1]) / r
+        # Smooth correction: K₁(rr)/Ld - 1/r = (K₁(rr)/rr - 1) / r
+        # For rr → 0: K₁(x)/x → 1/x² + (ln(x/2)+γ-1/2)/2 + O(x²), so K₁(x)/x - 1/x² is smooth
+        K1_over_rr = besselk(1, rr) / rr   # = K₁(rr)/rr = K₁(r/Ld) * Ld/r
+        # K₁(r/Ld)/Ld - 1/r = (K₁(rr)/rr - 1) / r
+        correction_factor = (K1_over_rr - one(T)) / r
+        perp = SVector{2,T}(r_vec[2], -r_vec[1])   # unnormalized perp (length r)
 
-        v = v + g_weights[q] * (inv2pi / Ld) * K1_val * perp
+        v_corr = v_corr + g_weights[q] * inv2pi * correction_factor * perp
     end
 
-    return v * (ds_len / 2)
+    v_corr = v_corr * (ds_len / 2)
+    return v_euler + v_corr
 end
