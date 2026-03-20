@@ -99,11 +99,14 @@ function ContourDynamics.save_snapshot(filename::String,
 end
 
 """
-    load_snapshot(filename, step) -> (contours, diagnostics)
+    load_snapshot(filename, step) -> NamedTuple
 
 Load a single snapshot from a JLD2 file.
-Returns a named tuple `(contours, diagnostics)` where `contours` is a
-`Vector{PVContour{Float64}}` and `diagnostics` is a `NamedTuple`.
+
+For single-layer files the result contains a `contours` field
+(`Vector{PVContour}`).  For multi-layer files it contains a `layers` field
+(`Tuple` of `Vector{PVContour}` per layer).  Both formats include
+`diagnostics`, `step`, and `time`.
 """
 function ContourDynamics.load_snapshot(filename::String, step::Int)
     group = "step_" * lpad(step, 6, '0')
@@ -112,33 +115,62 @@ function ContourDynamics.load_snapshot(filename::String, step::Int)
         haskey(f, group) || error("Step $step not found in $filename")
         g = f[group]
 
-        nc = g["ncontours"]
-        T = Float64
-        contours = PVContour{T}[]
-
-        for ci in 1:nc
-            cg = g["contour_" * lpad(ci, 4, '0')]
-            x = cg["x"]::Vector{T}
-            y = cg["y"]::Vector{T}
-            pv = cg["pv"]::T
-            nodes = [SVector{2,T}(x[i], y[i]) for i in eachindex(x)]
-            push!(contours, PVContour(nodes, pv))
-        end
-
-        diag = if haskey(g, "diagnostics")
-            dg = g["diagnostics"]
-            (energy = dg["energy"]::T,
-             circulation = dg["circulation"]::T,
-             enstrophy = dg["enstrophy"]::T,
-             angular_momentum = haskey(dg, "angular_momentum") ? dg["angular_momentum"]::T : zero(T),
-             total_nodes = dg["total_nodes"]::Int)
-        else
-            nothing
-        end
-
         time = haskey(g, "time") ? g["time"] : nothing
 
-        return (contours=contours, diagnostics=diag, step=step, time=time)
+        # Detect multi-layer vs single-layer format
+        is_multilayer = haskey(g, "nlayers")
+
+        if is_multilayer
+            nlyr = g["nlayers"]::Int
+            all_layers = Vector{Vector{PVContour}}(undef, nlyr)
+            for li in 1:nlyr
+                lg = g["layer_" * lpad(li, 2, '0')]
+                nc = lg["ncontours"]::Int
+                all_layers[li] = _load_contours(lg, nc)
+            end
+
+            diag = _load_diagnostics(g)
+            return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
+        else
+            nc = g["ncontours"]
+            contours = _load_contours(g, nc)
+            diag = _load_diagnostics(g)
+            return (contours=contours, diagnostics=diag, step=step, time=time)
+        end
+    end
+end
+
+# ── helpers ──────────────────────────────────────────────────
+
+function _load_contours(g, nc::Int)
+    contours = PVContour[]
+    for ci in 1:nc
+        cg = g["contour_" * lpad(ci, 4, '0')]
+        x = cg["x"]
+        y = cg["y"]
+        T = eltype(x)
+        pv = T(cg["pv"])
+        nodes = [SVector{2,T}(x[i], y[i]) for i in eachindex(x)]
+        wrap = if haskey(cg, "wrap_x")
+            SVector{2,T}(T(cg["wrap_x"]), T(cg["wrap_y"]))
+        else
+            zero(SVector{2,T})
+        end
+        push!(contours, PVContour(nodes, pv, wrap))
+    end
+    return contours
+end
+
+function _load_diagnostics(g)
+    if haskey(g, "diagnostics")
+        dg = g["diagnostics"]
+        (energy = dg["energy"],
+         circulation = dg["circulation"],
+         enstrophy = dg["enstrophy"],
+         angular_momentum = haskey(dg, "angular_momentum") ? dg["angular_momentum"] : nothing,
+         total_nodes = dg["total_nodes"]::Int)
+    else
+        nothing
     end
 end
 
