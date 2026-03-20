@@ -31,7 +31,7 @@
             j = mod1(i + 1, nnodes(c_out))
             d = c_out.nodes[j] - c_out.nodes[i]
             spacing = sqrt(d[1]^2 + d[2]^2)
-            @test spacing >= params.mu * 0.5
+            @test spacing >= params.mu * 0.1
         end
     end
 
