@@ -110,10 +110,10 @@ struct UnboundedDomain <: AbstractDomain end
 A doubly-periodic rectangular domain with half-widths `Lx` and `Ly`,
 i.e. the domain `[-Lx, Lx) × [-Ly, Ly)`.
 """
-struct PeriodicDomain{T<:Real} <: AbstractDomain
+struct PeriodicDomain{T<:AbstractFloat} <: AbstractDomain
     Lx::T
     Ly::T
-    function PeriodicDomain(Lx::T, Ly::T) where {T<:Real}
+    function PeriodicDomain(Lx::T, Ly::T) where {T<:AbstractFloat}
         Lx > zero(T) && Ly > zero(T) || throw(ArgumentError("Domain half-widths must be positive"))
         new{T}(Lx, Ly)
     end
