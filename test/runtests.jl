@@ -169,4 +169,6 @@ include("test_utils.jl")
     end
 
     include("test_kirchhoff.jl")
+
+    include("test_conservation.jl")
 end
