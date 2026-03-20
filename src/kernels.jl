@@ -10,6 +10,21 @@
 #
 # Each segment contribution is integrated analytically.
 
+# 5-point Gauss-Legendre nodes and weights on [-1,1], computed once per type.
+# Using @generated to const-fold the sqrt/division at compile time.
+@generated function _gl5_nodes_weights(::Type{T}) where {T<:AbstractFloat}
+    n2 = sqrt(3/7 - 2/7 * sqrt(6/5))
+    n3 = sqrt(3/7 + 2/7 * sqrt(6/5))
+    w1 = 128/225
+    w2 = (322 + 13*sqrt(70)) / 900
+    w3 = (322 - 13*sqrt(70)) / 900
+    nodes_tuple = (-n3, -n2, 0.0, n2, n3)
+    weights_tuple = (w3, w2, w1, w2, w3)
+    return quote
+        (SVector{5,$T}($nodes_tuple...), SVector{5,$T}($weights_tuple...))
+    end
+end
+
 """
     segment_velocity(::EulerKernel, ::UnboundedDomain, x, a, b)
 
@@ -166,14 +181,7 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     # Note: the log(Ld) term integrates to a constant times ds, which sums to
     # zero around a closed contour.
 
-    g5_n2 = sqrt(T(3) / T(7) - T(2) / T(7) * sqrt(T(6) / T(5)))
-    g5_n3 = sqrt(T(3) / T(7) + T(2) / T(7) * sqrt(T(6) / T(5)))
-    g5_w1 = T(128) / T(225)
-    g5_w2 = (T(322) + T(13) * sqrt(T(70))) / T(900)
-    g5_w3 = (T(322) - T(13) * sqrt(T(70))) / T(900)
-
-    g_nodes = SVector{5,T}(-g5_n3, -g5_n2, zero(T), g5_n2, g5_n3)
-    g_weights = SVector{5,T}(g5_w3, g5_w2, g5_w1, g5_w2, g5_w3)
+    g_nodes, g_weights = _gl5_nodes_weights(T)
 
     mid = (a + b) / 2
     half_ds = ds / 2
