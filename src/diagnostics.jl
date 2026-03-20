@@ -143,27 +143,43 @@ end
 function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
+    # 2-point Gauss-Legendre nodes/weights on [-1,1]
+    g = one(T) / sqrt(T(3))
+    g_nodes = SVector{2,T}(-g, g)
+    g_weight = one(T)  # both weights are 1
     # Thread over outer segments, each thread accumulates a partial sum
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
         i_next = mod1(i + 1, nci)
-        dxi = ci.nodes[i_next][1] - ci.nodes[i][1]
-        dyi = ci.nodes[i_next][2] - ci.nodes[i][2]
-        mx_i = (ci.nodes[i][1] + ci.nodes[i_next][1]) / 2
-        my_i = (ci.nodes[i][2] + ci.nodes[i_next][2]) / 2
+        ai = ci.nodes[i]
+        bi = ci.nodes[i_next]
+        dsi = bi - ai
+        midi = (ai + bi) / 2
+        half_dsi = dsi / 2
         local_s = zero(T)
         for j in 1:ncj
             j_next = mod1(j + 1, ncj)
-            dxj = cj.nodes[j_next][1] - cj.nodes[j][1]
-            dyj = cj.nodes[j_next][2] - cj.nodes[j][2]
-            mx_j = (cj.nodes[j][1] + cj.nodes[j_next][1]) / 2
-            my_j = (cj.nodes[j][2] + cj.nodes[j_next][2]) / 2
-            dx = mx_i - mx_j
-            dy = my_i - my_j
-            r2 = dx^2 + dy^2
-            r2 < eps(T) && continue
-            dot_ds = dxi * dxj + dyi * dyj
-            local_s += log(sqrt(r2)) * dot_ds
+            aj = cj.nodes[j]
+            bj = cj.nodes[j_next]
+            dsj = bj - aj
+            midj = (aj + bj) / 2
+            half_dsj = dsj / 2
+            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
+            # 2×2 Gauss-Legendre quadrature over both segments
+            quad = zero(T)
+            for qi in 1:2
+                pi_pt = midi + g_nodes[qi] * half_dsi
+                for qj in 1:2
+                    pj_pt = midj + g_nodes[qj] * half_dsj
+                    dx = pi_pt[1] - pj_pt[1]
+                    dy = pi_pt[2] - pj_pt[2]
+                    r2 = dx^2 + dy^2
+                    r2 < eps(T) && continue
+                    quad += g_weight * g_weight * log(sqrt(r2))
+                end
+            end
+            # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
+            local_s += quad / 4 * dot_ds
         end
         partial[i] = local_s
     end
@@ -188,26 +204,41 @@ end
 function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
+    # 2-point Gauss-Legendre nodes/weights on [-1,1]
+    g = one(T) / sqrt(T(3))
+    g_nodes = SVector{2,T}(-g, g)
+    g_weight = one(T)
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
         i_next = mod1(i + 1, nci)
-        dxi = ci.nodes[i_next][1] - ci.nodes[i][1]
-        dyi = ci.nodes[i_next][2] - ci.nodes[i][2]
-        mx_i = (ci.nodes[i][1] + ci.nodes[i_next][1]) / 2
-        my_i = (ci.nodes[i][2] + ci.nodes[i_next][2]) / 2
+        ai = ci.nodes[i]
+        bi = ci.nodes[i_next]
+        dsi = bi - ai
+        midi = (ai + bi) / 2
+        half_dsi = dsi / 2
         local_s = zero(T)
         for j in 1:ncj
             j_next = mod1(j + 1, ncj)
-            dxj = cj.nodes[j_next][1] - cj.nodes[j][1]
-            dyj = cj.nodes[j_next][2] - cj.nodes[j][2]
-            mx_j = (cj.nodes[j][1] + cj.nodes[j_next][1]) / 2
-            my_j = (cj.nodes[j][2] + cj.nodes[j_next][2]) / 2
-            dx = mx_i - mx_j
-            dy = my_i - my_j
-            r = sqrt(dx^2 + dy^2)
-            r < eps(T) * Ld && continue
-            dot_ds = dxi * dxj + dyi * dyj
-            local_s += besselk(0, r / Ld) * dot_ds
+            aj = cj.nodes[j]
+            bj = cj.nodes[j_next]
+            dsj = bj - aj
+            midj = (aj + bj) / 2
+            half_dsj = dsj / 2
+            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
+            # 2×2 Gauss-Legendre quadrature over both segments
+            quad = zero(T)
+            for qi in 1:2
+                pi_pt = midi + g_nodes[qi] * half_dsi
+                for qj in 1:2
+                    pj_pt = midj + g_nodes[qj] * half_dsj
+                    dx = pi_pt[1] - pj_pt[1]
+                    dy = pi_pt[2] - pj_pt[2]
+                    r = sqrt(dx^2 + dy^2)
+                    r < eps(T) * Ld && continue
+                    quad += g_weight * g_weight * besselk(0, r / Ld)
+                end
+            end
+            local_s += quad / 4 * dot_ds
         end
         partial[i] = local_s
     end

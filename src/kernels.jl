@@ -63,10 +63,6 @@ function segment_velocity(::EulerKernel, ::UnboundedDomain,
         return val
     end
 
-    I = (F(u_a) - F(u_b)) / ds_len
-
-    # v_seg = (1/(4π)) * (dx', dy') * I = (1/(4π)) * ds * I
-    # = (1/(4π)) * t_hat * |ds| * I = (1/(4π)) * t_hat * (F(u_a) - F(u_b))
     inv4pi = one(T) / (4 * T(π))
     return -inv4pi * t_hat * (F(u_a) - F(u_b))
 end
@@ -80,19 +76,31 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     kernel = prob.kernel
     domain = prob.domain
     contours = prob.contours
-
-    all_nodes = SVector{2,T}[]
-    for c in contours
-        append!(all_nodes, c.nodes)
-    end
-
-    N = length(all_nodes)
+    N = total_nodes(prob)
     @assert length(vel) == N "vel length ($(length(vel))) must equal total nodes ($N)"
+
+    # Build offset table so thread i can find its target node without
+    # allocating a flat copy of all nodes.
+    offsets = Vector{Int}(undef, length(contours))
+    off = 0
+    for (ci, c) in enumerate(contours)
+        offsets[ci] = off
+        off += nnodes(c)
+    end
 
     # Thread over target nodes — each node accumulates its velocity independently
     @inbounds Threads.@threads for i in 1:N
+        # Locate target node (contour_idx, local_idx) from flat index i
+        xi = zero(SVector{2,T})
+        for (ci, c) in enumerate(contours)
+            local_i = i - offsets[ci]
+            if 1 <= local_i <= nnodes(c)
+                xi = c.nodes[local_i]
+                break
+            end
+        end
+
         v = zero(SVector{2,T})
-        xi = all_nodes[i]
         for c in contours
             nc = nnodes(c)
             nc < 2 && continue

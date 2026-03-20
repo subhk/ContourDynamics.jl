@@ -28,6 +28,22 @@ function _scatter_nodes!(prob::ContourProblem, all_nodes::Vector{SVector{2,T}}) 
 end
 
 """
+    _scatter_shifted!(prob, base, delta, scale)
+
+Write `base[i] + scale * delta[i]` into contour nodes without allocating.
+"""
+function _scatter_shifted!(prob::ContourProblem, base::Vector{SVector{2,T}},
+                           delta::Vector{SVector{2,T}}, scale::T) where {T}
+    idx = 1
+    for c in prob.contours
+        @inbounds for i in 1:nnodes(c)
+            c.nodes[i] = base[idx] + scale * delta[idx]
+            idx += 1
+        end
+    end
+end
+
+"""
     timestep!(prob::ContourProblem, stepper::RK4Stepper)
 
 Advance all contour nodes by one RK4 step.
@@ -37,30 +53,29 @@ function timestep!(prob::ContourProblem, stepper::RK4Stepper{T}) where {T}
     N = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
 
-    # Save original positions
+    # Save original positions (one unavoidable allocation per step)
     nodes_orig = _collect_all_nodes(prob)
 
     # k1 = v(t, y)
     velocity!(k1, prob)
 
     # k2 = v(t + dt/2, y + dt/2 * k1)
-    all_nodes = [nodes_orig[i] + (dt / 2) * k1[i] for i in 1:N]
-    _scatter_nodes!(prob, all_nodes)
+    _scatter_shifted!(prob, nodes_orig, k1, dt / 2)
     velocity!(k2, prob)
 
     # k3 = v(t + dt/2, y + dt/2 * k2)
-    all_nodes = [nodes_orig[i] + (dt / 2) * k2[i] for i in 1:N]
-    _scatter_nodes!(prob, all_nodes)
+    _scatter_shifted!(prob, nodes_orig, k2, dt / 2)
     velocity!(k3, prob)
 
     # k4 = v(t + dt, y + dt * k3)
-    all_nodes = [nodes_orig[i] + dt * k3[i] for i in 1:N]
-    _scatter_nodes!(prob, all_nodes)
+    _scatter_shifted!(prob, nodes_orig, k3, dt)
     velocity!(k4, prob)
 
     # Update: y_{n+1} = y_n + dt/6 * (k1 + 2k2 + 2k3 + k4)
-    all_nodes = [nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]) for i in 1:N]
-    _scatter_nodes!(prob, all_nodes)
+    @inbounds for i in 1:N
+        nodes_orig[i] = nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i])
+    end
+    _scatter_nodes!(prob, nodes_orig)
 
     return prob
 end
@@ -170,10 +185,13 @@ function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SV
     end
 end
 
-function _collect_velocities(vel::NTuple{N, Vector{SVector{2,T}}}) where {N, T}
-    flat = SVector{2,T}[]
+function _collect_velocities!(flat::Vector{SVector{2,T}}, vel::NTuple{N, Vector{SVector{2,T}}}) where {N, T}
+    idx = 1
     for i in 1:N
-        append!(flat, vel[i])
+        for j in eachindex(vel[i])
+            flat[idx] = vel[i][j]
+            idx += 1
+        end
     end
     return flat
 end
@@ -182,38 +200,51 @@ function _make_vel_tuple(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K
     ntuple(i -> zeros(SVector{2,T}, sum(nnodes(c) for c in prob.layers[i]; init=0)), Val(N))
 end
 
+function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVector{2,T}},
+                           delta::Vector{SVector{2,T}}, scale::T) where {N, T}
+    idx = 1
+    for i in 1:N
+        for c in prob.layers[i]
+            @inbounds for j in 1:nnodes(c)
+                c.nodes[j] = base[idx] + scale * delta[idx]
+                idx += 1
+            end
+        end
+    end
+end
+
 function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) where {N, T}
     dt = stepper.dt
     Ntot = total_nodes(prob)
+    k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
     nodes_orig = _collect_all_nodes(prob)
 
     vel_tuple = _make_vel_tuple(prob)
 
     # k1
     velocity!(vel_tuple, prob)
-    k1 = _collect_velocities(vel_tuple)
+    _collect_velocities!(k1, vel_tuple)
 
     # k2
-    all_nodes = [nodes_orig[i] + (dt / 2) * k1[i] for i in 1:Ntot]
-    _scatter_nodes!(prob, all_nodes)
+    _scatter_shifted!(prob, nodes_orig, k1, dt / 2)
     velocity!(vel_tuple, prob)
-    k2 = _collect_velocities(vel_tuple)
+    _collect_velocities!(k2, vel_tuple)
 
     # k3
-    all_nodes = [nodes_orig[i] + (dt / 2) * k2[i] for i in 1:Ntot]
-    _scatter_nodes!(prob, all_nodes)
+    _scatter_shifted!(prob, nodes_orig, k2, dt / 2)
     velocity!(vel_tuple, prob)
-    k3 = _collect_velocities(vel_tuple)
+    _collect_velocities!(k3, vel_tuple)
 
     # k4
-    all_nodes = [nodes_orig[i] + dt * k3[i] for i in 1:Ntot]
-    _scatter_nodes!(prob, all_nodes)
+    _scatter_shifted!(prob, nodes_orig, k3, dt)
     velocity!(vel_tuple, prob)
-    k4 = _collect_velocities(vel_tuple)
+    _collect_velocities!(k4, vel_tuple)
 
-    # Update
-    all_nodes = [nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]) for i in 1:Ntot]
-    _scatter_nodes!(prob, all_nodes)
+    # Update: y_{n+1} = y_n + dt/6 * (k1 + 2k2 + 2k3 + k4)
+    @inbounds for i in 1:Ntot
+        nodes_orig[i] = nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i])
+    end
+    _scatter_nodes!(prob, nodes_orig)
     return prob
 end
 

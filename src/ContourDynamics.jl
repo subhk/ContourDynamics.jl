@@ -35,9 +35,14 @@ function record_evolution end
 function contours_from_gridfield end
 function gridfield_from_contours end
 function recorded_diagnostics end
+function save_snapshot end
+function load_snapshot end
+function jld2_recorder end
+function load_simulation end
 
 export flatten_nodes, unflatten_nodes!, to_ode_problem, record_evolution
 export contours_from_gridfield, gridfield_from_contours
 export recorded_diagnostics
+export save_snapshot, load_snapshot, jld2_recorder, load_simulation
 
 end # module

@@ -161,13 +161,12 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
         s_pt = mid + g_nodes[q] * half_ds
         G_val = zero(T)
 
-        # Real-space sum: G(r) = -(1/(2π)) log(r) = -(1/(4π)) log(r²)
-        # Ewald real part: -(1/(4π)) Σ_images E₁(α²r²)
-        # Note: E₁(α²r²) ≈ -log(α²r²) - γ for small α²r² → E₁ behaves like -log(r²) + const
-        # So -(1/(4π)) E₁(α²r²) behaves like (1/(4π)) log(r²) + const = -G(r) + const
-        # The Green's function is G(r) = -(1/(2π))log(r), so log(r²) = -4πG(r).
-        # We need to compute the periodic sum of G, which equals:
-        # G_per = Σ_images -(1/(4π)) E₁(α²|r+shift|²) + Fourier correction
+        # Real-space Ewald sum for G(r) = -(1/(2π)) log(r) = -(1/(4π)) log(r²).
+        # The Ewald real-space part is: +(1/(4π)) Σ_images E₁(α²|r+shift|²).
+        # For small α²r²: E₁(x) ≈ -ln(x) - γ, so
+        #   (1/(4π)) E₁(α²r²) ≈ -(1/(4π)) ln(r²) + const = G(r) + const.
+        # Thus the real-space sum recovers G for the central image, with
+        # exponentially decaying contributions from periodic images.
         for px in -cache.n_images:cache.n_images
             for py in -cache.n_images:cache.n_images
                 shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
