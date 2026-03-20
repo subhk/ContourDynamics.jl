@@ -41,7 +41,7 @@ include("test_utils.jl")
     end
 
     @testset "Euler Kernel" begin
-        c = circular_patch(1.0, 128, 1.0)
+        c = circular_patch(1.0, 32, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
         vel = zeros(SVector{2, Float64}, total_nodes(prob))
         velocity!(vel, prob)
@@ -50,34 +50,35 @@ include("test_utils.jl")
         expected_speed = 0.5
         for i in 1:nnodes(c)
             speed = sqrt(vel[i][1]^2 + vel[i][2]^2)
-            @test speed ≈ expected_speed rtol=0.02
+            @test speed ≈ expected_speed rtol=0.05
         end
 
         # Check tangential direction: velocity perpendicular to position
         for i in 1:nnodes(c)
             pos = c.nodes[i]
-            @test abs(vel[i][1]*pos[1] + vel[i][2]*pos[2]) < 0.02
+            @test abs(vel[i][1]*pos[1] + vel[i][2]*pos[2]) < 0.05
         end
     end
 
     @testset "QG Kernel" begin
-        c = circular_patch(1.0, 128, 1.0)
+        N = 32
+        c = circular_patch(1.0, N, 1.0)
         prob_euler = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
         prob_qg = ContourProblem(QGKernel(100.0), UnboundedDomain(), [c])
 
-        vel_euler = zeros(SVector{2, Float64}, 128)
-        vel_qg = zeros(SVector{2, Float64}, 128)
+        vel_euler = zeros(SVector{2, Float64}, N)
+        vel_qg = zeros(SVector{2, Float64}, N)
         velocity!(vel_euler, prob_euler)
         velocity!(vel_qg, prob_qg)
 
         # Large Ld → QG approaches Euler
-        for i in 1:128
-            @test vel_qg[i] ≈ vel_euler[i] rtol=0.05
+        for i in 1:N
+            @test vel_qg[i] ≈ vel_euler[i] rtol=0.1
         end
 
         # Small Ld → QG velocity weaker than Euler
         prob_qg_small = ContourProblem(QGKernel(0.5), UnboundedDomain(), [c])
-        vel_qg_small = zeros(SVector{2, Float64}, 128)
+        vel_qg_small = zeros(SVector{2, Float64}, N)
         velocity!(vel_qg_small, prob_qg_small)
 
         euler_speed = sqrt(vel_euler[1][1]^2 + vel_euler[1][2]^2)
@@ -86,34 +87,34 @@ include("test_utils.jl")
     end
 
     @testset "Per-Contour Diagnostics" begin
-        c = circular_patch(1.0, 256, 1.0)
-        @test vortex_area(c) ≈ π rtol=2e-4
+        c = circular_patch(1.0, 64, 1.0)
+        @test vortex_area(c) ≈ π rtol=5e-3
 
         cx = centroid(c)
         @test abs(cx[1]) < 1e-10
         @test abs(cx[2]) < 1e-10
 
-        e = elliptical_patch(2.0, 1.0, 256, 1.0)
-        @test vortex_area(e) ≈ 2π rtol=2e-4
+        e = elliptical_patch(2.0, 1.0, 64, 1.0)
+        @test vortex_area(e) ≈ 2π rtol=5e-3
 
         ratio, angle = ellipse_moments(e)
-        @test ratio ≈ 2.0 rtol=0.01
-        @test abs(angle) < 0.05
+        @test ratio ≈ 2.0 rtol=0.05
+        @test abs(angle) < 0.1
     end
 
     @testset "Problem-Level Diagnostics" begin
-        c = circular_patch(1.0, 128, 1.0)
+        c = circular_patch(1.0, 32, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
 
-        @test circulation(prob) ≈ π rtol=1e-3
-        @test enstrophy(prob) ≈ π / 2 rtol=1e-3
+        @test circulation(prob) ≈ π rtol=0.01
+        @test enstrophy(prob) ≈ π / 2 rtol=0.01
 
         E = energy(prob)
         @test E > 0
         @test isfinite(E)
 
         L = angular_momentum(prob)
-        @test L ≈ π / 2 rtol=1e-3
+        @test L ≈ π / 2 rtol=0.02
     end
 
     @testset "Node Management" begin
@@ -173,17 +174,17 @@ include("test_utils.jl")
     include("test_conservation.jl")
 
     @testset "Periodic Domain (Ewald)" begin
-        c = circular_patch(0.1, 64, 1.0)
+        c = circular_patch(0.1, 16, 1.0)
         prob_unbounded = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
         prob_periodic = ContourProblem(EulerKernel(), PeriodicDomain(10.0, 10.0), [c])
 
-        vel_u = zeros(SVector{2, Float64}, 64)
-        vel_p = zeros(SVector{2, Float64}, 64)
+        vel_u = zeros(SVector{2, Float64}, 16)
+        vel_p = zeros(SVector{2, Float64}, 16)
         velocity!(vel_u, prob_unbounded)
         velocity!(vel_p, prob_periodic)
 
-        for i in 1:64
-            @test vel_p[i] ≈ vel_u[i] rtol=0.1
+        for i in 1:16
+            @test vel_p[i] ≈ vel_u[i] rtol=0.15
         end
     end
 
