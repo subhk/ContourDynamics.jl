@@ -143,7 +143,7 @@ The contour dynamics segment velocity for the Euler kernel is:
 where G_per is the periodic Green's function and ds = b - a.
 
 The Ewald decomposition splits G_per = G_real + G_fourier:
-- Real space: G_real(r) = -(1/(2π)) Σ_images (1/2) E₁(α²|r+shift|²)
+- Real space: G_real(r) = +(1/(4π)) Σ_images E₁(α²|r+shift|²)
 - Fourier space: G_fourier(r) = (1/A) Σ_{k≠0} exp(-k²/(4α²)) cos(k·r) / k²
 """
 function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
