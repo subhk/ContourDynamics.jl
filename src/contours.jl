@@ -16,7 +16,7 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
         d = b - a
         seg_len = sqrt(d[1]^2 + d[2]^2)
 
-        if seg_len < mu && length(new_nodes) > 1 && i < n
+        if seg_len < mu && i < n
             continue
         elseif seg_len > Delta_max
             n_segments = ceil(Int, seg_len / Delta_max)
