@@ -7,10 +7,11 @@ function vortex_area(c::PVContour{T}) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return zero(T)
+    is_spanning(c) && return zero(T)  # area undefined for spanning contours
     A = zero(T)
     @inbounds for i in 1:n
-        j = mod1(i + 1, n)
-        A += nodes[i][1] * nodes[j][2] - nodes[j][1] * nodes[i][2]
+        nxt = next_node(c, i)
+        A += nodes[i][1] * nxt[2] - nxt[1] * nodes[i][2]
     end
     return A / 2
 end
@@ -30,10 +31,10 @@ function centroid(c::PVContour{T}) where {T}
     cx = zero(T)
     cy = zero(T)
     @inbounds for i in 1:n
-        j = mod1(i + 1, n)
-        cross = nodes[i][1] * nodes[j][2] - nodes[j][1] * nodes[i][2]
-        cx += (nodes[i][1] + nodes[j][1]) * cross
-        cy += (nodes[i][2] + nodes[j][2]) * cross
+        nxt = next_node(c, i)
+        cross = nodes[i][1] * nxt[2] - nxt[1] * nodes[i][2]
+        cx += (nodes[i][1] + nxt[1]) * cross
+        cy += (nodes[i][2] + nxt[2]) * cross
     end
     inv6A = one(T) / (6 * A)
     return SVector{2, T}(cx * inv6A, cy * inv6A)
@@ -55,9 +56,9 @@ function ellipse_moments(c::PVContour{T}) where {T}
     Jxy = zero(T)
 
     @inbounds for i in 1:n
-        j = mod1(i + 1, n)
+        nxt = next_node(c, i)
         xi, yi = nodes[i][1] - ctr[1], nodes[i][2] - ctr[2]
-        xj, yj = nodes[j][1] - ctr[1], nodes[j][2] - ctr[2]
+        xj, yj = nxt[1] - ctr[1], nxt[2] - ctr[2]
         cross = xi * yj - xj * yi
         Jxx += (xi^2 + xi * xj + xj^2) * cross
         Jyy += (yi^2 + yi * yj + yj^2) * cross
@@ -112,11 +113,12 @@ function _second_moment_r2(c::PVContour{T}) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return zero(T)
+    is_spanning(c) && return zero(T)  # moment undefined for spanning contours
     s = zero(T)
     @inbounds for i in 1:n
-        j = mod1(i + 1, n)
+        nxt = next_node(c, i)
         xi, yi = nodes[i][1], nodes[i][2]
-        xj, yj = nodes[j][1], nodes[j][2]
+        xj, yj = nxt[1], nxt[2]
         cross = xi * yj - xj * yi
         s += (xi^2 + xi * xj + xj^2) * cross
         s += (yi^2 + yi * yj + yj^2) * cross
@@ -137,7 +139,8 @@ function energy(prob::ContourProblem{EulerKernel, D, T}) where {D, T}
             E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj)
         end
     end
-    return -inv4pi * E
+    # Factor 1/2: the double sum counts both (i,j) and (j,i) for the symmetric integrand.
+    return -inv4pi * E / 2
 end
 
 function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T}
@@ -150,17 +153,15 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     # Thread over outer segments, each thread accumulates a partial sum
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
-        i_next = mod1(i + 1, nci)
         ai = ci.nodes[i]
-        bi = ci.nodes[i_next]
+        bi = next_node(ci, i)
         dsi = bi - ai
         midi = (ai + bi) / 2
         half_dsi = dsi / 2
         local_s = zero(T)
         for j in 1:ncj
-            j_next = mod1(j + 1, ncj)
             aj = cj.nodes[j]
-            bj = cj.nodes[j_next]
+            bj = next_node(cj, j)
             dsj = bj - aj
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
@@ -198,7 +199,7 @@ function energy(prob::ContourProblem{QGKernel{T}, D, T}) where {D, T}
             E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld)
         end
     end
-    return -inv4pi * E
+    return -inv4pi * E / 2
 end
 
 function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) where {T}
@@ -210,17 +211,15 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     g_weight = one(T)
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
-        i_next = mod1(i + 1, nci)
         ai = ci.nodes[i]
-        bi = ci.nodes[i_next]
+        bi = next_node(ci, i)
         dsi = bi - ai
         midi = (ai + bi) / 2
         half_dsi = dsi / 2
         local_s = zero(T)
         for j in 1:ncj
-            j_next = mod1(j + 1, ncj)
             aj = cj.nodes[j]
-            bj = cj.nodes[j_next]
+            bj = next_node(cj, j)
             dsj = bj - aj
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
@@ -309,5 +308,5 @@ function energy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
     end
 
     inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * E
+    return -inv4pi * E / 2
 end
