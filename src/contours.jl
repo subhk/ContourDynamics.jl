@@ -1,3 +1,9 @@
+"""
+    remesh(c::PVContour, params::SurgeryParams)
+
+Redistribute nodes along contour `c` so that every segment length lies between
+`params.mu` and `params.Delta_max`.  Returns a new [`PVContour`](@ref).
+"""
 function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
     nodes = c.nodes
     n = length(nodes)
