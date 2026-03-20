@@ -14,7 +14,7 @@ include("diagnostics.jl")
 include("timesteppers.jl")
 
 export AbstractKernel, EulerKernel, QGKernel, MultiLayerQGKernel
-export PVContour, nnodes
+export PVContour, nnodes, is_spanning, next_node, beta_staircase
 export AbstractDomain, UnboundedDomain, PeriodicDomain
 export ContourProblem, MultiLayerContourProblem
 export SurgeryParams
