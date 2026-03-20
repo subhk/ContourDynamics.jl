@@ -38,6 +38,8 @@ function ContourDynamics.save_snapshot(filename::String,
             cg["y"] = nodes_y
             cg["pv"] = c.pv
             cg["nnodes"] = nnodes(c)
+            cg["wrap_x"] = c.wrap[1]
+            cg["wrap_y"] = c.wrap[2]
         end
 
         if diagnostics
@@ -79,6 +81,8 @@ function ContourDynamics.save_snapshot(filename::String,
                 cg["y"] = [c.nodes[i][2] for i in 1:nnodes(c)]
                 cg["pv"] = c.pv
                 cg["nnodes"] = nnodes(c)
+                cg["wrap_x"] = c.wrap[1]
+                cg["wrap_y"] = c.wrap[2]
             end
         end
 
