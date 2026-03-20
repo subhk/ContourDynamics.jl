@@ -83,3 +83,128 @@ function ellipse_moments(c::PVContour{T}) where {T}
 
     return (aspect_ratio, angle)
 end
+
+function circulation(prob::ContourProblem{K, D, T}) where {K, D, T}
+    s = zero(T)
+    for c in prob.contours
+        s += c.pv * vortex_area(c)
+    end
+    return s
+end
+
+function enstrophy(prob::ContourProblem{K, D, T}) where {K, D, T}
+    s = zero(T)
+    for c in prob.contours
+        s += c.pv^2 * vortex_area(c)
+    end
+    return s / 2
+end
+
+function angular_momentum(prob::ContourProblem{K, D, T}) where {K, D, T}
+    s = zero(T)
+    for c in prob.contours
+        s += c.pv * _second_moment_r2(c)
+    end
+    return s
+end
+
+function _second_moment_r2(c::PVContour{T}) where {T}
+    nodes = c.nodes
+    n = length(nodes)
+    n < 3 && return zero(T)
+    s = zero(T)
+    @inbounds for i in 1:n
+        j = mod1(i + 1, n)
+        xi, yi = nodes[i][1], nodes[i][2]
+        xj, yj = nodes[j][1], nodes[j][2]
+        cross = xi * yj - xj * yi
+        s += (xi^2 + xi * xj + xj^2) * cross
+        s += (yi^2 + yi * yj + yj^2) * cross
+    end
+    return s / 12
+end
+
+function energy(prob::ContourProblem{EulerKernel, D, T}) where {D, T}
+    contours = prob.contours
+    E = zero(T)
+    inv4pi = one(T) / (4 * T(π))
+    for ci in contours
+        nci = nnodes(ci)
+        nci < 2 && continue
+        for cj in contours
+            ncj = nnodes(cj)
+            ncj < 2 && continue
+            E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj)
+        end
+    end
+    return -inv4pi * E
+end
+
+function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T}
+    nci = nnodes(ci)
+    ncj = nnodes(cj)
+    s = zero(T)
+    @inbounds for i in 1:nci
+        i_next = mod1(i + 1, nci)
+        dxi = ci.nodes[i_next][1] - ci.nodes[i][1]
+        dyi = ci.nodes[i_next][2] - ci.nodes[i][2]
+        mx_i = (ci.nodes[i][1] + ci.nodes[i_next][1]) / 2
+        my_i = (ci.nodes[i][2] + ci.nodes[i_next][2]) / 2
+        for j in 1:ncj
+            j_next = mod1(j + 1, ncj)
+            dxj = cj.nodes[j_next][1] - cj.nodes[j][1]
+            dyj = cj.nodes[j_next][2] - cj.nodes[j][2]
+            mx_j = (cj.nodes[j][1] + cj.nodes[j_next][1]) / 2
+            my_j = (cj.nodes[j][2] + cj.nodes[j_next][2]) / 2
+            dx = mx_i - mx_j
+            dy = my_i - my_j
+            r2 = dx^2 + dy^2
+            r2 < eps(T) && continue
+            dot_ds = dxi * dxj + dyi * dyj
+            s += log(sqrt(r2)) * dot_ds
+        end
+    end
+    return s
+end
+
+function energy(prob::ContourProblem{QGKernel{T}, D, T}) where {D, T}
+    contours = prob.contours
+    Ld = prob.kernel.Ld
+    E = zero(T)
+    inv4pi = one(T) / (4 * T(π))
+    for ci in contours
+        nnodes(ci) < 2 && continue
+        for cj in contours
+            nnodes(cj) < 2 && continue
+            E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld)
+        end
+    end
+    return -inv4pi * E
+end
+
+function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) where {T}
+    nci = nnodes(ci)
+    ncj = nnodes(cj)
+    s = zero(T)
+    @inbounds for i in 1:nci
+        i_next = mod1(i + 1, nci)
+        dxi = ci.nodes[i_next][1] - ci.nodes[i][1]
+        dyi = ci.nodes[i_next][2] - ci.nodes[i][2]
+        mx_i = (ci.nodes[i][1] + ci.nodes[i_next][1]) / 2
+        my_i = (ci.nodes[i][2] + ci.nodes[i_next][2]) / 2
+        for j in 1:ncj
+            j_next = mod1(j + 1, ncj)
+            dxj = cj.nodes[j_next][1] - cj.nodes[j][1]
+            dyj = cj.nodes[j_next][2] - cj.nodes[j][2]
+            mx_j = (cj.nodes[j][1] + cj.nodes[j_next][1]) / 2
+            my_j = (cj.nodes[j][2] + cj.nodes[j_next][2]) / 2
+            dx = mx_i - mx_j
+            dy = my_i - my_j
+            r = sqrt(dx^2 + dy^2)
+            r < eps(T) * Ld && continue
+            dot_ds = dxi * dxj + dyi * dyj
+            s += besselk(0, r / Ld) * dot_ds
+        end
+    end
+    return s
+end

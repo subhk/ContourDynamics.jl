@@ -100,4 +100,40 @@ include("test_utils.jl")
         @test ratio ≈ 2.0 rtol=0.01
         @test abs(angle) < 0.05
     end
+
+    @testset "Problem-Level Diagnostics" begin
+        c = circular_patch(1.0, 128, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+
+        @test circulation(prob) ≈ π rtol=1e-3
+        @test enstrophy(prob) ≈ π / 2 rtol=1e-3
+
+        E = energy(prob)
+        @test E > 0
+        @test isfinite(E)
+
+        L = angular_momentum(prob)
+        @test L ≈ π / 2 rtol=1e-3
+    end
+
+    @testset "Node Management" begin
+        nodes = SVector{2, Float64}[
+            SVector(0.0, 0.0), SVector(0.001, 0.0), SVector(0.002, 0.0),
+            SVector(1.0, 0.0), SVector(1.0, 1.0), SVector(0.0, 1.0),
+        ]
+        c = PVContour(nodes, 1.0)
+        params = SurgeryParams(0.01, 0.01, 0.05, 1e-6, 10)
+
+        c_new = remesh(c, params)
+
+        for i in 1:nnodes(c_new)
+            j = mod1(i + 1, nnodes(c_new))
+            d = c_new.nodes[j] - c_new.nodes[i]
+            spacing = sqrt(d[1]^2 + d[2]^2)
+            @test spacing >= params.mu * 0.9
+            @test spacing <= params.Delta_max * 1.1
+        end
+
+        @test vortex_area(c_new) ≈ vortex_area(c) rtol=0.1
+    end
 end

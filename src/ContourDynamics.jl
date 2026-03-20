@@ -6,6 +6,7 @@ using SpecialFunctions
 
 include("types.jl")
 include("domains.jl")
+include("contours.jl")
 include("kernels.jl")
 include("diagnostics.jl")
 
@@ -18,5 +19,7 @@ export AbstractTimeStepper, RK4Stepper, LeapfrogStepper
 export nlayers, total_nodes
 export velocity!, velocity, segment_velocity
 export vortex_area, centroid, ellipse_moments
+export energy, enstrophy, circulation, angular_momentum
+export remesh, arc_lengths
 
 end # module
