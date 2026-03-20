@@ -85,6 +85,12 @@ function ellipse_moments(c::PVContour{T}) where {T}
     return (aspect_ratio, angle)
 end
 
+"""
+    circulation(prob)
+
+Total circulation `Γ = ∑ qᵢ Aᵢ` of a [`ContourProblem`](@ref) or
+[`MultiLayerContourProblem`](@ref).
+"""
 function circulation(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
     for c in prob.contours
@@ -93,6 +99,12 @@ function circulation(prob::ContourProblem{K, D, T}) where {K, D, T}
     return s
 end
 
+"""
+    enstrophy(prob)
+
+Enstrophy `½ ∑ qᵢ² Aᵢ` of a [`ContourProblem`](@ref) or
+[`MultiLayerContourProblem`](@ref).
+"""
 function enstrophy(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
     for c in prob.contours
@@ -101,6 +113,12 @@ function enstrophy(prob::ContourProblem{K, D, T}) where {K, D, T}
     return s / 2
 end
 
+"""
+    angular_momentum(prob)
+
+Angular momentum `∑ qᵢ ∫ r² dA` of a [`ContourProblem`](@ref) or
+[`MultiLayerContourProblem`](@ref).
+"""
 function angular_momentum(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
     for c in prob.contours
@@ -126,6 +144,12 @@ function _second_moment_r2(c::PVContour{T}) where {T}
     return s / 12
 end
 
+"""
+    energy(prob)
+
+Kinetic energy of a [`ContourProblem`](@ref) or [`MultiLayerContourProblem`](@ref),
+computed via contour integrals of the appropriate Green's function.
+"""
 function energy(prob::ContourProblem{EulerKernel, D, T}) where {D, T}
     contours = prob.contours
     E = zero(T)
