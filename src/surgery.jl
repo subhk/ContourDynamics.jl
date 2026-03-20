@@ -37,6 +37,8 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
     delta2 = delta^2
 
     for (ci, c) in enumerate(contours)
+        # Skip spanning contours — they should not be reconnected
+        is_spanning(c) && continue
         nc = nnodes(c)
         for i in 1:nc
             bx = floor(Int, c.nodes[i][1] / delta)
@@ -49,6 +51,8 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                 for (cj, j) in idx.bins[key]
                     # Avoid duplicate pairs and adjacent nodes on same contour
                     (ci, i) >= (cj, j) && continue
+                    # Skip spanning contours
+                    is_spanning(contours[cj]) && continue
                     if ci == cj
                         ncj = nnodes(contours[cj])
                         # Skip adjacent or near-adjacent nodes
@@ -124,9 +128,9 @@ end
 
 # ── Filament Removal ─────────────────────────────────────
 
-"""Remove contours with |area| < area_min."""
+"""Remove contours with |area| < area_min. Spanning contours are always kept."""
 function remove_filaments!(contours::Vector{PVContour{T}}, area_min::T) where {T}
-    filter!(c -> abs(vortex_area(c)) >= area_min, contours)
+    filter!(c -> is_spanning(c) || abs(vortex_area(c)) >= area_min, contours)
 end
 
 # ── Top-Level Surgery ────────────────────────────────────
