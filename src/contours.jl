@@ -16,10 +16,8 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
         seg_len = sqrt(d[1]^2 + d[2]^2)
 
         if seg_len < mu
-            # Too close to last retained node — skip
             continue
         elseif seg_len > Delta_max
-            # Too far — subdivide from last retained node to b
             n_segments = ceil(Int, seg_len / Delta_max)
             for k in 1:(n_segments - 1)
                 t = T(k) / T(n_segments)
@@ -31,36 +29,32 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
         end
     end
 
-    # Check closing segment (last node back to first)
+    # Check closing segment (last node back to first, with wrap for spanning contours)
     if length(new_nodes) >= 2
-        d_close = new_nodes[1] - new_nodes[end]
+        close_target = new_nodes[1] + c.wrap  # wrap = (0,0) for closed contours
+        d_close = close_target - new_nodes[end]
         close_len = sqrt(d_close[1]^2 + d_close[2]^2)
         if close_len < mu && length(new_nodes) > 3
-            # Last node too close to first — remove it
             pop!(new_nodes)
         elseif close_len > Delta_max
-            # Closing gap too large — subdivide
             last = new_nodes[end]
-            first = new_nodes[1]
-            d = first - last
             n_segments = ceil(Int, close_len / Delta_max)
             for k in 1:(n_segments - 1)
                 t = T(k) / T(n_segments)
-                push!(new_nodes, last + t * d)
+                push!(new_nodes, last + t * d_close)
             end
         end
     end
 
     length(new_nodes) < 3 && return c
-    return PVContour(new_nodes, c.pv)
+    return PVContour(new_nodes, c.pv, c.wrap)
 end
 
 function arc_lengths(c::PVContour{T}) where {T}
     n = nnodes(c)
     lengths = Vector{T}(undef, n)
     @inbounds for i in 1:n
-        j = mod1(i + 1, n)
-        d = c.nodes[j] - c.nodes[i]
+        d = next_node(c, i) - c.nodes[i]
         lengths[i] = sqrt(d[1]^2 + d[2]^2)
     end
     return lengths

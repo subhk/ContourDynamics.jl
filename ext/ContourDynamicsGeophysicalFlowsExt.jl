@@ -100,15 +100,27 @@ function ContourDynamics.gridfield_from_contours(prob::ContourProblem{K,D,T},
                                                   xlims=nothing, ylims=nothing) where {K,D,T}
     # Compute bounding box from contour geometry with 10% padding
     if xlims === nothing || ylims === nothing
-        xmin = typemax(T); xmax = typemin(T)
-        ymin = typemax(T); ymax = typemin(T)
+        has_nodes = false
+        xmin = zero(T); xmax = zero(T)
+        ymin = zero(T); ymax = zero(T)
         for c in prob.contours
             for node in c.nodes
-                xmin = min(xmin, node[1])
-                xmax = max(xmax, node[1])
-                ymin = min(ymin, node[2])
-                ymax = max(ymax, node[2])
+                if !has_nodes
+                    xmin = xmax = node[1]
+                    ymin = ymax = node[2]
+                    has_nodes = true
+                else
+                    xmin = min(xmin, node[1])
+                    xmax = max(xmax, node[1])
+                    ymin = min(ymin, node[2])
+                    ymax = max(ymax, node[2])
+                end
             end
+        end
+        if !has_nodes
+            # No contours — default to unit square
+            xmin, xmax = -one(T), one(T)
+            ymin, ymax = -one(T), one(T)
         end
         pad_x = max(T(0.1) * (xmax - xmin), eps(T))
         pad_y = max(T(0.1) * (ymax - ymin), eps(T))
