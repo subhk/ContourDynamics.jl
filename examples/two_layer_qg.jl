@@ -32,9 +32,7 @@ c_upper = PVContour(nodes, pv)
 domain = UnboundedDomain()
 
 # Layer 1 has the vortex, layer 2 is empty
-layer1 = ContourProblem(kernel, domain, [c_upper])
-layer2 = ContourProblem(kernel, domain, PVContour{T}[])
-prob = MultiLayerContourProblem((layer1, layer2))
+prob = MultiLayerContourProblem(kernel, domain, ([c_upper], PVContour{T}[]))
 
 dt = 0.01
 stepper = RK4Stepper(dt, total_nodes(prob))
@@ -49,8 +47,9 @@ evolve!(prob, stepper, SurgeryParams(0.01, 0.005, 0.2, 1e-6, nsteps + 1);
         nsteps=nsteps, callbacks=[recorder])
 
 println("\nDone. Final state:")
-for (i, layer) in enumerate(prob.layers)
-    println("  Layer $i: $(length(layer.contours)) contour(s), $(total_nodes(layer)) nodes")
+for (i, contours) in enumerate(prob.layers)
+    n = sum(nnodes, contours; init=0)
+    println("  Layer $i: $(length(contours)) contour(s), $n nodes")
 end
 
 # --- Inspect saved data ---
