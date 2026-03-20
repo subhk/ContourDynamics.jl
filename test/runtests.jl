@@ -136,4 +136,6 @@ include("test_utils.jl")
 
         @test vortex_area(c_new) ≈ vortex_area(c) rtol=0.1
     end
+
+    include("test_surgery.jl")
 end
