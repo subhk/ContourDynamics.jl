@@ -118,9 +118,16 @@ function segment_velocity(kernel::QGKernel{T}, ::UnboundedDomain,
         return zero(SVector{2,T})
     end
 
-    # 3-point Gauss-Legendre on [-1, 1]
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    # 5-point Gauss-Legendre on [-1, 1]
+    g5_n1 = T(0)
+    g5_n2 = sqrt(T(3) / T(7) - T(2) / T(7) * sqrt(T(6) / T(5)))
+    g5_n3 = sqrt(T(3) / T(7) + T(2) / T(7) * sqrt(T(6) / T(5)))
+    g5_w1 = T(128) / T(225)
+    g5_w2 = (T(322) + T(13) * sqrt(T(70))) / T(900)
+    g5_w3 = (T(322) - T(13) * sqrt(T(70))) / T(900)
+
+    g_nodes = SVector{5,T}(-g5_n3, -g5_n2, g5_n1, g5_n2, g5_n3)
+    g_weights = SVector{5,T}(g5_w3, g5_w2, g5_w1, g5_w2, g5_w3)
 
     mid = (a + b) / 2
     half_ds = ds / 2
@@ -128,7 +135,7 @@ function segment_velocity(kernel::QGKernel{T}, ::UnboundedDomain,
     v = zero(SVector{2,T})
     inv2pi = one(T) / (2 * T(π))
 
-    for q in 1:3
+    for q in 1:5
         s = mid + g_nodes[q] * half_ds
         r_vec = s - x
         r = sqrt(r_vec[1]^2 + r_vec[2]^2)
