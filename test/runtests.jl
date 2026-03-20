@@ -138,4 +138,34 @@ include("test_utils.jl")
     end
 
     include("test_surgery.jl")
+
+    @testset "Time Steppers" begin
+        @testset "RK4 single step" begin
+            c = circular_patch(1.0, 64, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            stepper = RK4Stepper(0.01, total_nodes(prob))
+
+            area_before = vortex_area(prob.contours[1])
+            timestep!(prob, stepper)
+            area_after = vortex_area(prob.contours[1])
+
+            @test area_after ≈ area_before rtol=1e-8
+        end
+
+        @testset "evolve! with callbacks" begin
+            c = circular_patch(1.0, 64, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            stepper = RK4Stepper(0.01, total_nodes(prob))
+            params = SurgeryParams(0.01, 0.01, 0.2, 1e-8, 100)
+
+            areas = Float64[]
+            cb = (p, step) -> push!(areas, vortex_area(p.contours[1]))
+
+            evolve!(prob, stepper, params; nsteps=10, callbacks=[cb])
+            @test length(areas) == 10
+            @test all(a -> abs(a - π) / π < 1e-4, areas)
+        end
+    end
+
+    include("test_kirchhoff.jl")
 end
