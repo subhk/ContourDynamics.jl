@@ -1,47 +1,74 @@
-# Green's function velocity implementations for unbounded domains.
+# Contour dynamics velocity implementations for unbounded domains.
 #
 # Sign convention: positive PV induces counterclockwise circulation.
-# Euler: G(r) = -1/(2π) log(r), v = ∇⊥ψ = (-∂ψ/∂y, ∂ψ/∂x)
-# The velocity induced by a contour segment is computed via the boundary integral
-# of the Green's function along the contour.
+# For a vortex patch with uniform vorticity q bounded by contour C,
+# the velocity is obtained by converting the area integral of the
+# Green's function to a contour integral via Green's theorem:
+#
+#   u(x) = -(q/(4π)) ∮_C log|x-x'|² dy'
+#   v(x) =  (q/(4π)) ∮_C log|x-x'|² dx'
+#
+# Each segment contribution is integrated analytically.
 
 """
     segment_velocity(::EulerKernel, ::UnboundedDomain, x, a, b)
 
-Velocity at point `x` due to a vortex sheet segment from node `a` to node `b`
-with unit PV jump, using the 2D Euler Green's function in an unbounded domain.
+Velocity at point `x` due to a vortex patch contour segment from node `a`
+to node `b` with unit PV jump, using the 2D Euler Green's function in an
+unbounded domain.
 
-Uses the analytic integral of -1/(2π) ∇⊥log(r) along the segment.
+Computes the contour dynamics integral analytically:
+  v_seg = (1/(4π)) * (-(by-ay), (bx-ax)) * ∫₀¹ log|x - a - t(b-a)|² dt
 """
 function segment_velocity(::EulerKernel, ::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    ra = a - x
-    rb = b - x
     ds = b - a
+    ds_len_sq = ds[1]^2 + ds[2]^2
+    ds_len = sqrt(ds_len_sq)
 
-    ra_sq = ra[1]^2 + ra[2]^2
-    rb_sq = rb[1]^2 + rb[2]^2
-
-    eps2 = eps(T)^2
-    if ra_sq < eps2 || rb_sq < eps2
-        return zero(SVector{2,T})
-    end
-
-    cross_ab = ra[1]*rb[2] - ra[2]*rb[1]
-    dot_ab = ra[1]*rb[1] + ra[2]*rb[2]
-
-    theta = atan(cross_ab, dot_ab)
-    log_ratio = T(0.5) * log(rb_sq / ra_sq)
-
-    ds_len = sqrt(ds[1]^2 + ds[2]^2)
     if ds_len < eps(T)
         return zero(SVector{2,T})
     end
+
     t_hat = ds / ds_len
     n_hat = SVector{2,T}(-t_hat[2], t_hat[1])
 
-    inv2pi = one(T) / (2 * T(π))
-    return -inv2pi * (theta * t_hat + log_ratio * n_hat)
+    r0 = x - a  # vector from a to x
+    # Project onto segment coordinates
+    u_a = r0[1] * t_hat[1] + r0[2] * t_hat[2]   # tangential component
+    h   = r0[1] * n_hat[1] + r0[2] * n_hat[2]    # normal component
+    u_b = u_a - ds_len
+
+    h_sq = h * h
+    eps2 = eps(T)^2
+
+    # Antiderivative F(u) = u*log(u^2 + h^2) - 2u + 2|h|*atan(u/|h|)
+    # Handle h ≈ 0 case (point on segment line)
+    function F(u)
+        r2 = u*u + h_sq
+        if r2 < eps2
+            return zero(T)
+        end
+        val = u * log(r2) - 2*u
+        if abs(h) > eps(T)
+            val += 2 * h * atan(u, h)
+        else
+            # h = 0: atan(u/h) = ±π/2 for u ≠ 0
+            if u > zero(T)
+                val += h * T(π)
+            elseif u < zero(T)
+                val -= h * T(π)
+            end
+        end
+        return val
+    end
+
+    I = (F(u_a) - F(u_b)) / ds_len
+
+    # v_seg = (1/(4π)) * (dx', dy') * I = (1/(4π)) * ds * I
+    # = (1/(4π)) * t_hat * |ds| * I = (1/(4π)) * t_hat * (F(u_a) - F(u_b))
+    inv4pi = one(T) / (4 * T(π))
+    return inv4pi * t_hat * (F(u_a) - F(u_b))
 end
 
 """
