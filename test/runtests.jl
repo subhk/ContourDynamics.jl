@@ -213,4 +213,54 @@ include("test_utils.jl")
         @test all(v -> all(isfinite, v), vel[2])
         @test any(v -> sqrt(v[1]^2 + v[2]^2) > 1e-10, vel[1])
     end
+
+    @testset "Spanning Contours & Beta Staircase" begin
+        T = Float64
+        domain = PeriodicDomain(T(3.0))
+
+        # beta_staircase creates correct number of spanning contours
+        staircase = beta_staircase(T(1.0), domain, 6; nodes_per_contour=16)
+        @test length(staircase) == 5  # n_steps - 1
+
+        # Each contour is spanning with correct wrap
+        for c in staircase
+            @test is_spanning(c)
+            @test c.wrap == SVector{2,T}(6.0, 0.0)
+            @test nnodes(c) == 16
+        end
+
+        # PV jump = beta * dy
+        dy = 2 * 3.0 / 6
+        @test staircase[1].pv ≈ 1.0 * dy
+
+        # Spanning contours have zero area (skip in diagnostics)
+        @test vortex_area(staircase[1]) == zero(T)
+
+        # next_node wraps correctly for spanning contours
+        c = staircase[1]
+        last_node = c.nodes[end]
+        wrapped = next_node(c, nnodes(c))
+        @test wrapped ≈ c.nodes[1] + c.wrap
+
+        # Velocity computation works with spanning + closed contours mixed
+        vortex = PVContour([SVector{2,T}(0.3*cos(2π*k/16), 0.3*sin(2π*k/16)) for k in 0:15], T(2π))
+        all_contours = vcat(staircase, [vortex])
+        kernel = QGKernel(T(1.0))
+        prob = ContourProblem(kernel, domain, all_contours)
+        vel = zeros(SVector{2,T}, total_nodes(prob))
+        velocity!(vel, prob)
+        @test all(v -> all(isfinite, v), vel)
+
+        # Surgery skips spanning contours in reconnection and filament removal
+        params = SurgeryParams(T(0.1), T(0.05), T(0.5), T(1e-4), 10)
+        surgery!(prob, params)
+        # All spanning contours should survive surgery
+        n_spanning = count(is_spanning, prob.contours)
+        @test n_spanning == 5
+
+        # Remesh preserves wrap
+        remeshed = remesh(staircase[1], params)
+        @test is_spanning(remeshed)
+        @test remeshed.wrap == staircase[1].wrap
+    end
 end
