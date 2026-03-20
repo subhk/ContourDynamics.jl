@@ -8,6 +8,18 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
+[weakdeps]
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+GeophysicalFlows = "44ee3b1c-bc02-53fa-8355-8e347616e15e"
+RecordedArrays = "ff8dd329-ec6c-4f0e-9d08-4b87e1122caa"
+
+[extensions]
+ContourDynamicsDiffEqExt = "OrdinaryDiffEq"
+ContourDynamicsMakieExt = "Makie"
+ContourDynamicsGeophysicalFlowsExt = "GeophysicalFlows"
+ContourDynamicsRecordedArraysExt = "RecordedArrays"
+
 [compat]
 julia = "1.10"
 SpecialFunctions = "2"

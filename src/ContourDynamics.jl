@@ -27,4 +27,17 @@ export remesh, arc_lengths, surgery!
 export EwaldCache, build_ewald_cache, clear_ewald_cache!
 export timestep!, resize_buffers!, evolve!
 
+# Extension stubs — implemented by package extensions
+function flatten_nodes end
+function unflatten_nodes! end
+function to_ode_problem end
+function record_evolution end
+function contours_from_gridfield end
+function gridfield_from_contours end
+function recorded_diagnostics end
+
+export flatten_nodes, unflatten_nodes!, to_ode_problem, record_evolution
+export contours_from_gridfield, gridfield_from_contours
+export recorded_diagnostics
+
 end # module
