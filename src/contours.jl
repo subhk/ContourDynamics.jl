@@ -4,13 +4,13 @@
 Redistribute nodes along contour `c` so that every segment length lies between
 `params.mu` and `params.Delta_max`.  Returns a new [`PVContour`](@ref).
 """
-function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
+function remesh(c::PVContour{T}, params::SurgeryParams) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return c
 
-    mu = params.mu
-    Delta_max = params.Delta_max
+    mu = T(params.mu)
+    Delta_max = T(params.Delta_max)
 
     # Phase 1: compute cumulative arc lengths along the full contour perimeter,
     # including the closing segment (nodes[n] → nodes[1] + wrap).
