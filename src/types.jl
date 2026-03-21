@@ -44,7 +44,9 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     function MultiLayerQGKernel(Ld::SVector{M, T}, coupling::SMatrix{N, N, T}, H::SVector{N, T}) where {N, M, T<:AbstractFloat}
         M == N - 1 || throw(ArgumentError("Number of deformation radii M=$M must equal N-1=$(N-1)"))
         all(>(zero(T)), H) || throw(ArgumentError("Layer thicknesses must be positive"))
-        eig = eigen(Symmetric(Matrix(coupling)))
+        cmat = Matrix(coupling)
+        issymmetric(cmat) || throw(ArgumentError("Coupling matrix must be symmetric; got asymmetry ‖C-Cᵀ‖ = $(norm(cmat - cmat', Inf))"))
+        eig = eigen(Symmetric(cmat))
         eigenvalues = SVector{N,T}(eig.values)
         eigenvectors = SMatrix{N,N,T}(eig.vectors)
         eigenvectors_inv = SMatrix{N,N,T}(inv(eig.vectors))
@@ -239,12 +241,13 @@ The first step is bootstrapped with a forward-Euler half-step.
 mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
     dt::T
     nodes_prev::Vector{SVector{2, T}}
-    vel_buf::Vector{SVector{2, T}}  # pre-allocated velocity buffer
+    vel_buf::Vector{SVector{2, T}}      # pre-allocated velocity buffer
+    nodes_buf::Vector{SVector{2, T}}    # pre-allocated current-nodes buffer
     initialized::Bool
     ra_coeff::T  # Robert-Asselin filter coefficient (0 = no filter)
 end
 
 function LeapfrogStepper(dt::T, n::Int; ra_coeff::T=T(0.05)) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    LeapfrogStepper(dt, fill(z, n), fill(z, n), false, ra_coeff)
+    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), false, ra_coeff)
 end
