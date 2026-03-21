@@ -28,6 +28,30 @@ struct QGKernel{T<:AbstractFloat} <: AbstractKernel
 end
 
 """
+    SQGKernel{T}(delta)
+
+Kernel for surface quasi-geostrophic (SQG) dynamics using the fractional
+Laplacian Green's function `G(r) = -1/(2πr)`.
+
+The SQG velocity at a contour boundary is singular (the tangential component
+diverges logarithmically), so a **regularization length** `delta > 0` is
+required.  The kernel `1/r` is replaced by `1/√(r² + δ²)`.  A typical choice
+is `delta ≈ μ`, the minimum segment length used for surgery.
+
+# Sign convention
+
+Positive PV (surface buoyancy) induces counter-clockwise circulation, matching
+the `EulerKernel` convention.
+"""
+struct SQGKernel{T<:AbstractFloat} <: AbstractKernel
+    delta::T
+    function SQGKernel(delta::T) where {T<:AbstractFloat}
+        delta > zero(T) || throw(ArgumentError("Regularization δ must be positive, got $delta"))
+        new{T}(delta)
+    end
+end
+
+"""
     MultiLayerQGKernel{N,M,T}(Ld, coupling, H)
 
 Kernel for `N`-layer quasi-geostrophic dynamics with `M = N-1` deformation radii `Ld`,
