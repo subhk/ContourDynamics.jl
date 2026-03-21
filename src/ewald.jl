@@ -109,6 +109,10 @@ end
 # Values are snapped to a canonical grid (1024 ULPs) so that near-identical
 # domain parameters from different arithmetic paths share the same cache entry.
 # FIFO eviction via _ewald_key_order vectors: oldest entries evicted first.
+#
+# NOTE: These are module-level globals shared across all problems and threads.
+# clear_ewald_cache!() affects ALL concurrent simulations.  Tests should call
+# it in a setup block to avoid cache pollution between test cases.
 @inline function _snap(x::T) where {T<:AbstractFloat}
     e = T(1024) * eps(x)
     return round(x / e) * e
@@ -337,7 +341,10 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
             end
         end
 
-        # Fourier-space sum (smooth)
+        # Fourier-space sum (smooth).
+        # r_vec0 is intentionally NOT minimum-image wrapped: cos(k·r) is
+        # periodic with the same periods as the domain, so wrapping has no
+        # effect on the phase.
         for (mi, kxi) in enumerate(cache.kx)
             for (ni, kyi) in enumerate(cache.ky)
                 coeff = cache.fourier_coeffs[mi, ni]
