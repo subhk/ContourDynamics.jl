@@ -18,6 +18,7 @@ makedocs(;
             "Quasi-Geostrophic" => "tutorial_qg.md",
         ],
         "Examples" => "examples.md",
+        "Theory & Method" => "theory.md",
         "API Reference" => "api.md",
     ],
     warnonly = true,
