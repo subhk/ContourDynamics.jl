@@ -171,7 +171,7 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
         new_nodes = vcat(
             c1.nodes[1:i],
             c2_nodes[j_eff:n2],
-            c2_nodes[1:j_eff],
+            c2_nodes[1:j_eff-1],  # exclude j_eff to avoid duplicate at stitch point
             c1.nodes[(i+1):n1]
         )
         contours[ci] = PVContour(new_nodes, c1.pv)
