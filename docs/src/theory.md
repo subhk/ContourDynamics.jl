@@ -126,6 +126,18 @@ G_{\text{QG,per}} = G_{\text{Euler,per}} + \underbrace{\frac{1}{A}\sum_{\mathbf{
 
 where ``\kappa = 1/L_d``. The Euler periodic part uses the full Ewald machinery, and the QG correction is a smooth, rapidly convergent (``\sim 1/k^4``) Fourier series.
 
+### SQG Periodic Decomposition
+
+For the SQG kernel ``G(r) = -1/(2\pi r)`` on a periodic domain, the Ewald splitting decomposes the periodic sum of ``1/r`` into:
+
+```math
+\sum_{\mathbf{n}} \frac{1}{|\mathbf{r} - \mathbf{L}_\mathbf{n}|} = \sum_{\mathbf{n}} \frac{\operatorname{erfc}(\alpha|\mathbf{r} - \mathbf{L}_\mathbf{n}|)}{|\mathbf{r} - \mathbf{L}_\mathbf{n}|} + \frac{2\pi}{A}\sum_{\mathbf{k}\neq 0} \frac{e^{-|\mathbf{k}|^2/(4\alpha^2)}}{|\mathbf{k}|}\cos(\mathbf{k}\cdot\mathbf{r})
+```
+
+The Fourier coefficients decay as ``1/|\mathbf{k}|`` (compared to ``1/k^2`` for Euler), reflecting the fractional Laplacian's half-order nature.
+
+The periodic segment velocity uses singular subtraction: the regularized unbounded SQG velocity (exact ``\operatorname{arcsinh}`` antiderivative with ``\delta > 0``) handles the ``1/r`` singularity, and the smooth correction is integrated with 3-point Gauss-Legendre quadrature. The central-image correction ``\operatorname{erfc}(\alpha r)/r - 1/\sqrt{r^2+\delta^2}`` is finite at all quadrature points since the evaluation distance ``r > 0``.
+
 ## Contour Surgery
 
 The Dritschel surgery algorithm (Dritschel, 1988) handles the topological changes that arise during long-time evolution.
