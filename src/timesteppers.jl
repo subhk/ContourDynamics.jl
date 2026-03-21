@@ -329,6 +329,7 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
 end
 
 function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) where {N}
+    domain = prob.domain
     for i in 1:N
         contours = prob.layers[i]
         for j in eachindex(contours)
@@ -337,10 +338,10 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
         reconnected = false
         max_reconnect_iter = 100
         for iter in 1:max_reconnect_iter
-            idx = build_spatial_index(contours, params.delta)
-            close_pairs = find_close_segments(contours, idx, params.delta)
+            idx = build_spatial_index(contours, params.delta, domain)
+            close_pairs = find_close_segments(contours, idx, params.delta, domain)
             isempty(close_pairs) && break
-            reconnect!(contours, close_pairs)
+            reconnect!(contours, close_pairs, domain)
             reconnected = true
             if iter == max_reconnect_iter
                 @warn "surgery!: layer $i reconnection limit ($max_reconnect_iter) reached with $(length(close_pairs)) close pairs remaining"

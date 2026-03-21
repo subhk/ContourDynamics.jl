@@ -57,6 +57,12 @@ end
 Kernel for `N`-layer quasi-geostrophic dynamics with `M = N-1` deformation radii `Ld`,
 layer coupling matrix `coupling`, and layer thicknesses `H`.  The constructor
 eigen-decomposes the coupling matrix for efficient velocity evaluation.
+
+!!! note
+    The evolution and energy diagnostics derive modal deformation radii from the
+    coupling matrix eigenvalues (`Ld_mode = 1/√|λ|`), **not** from the provided `Ld`.
+    `Ld` is stored for user reference and introspection but does not affect dynamics.
+    Ensure that the coupling matrix is consistent with your intended deformation radii.
 """
 struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     Ld::SVector{M, T}
@@ -67,6 +73,7 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     eigenvectors_inv::SMatrix{N, N, T}
     function MultiLayerQGKernel(Ld::SVector{M, T}, coupling::SMatrix{N, N, T}, H::SVector{N, T}) where {N, M, T<:AbstractFloat}
         M == N - 1 || throw(ArgumentError("Number of deformation radii M=$M must equal N-1=$(N-1)"))
+        all(>(zero(T)), Ld) || throw(ArgumentError("Deformation radii Ld must all be positive"))
         all(>(zero(T)), H) || throw(ArgumentError("Layer thicknesses must be positive"))
         cmat = Matrix(coupling)
         issymmetric(cmat) || throw(ArgumentError("Coupling matrix must be symmetric; got asymmetry ‖C-Cᵀ‖ = $(norm(cmat - cmat', Inf))"))
@@ -74,6 +81,33 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
         eigenvalues = SVector{N,T}(eig.values)
         eigenvectors = SMatrix{N,N,T}(eig.vectors)
         eigenvectors_inv = SMatrix{N,N,T}(inv(eig.vectors))
+
+        # Physical validation: coupling eigenvalues should be non-positive
+        # (the stretching operator is dissipative in the QG energy norm)
+        for (m, λ) in enumerate(eigenvalues)
+            if λ > eps(T) * T(100)
+                @warn "MultiLayerQGKernel: coupling eigenvalue λ[$m] = $λ is positive; " *
+                      "physical coupling matrices should have non-positive eigenvalues" maxlog=1
+                break
+            end
+        end
+
+        # Warn if Ld appears inconsistent with the modal radii the evolution
+        # will actually use, so silent mis-specification is caught early.
+        modal_radii = T[one(T) / sqrt(abs(λ)) for λ in eigenvalues if abs(λ) > eps(T) * T(100)]
+        if length(modal_radii) == M
+            sorted_modal = sort(modal_radii)
+            sorted_Ld = sort(Vector(Ld))
+            max_ratio = maximum(max(sorted_modal[m] / sorted_Ld[m],
+                                    sorted_Ld[m] / sorted_modal[m]) for m in 1:M)
+            if max_ratio > T(10)
+                @warn "MultiLayerQGKernel: provided Ld = $(Vector(Ld)) differs substantially " *
+                      "(ratio > 10) from modal radii derived from coupling eigenvalues: " *
+                      "$(round.(modal_radii; digits=4)). Note: the evolution uses modal radii " *
+                      "from eigenvalues; provided Ld is stored but not used in dynamics." maxlog=1
+            end
+        end
+
         new{N, M, T}(Ld, coupling, H, eigenvalues, eigenvectors, eigenvectors_inv)
     end
 end

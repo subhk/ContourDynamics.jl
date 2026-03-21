@@ -125,10 +125,10 @@ function _cache_key(domain::PeriodicDomain{T}, ::EulerKernel) where {T}
     (_snap(domain.Lx), _snap(domain.Ly), EulerKernel, zero(T))::_EwaldCacheKey{T}
 end
 function _cache_key(domain::PeriodicDomain{T}, k::QGKernel{T}) where {T}
-    (_snap(domain.Lx), _snap(domain.Ly), QGKernel, _snap(k.Ld))::_EwaldCacheKey{T}
+    (_snap(domain.Lx), _snap(domain.Ly), QGKernel{T}, _snap(k.Ld))::_EwaldCacheKey{T}
 end
 function _cache_key(domain::PeriodicDomain{T}, k::SQGKernel{T}) where {T}
-    (_snap(domain.Lx), _snap(domain.Ly), SQGKernel, _snap(k.delta))::_EwaldCacheKey{T}
+    (_snap(domain.Lx), _snap(domain.Ly), SQGKernel{T}, _snap(k.delta))::_EwaldCacheKey{T}
 end
 
 _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
@@ -185,6 +185,36 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
         end
         caches[key] = build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images)
     end
+    return nothing
+end
+
+"""
+    setup_ewald_cache!(domain, kernel::QGKernel; n_fourier=8, n_images=2)
+
+Pre-build Ewald caches for QG velocity computation.  The periodic QG velocity
+decomposes as `G_QG_per = G_Euler_per + G_correction`, so the velocity path
+uses an Euler Ewald cache internally.  This method builds both the QG-specific
+cache and the Euler cache that the velocity path actually reads, ensuring that
+custom `n_fourier`/`n_images` parameters take effect.
+"""
+function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
+                            n_fourier::Int=8, n_images::Int=2) where {T}
+    # Store QG-specific cache (for direct queries / introspection)
+    key = _cache_key(domain, kernel)
+    caches = _ewald_cache_dict(T)
+    order = _ewald_key_order(T)
+    lock(_ewald_cache_lock) do
+        if !haskey(caches, key)
+            while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
+                old_key = popfirst!(order)
+                delete!(caches, old_key)
+            end
+            push!(order, key)
+        end
+        caches[key] = build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images)
+    end
+    # Also build the Euler cache that the QG velocity path actually uses
+    setup_ewald_cache!(domain, EulerKernel(); n_fourier=n_fourier, n_images=n_images)
     return nothing
 end
 
