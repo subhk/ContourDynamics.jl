@@ -259,6 +259,23 @@ function _make_vel_tuple(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K
     ntuple(i -> zeros(SVector{2,T}, sum(nnodes(c) for c in prob.layers[i]; init=0)), Val(N))
 end
 
+"""Ensure stepper.vel_bufs has the right number and size of buffers for multi-layer problems."""
+function _ensure_vel_bufs!(vel_bufs::Vector{Vector{SVector{2, T}}},
+                           prob::MultiLayerContourProblem{N}) where {N, T}
+    z = zero(SVector{2, T})
+    # Grow the outer vector if needed (first call or layer count changed)
+    while length(vel_bufs) < N
+        push!(vel_bufs, SVector{2, T}[])
+    end
+    # Resize each layer's buffer to match current node count
+    for i in 1:N
+        n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
+        resize!(vel_bufs[i], n_layer)
+        fill!(vel_bufs[i], z)
+    end
+    return ntuple(i -> vel_bufs[i], Val(N))
+end
+
 function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVector{2,T}},
                            delta::Vector{SVector{2,T}}, scale::T) where {N, T}
     Ntot = total_nodes(prob)
@@ -283,7 +300,7 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     @assert length(k1) >= Ntot "Stepper buffer size ($(length(k1))) < total nodes ($Ntot). Call resize_buffers! first."
     _collect_all_nodes!(nodes_orig, prob)
 
-    vel_tuple = _make_vel_tuple(prob)
+    vel_tuple = _ensure_vel_bufs!(stepper.vel_bufs, prob)
 
     # k1
     velocity!(vel_tuple, prob)
@@ -369,6 +386,7 @@ function resize_buffers!(stepper::RK4Stepper{T}, prob::MultiLayerContourProblem)
     resize!(stepper.k3, N); fill!(stepper.k3, z)
     resize!(stepper.k4, N); fill!(stepper.k4, z)
     resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
+    empty!(stepper.vel_bufs)  # will be re-populated on next timestep
     return stepper
 end
 
@@ -379,18 +397,18 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
     @assert length(nodes_current) >= Ntot "Stepper buffer size ($(length(nodes_current))) < total nodes ($Ntot). Call resize_buffers! first."
     _collect_all_nodes!(nodes_current, prob)
 
-    vel_tuple = _make_vel_tuple(prob)
+    vel_tuple = _ensure_vel_bufs!(stepper.vel_bufs, prob)
     velocity!(vel_tuple, prob)
     flat_vel = stepper.vel_buf
     _collect_velocities!(flat_vel, vel_tuple)
 
     if !stepper.initialized
         _scatter_shifted!(prob, nodes_current, flat_vel, dt / 2)
-        vel_tuple2 = _make_vel_tuple(prob)
-        velocity!(vel_tuple2, prob)
+        vel_tuple = _ensure_vel_bufs!(stepper.vel_bufs, prob)
+        velocity!(vel_tuple, prob)
         # One-time allocation for bootstrap midpoint velocity
         flat_vel_mid = Vector{SVector{2,T}}(undef, Ntot)
-        _collect_velocities!(flat_vel_mid, vel_tuple2)
+        _collect_velocities!(flat_vel_mid, vel_tuple)
         @inbounds for i in 1:Ntot
             stepper.nodes_prev[i] = nodes_current[i]
             nodes_current[i] = nodes_current[i] + dt * flat_vel_mid[i]
@@ -417,5 +435,6 @@ function resize_buffers!(stepper::LeapfrogStepper{T}, prob::MultiLayerContourPro
     resize!(stepper.vel_buf, N); fill!(stepper.vel_buf, z)
     resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
     stepper.initialized = false
+    empty!(stepper.vel_bufs)  # will be re-populated on next timestep
     return stepper
 end
