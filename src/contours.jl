@@ -83,7 +83,8 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
 
     # Final check: if the closing segment (new last node → new_nodes[1] + wrap)
     # is still too short after redistribution, remove the last node.
-    if length(new_nodes) >= 4
+    # Guard: never drop below 3 nodes (minimum for a valid contour).
+    if length(new_nodes) > 3
         close_target = new_nodes[1] + c.wrap
         d_final = close_target - new_nodes[end]
         final_len = sqrt(d_final[1]^2 + d_final[2]^2)
