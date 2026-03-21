@@ -138,14 +138,14 @@ end
 
 Velocity at point `x` from segment `a→b` in a periodic domain using Ewald summation.
 
-The contour dynamics segment velocity for the Euler kernel is:
-  v_seg = ds * ∫₀¹ G_per(x - s(t)) dt
+Uses singular subtraction: the log singularity is handled analytically by the
+unbounded Euler segment velocity, and only the smooth periodic correction
+`G_per - G_∞` is integrated with 3-point Gauss-Legendre quadrature.
 
-where G_per is the periodic Green's function and ds = b - a.
-
-The Ewald decomposition splits G_per = G_real + G_fourier:
-- Real space: G_real(r) = +(1/(4π)) Σ_images E₁(α²|r+shift|²)
-- Fourier space: G_fourier(r) = (1/A) Σ_{k≠0} exp(-k²/(4α²)) cos(k·r) / k²
+The periodic correction decomposes as:
+- Central-image real-space: (1/(4π))[E₁(α²r²) + log(r²)] → (1/(4π))(-γ - 2ln α) as r→0
+- Non-central real-space: (1/(4π)) Σ_{images≠0} E₁(α²|r+shift|²)  (smooth)
+- Fourier space: Σ_{k≠0} coeff * cos(k·r)  (smooth)
 """
 function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -157,54 +157,67 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
     ds_len = sqrt(ds[1]^2 + ds[2]^2)
     ds_len < eps(T) && return zero(SVector{2,T})
 
-    # 3-point Gauss-Legendre quadrature on [-1,1]
+    # Analytic unbounded Euler contribution (handles the log singularity exactly)
+    v_unbounded = segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
+
+    # Smooth periodic correction: G_per(r) - G_∞(r)
+    # G_∞(r) = -(1/(4π)) log(r²), so we subtract it from the central Ewald image.
+    # All terms in the correction are bounded at r=0 → GL quadrature is accurate.
     g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     mid = (a + b) / 2
     half_ds = ds / 2
 
     inv4pi = one(T) / (4 * T(π))
+    gamma_euler = T(Base.MathConstants.eulergamma)
 
-    G_integral = zero(T)
+    corr_integral = zero(T)
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
-        G_val = zero(T)
+        r_vec0 = x - s_pt
+        G_corr = zero(T)
 
-        # Real-space Ewald sum for G(r) = -(1/(2π)) log(r) = -(1/(4π)) log(r²).
-        # The Ewald real-space part is: +(1/(4π)) Σ_images E₁(α²|r+shift|²).
-        # For small α²r²: E₁(x) ≈ -ln(x) - γ, so
-        #   (1/(4π)) E₁(α²r²) ≈ -(1/(4π)) ln(r²) + const = G(r) + const.
-        # Thus the real-space sum recovers G for the central image, with
-        # exponentially decaying contributions from periodic images.
+        # Real-space Ewald sum with central-image singularity subtracted
         for px in -cache.n_images:cache.n_images
             for py in -cache.n_images:cache.n_images
                 shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-                r_vec = x - s_pt - shift
+                r_vec = r_vec0 - shift
                 r2 = r_vec[1]^2 + r_vec[2]^2
-                if r2 > eps(T)
-                    G_val += inv4pi * _expint_e1(alpha^2 * r2)
+                if px == 0 && py == 0
+                    # Central image: compute E₁(α²r²) + log(r²) which is smooth at r=0.
+                    # Limit as r→0: E₁(x) + log(x) → -γ, and log(r²) = log(x/α²),
+                    # so E₁(α²r²) + log(r²) → -γ - 2*log(α).
+                    if r2 > eps(T)
+                        G_corr += inv4pi * (_expint_e1(alpha^2 * r2) + log(r2))
+                    else
+                        G_corr += inv4pi * (-gamma_euler - 2 * log(alpha))
+                    end
+                else
+                    # Non-central images: already smooth
+                    if r2 > eps(T)
+                        G_corr += inv4pi * _expint_e1(alpha^2 * r2)
+                    end
                 end
             end
         end
 
-        # Fourier-space sum
+        # Fourier-space sum (smooth)
         for (mi, kxi) in enumerate(cache.kx)
             for (ni, kyi) in enumerate(cache.ky)
                 coeff = cache.fourier_coeffs[mi, ni]
                 abs(coeff) < eps(T) && continue
-                r_vec = x - s_pt
-                phase = kxi * r_vec[1] + kyi * r_vec[2]
-                G_val += coeff * cos(phase)
+                phase = kxi * r_vec0[1] + kyi * r_vec0[2]
+                G_corr += coeff * cos(phase)
             end
         end
 
-        G_integral += g_weights[q] * G_val
+        corr_integral += g_weights[q] * G_corr
     end
 
-    # v_seg = ds * (1/2) * G_integral
-    # The 1/2 comes from the change of variables: ∫₀¹ dt = (1/2) ∫_{-1}^{1} dt'
-    return half_ds * G_integral
+    # v_periodic = v_unbounded + ds * ∫₀¹ [G_per - G_∞] dt
+    # The ∫₀¹ dt = (1/2) ∫_{-1}^{1} dt' gives the half_ds factor.
+    return v_unbounded + half_ds * corr_integral
 end
 
 """
