@@ -127,6 +127,35 @@ Each sub-contour produced by a split contains both pinch-point nodes as
 its first and last vertices, ensuring a well-formed closing segment.
 Merged contours are stitched so that traversal orientation is preserved.
 """
+"""
+    _best_stitch_nodes(c1, i1, c2, i2)
+
+Given that segment `i1` of contour `c1` is close to segment `i2` of contour `c2`,
+find the pair of node indices (one from each contour) that are closest.
+Returns `(best_i1, best_i2)` — node indices into `c1.nodes` and `c2.nodes`.
+"""
+function _best_stitch_nodes(c1::PVContour{T}, i1::Int, c2::PVContour{T}, i2::Int) where {T}
+    nc1 = nnodes(c1)
+    nc2 = nnodes(c2)
+    # Candidate node indices: start and end of each close segment
+    i1_end = mod1(i1 + 1, nc1)
+    i2_end = mod1(i2 + 1, nc2)
+    best_d2 = typemax(T)
+    best = (i1, i2)
+    for ni in (i1, i1_end)
+        p1 = c1.nodes[ni]
+        for nj in (i2, i2_end)
+            p2 = c2.nodes[nj]
+            d2 = (p1[1] - p2[1])^2 + (p1[2] - p2[2])^2
+            if d2 < best_d2
+                best_d2 = d2
+                best = (ni, nj)
+            end
+        end
+    end
+    return best
+end
+
 function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{Int,Int,Int,Int}}) where {T}
     isempty(close_pairs) && return
 
@@ -136,9 +165,9 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
     ci, i, cj, j = pair
 
     if ci == cj
-        # Split: pinch contour at nodes i and j to create two daughter contours.
-        # Ensure i < j for consistent ordering.
+        # Split: pinch contour at the closest node pair from the two segments.
         c = contours[ci]
+        i, j = _best_stitch_nodes(c, i, c, j)
         nc = nnodes(c)
         lo, hi = minmax(i, j)
 
@@ -152,12 +181,13 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
             push!(contours, PVContour(nodes2, c.pv))
         end
     else
-        # Merge: stitch two same-PV contours at their closest segments.
-        # Preserves traversal orientation of both contours.
+        # Merge: stitch two same-PV contours at their closest node pair.
         c1 = contours[ci]
         c2 = contours[cj]
         n1 = nnodes(c1)
         n2 = nnodes(c2)
+
+        i, j = _best_stitch_nodes(c1, i, c2, j)
 
         # Check orientation consistency: both contours should have the same
         # sign of signed area. If they differ, reverse c2's node order so
@@ -187,6 +217,35 @@ function remove_filaments!(contours::Vector{PVContour{T}}, area_min::T) where {T
 end
 
 # ── Top-Level Surgery ────────────────────────────────────
+
+"""
+    _check_spanning_proximity(contours, delta)
+
+Warn if any closed contour node is within `delta` of a spanning contour node.
+This situation cannot be resolved by surgery (spanning contours are exempt from
+reconnection) and may indicate insufficient resolution or an overly large delta.
+"""
+function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta::T) where {T}
+    delta2 = delta^2
+    spanning_nodes = SVector{2,T}[]
+    for c in contours
+        is_spanning(c) || continue
+        append!(spanning_nodes, c.nodes)
+    end
+    isempty(spanning_nodes) && return
+    for c in contours
+        is_spanning(c) && continue
+        for node in c.nodes
+            for sn in spanning_nodes
+                d2 = (node[1] - sn[1])^2 + (node[2] - sn[2])^2
+                if d2 < delta2
+                    @warn "surgery!: closed contour node within delta of spanning contour — this cannot be resolved by reconnection" distance=sqrt(d2) delta maxlog=1
+                    return
+                end
+            end
+        end
+    end
+end
 
 """
     surgery!(prob::ContourProblem, params::SurgeryParams)
@@ -226,6 +285,9 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
 
     # 4. Remove filaments
     remove_filaments!(contours, params.area_min)
+
+    # 5. Warn if closed contours are too close to spanning contours
+    _check_spanning_proximity(contours, params.delta)
 
     return prob
 end
