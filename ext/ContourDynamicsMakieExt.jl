@@ -9,9 +9,16 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
-    Makie.record(fig, filename, 1:frameskip:nsteps; framerate=30) do frame
-        steps_to_take = min(frameskip, nsteps - (frame - 1))
-        evolve!(prob, stepper, params; nsteps=steps_to_take)
+    # Include frame 0 (initial state) followed by evolution frames
+    frame_indices = vcat([0], collect(frameskip:frameskip:nsteps))
+
+    Makie.record(fig, filename, frame_indices; framerate=30) do frame
+        # Evolve only for frames after the initial state
+        if frame > 0
+            prev_frame = frame - frameskip
+            steps_to_take = min(frameskip, nsteps - max(prev_frame, 0))
+            steps_to_take > 0 && evolve!(prob, stepper, params; nsteps=steps_to_take)
+        end
         Makie.empty!(ax)
         for c in prob.contours
             nodes = c.nodes
