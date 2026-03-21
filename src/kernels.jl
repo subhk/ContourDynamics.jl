@@ -147,13 +147,14 @@ Compute velocity at a single point `x` from all contours in `prob`.
 """
 function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
     v = zero(SVector{2,T})
+    ewald = _prefetch_ewald(prob.domain, prob.kernel)
     for c in prob.contours
         nc = nnodes(c)
         nc < 2 && continue
         for j in 1:nc
             a = c.nodes[j]
             b = next_node(c, j)
-            v = v + c.pv * segment_velocity(prob.kernel, prob.domain, x, a, b)
+            v = v + c.pv * segment_velocity(prob.kernel, prob.domain, x, a, b, ewald)
         end
     end
     return v
