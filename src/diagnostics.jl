@@ -615,7 +615,7 @@ function angular_momentum(prob::MultiLayerContourProblem{N, K, D, T}) where {N, 
     return s
 end
 
-function energy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where {N, K, T}
     kernel = prob.kernel
     evals = kernel.eigenvalues
     P_inv = kernel.eigenvectors_inv
@@ -640,6 +640,48 @@ function energy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
                         else
                             Ld_mode = one(T) / sqrt(abs(lam))
                             pair_E = _energy_contour_pair_qg(ci, cj, Ld_mode)
+                        end
+                        E += wi * wj * ci.pv * cj.pv * pair_E
+                    end
+                end
+            end
+        end
+    end
+
+    inv4pi = one(T) / (4 * T(π))
+    return -inv4pi * E / 2
+end
+
+function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) where {N, K, T}
+    kernel = prob.kernel
+    domain = prob.domain
+    evals = kernel.eigenvalues
+    P_inv = kernel.eigenvectors_inv
+    E = zero(T)
+
+    euler_cache = _get_ewald_cache(domain, EulerKernel())
+    area = 4 * domain.Lx * domain.Ly
+
+    for mode in 1:N
+        lam = evals[mode]
+        for li in 1:N
+            wi = P_inv[mode, li]
+            abs(wi) < eps(T) && continue
+            for lj in 1:N
+                wj = P_inv[mode, lj]
+                abs(wj) < eps(T) && continue
+                for ci in prob.layers[li]
+                    nci = nnodes(ci)
+                    nci < 2 && continue
+                    for cj in prob.layers[lj]
+                        ncj = nnodes(cj)
+                        ncj < 2 && continue
+                        if abs(lam) < eps(T) * 100
+                            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain)
+                        else
+                            kappa2 = abs(lam)
+                            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain)
+                            pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area)
                         end
                         E += wi * wj * ci.pv * cj.pv * pair_E
                     end
