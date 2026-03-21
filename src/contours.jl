@@ -37,7 +37,9 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
     # Phase 2: walk the full perimeter placing nodes at arc-length positions.
     # The loop now covers nodes 2..n AND the closing point (index n+1),
     # so the closing segment is redistributed by the same logic as interior segments.
+    # Pre-size: output typically has similar node count as input
     new_nodes = SVector{2, T}[]
+    sizehint!(new_nodes, n + div(n, 4))  # allow for some subdivision
     push!(new_nodes, nodes[1])
     target_s = zero(T)  # arc length of the last emitted node
 
