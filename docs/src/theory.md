@@ -60,6 +60,32 @@ K_0(r/L_d) = -\log(r) + \underbrace{\left[K_0(r/L_d) + \log(r)\right]}_{\text{sm
 
 The logarithmic singularity is handled by the exact Euler antiderivative. The smooth remainder ``K_0(r/L_d) + \log(r) \to \log(2L_d) - \gamma`` as ``r \to 0`` is integrated with **5-point Gauss-Legendre quadrature**.
 
+#### SQG Kernel
+
+Surface quasi-geostrophic (SQG) dynamics replaces the Laplacian PV inversion with a **fractional Laplacian**:
+
+```math
+(-\nabla^2)^{1/2}\psi = \theta
+```
+
+where ``\theta`` is the surface buoyancy. The Green's function is ``G(r) = -1/(2\pi r)``, and the contour integral becomes:
+
+```math
+\mathbf{u}(\mathbf{x}) = -\frac{1}{2\pi}\oint_C \frac{d\mathbf{x}'}{|\mathbf{x}-\mathbf{x}'|}
+```
+
+The segment integral has a closed-form antiderivative:
+
+```math
+F(u) = \log\!\left(u + \sqrt{u^2 + h_{\text{eff}}^2}\right) = \operatorname{arcsinh}\!\left(\frac{u}{\sqrt{h_{\text{eff}}^2}}\right) + \text{const}
+```
+
+Unlike the Euler and QG kernels, the SQG velocity is **singular at the contour boundary** — the tangential component diverges logarithmically. A regularization ``\delta > 0`` is required, replacing ``1/r`` with ``1/\sqrt{r^2 + \delta^2}`` so that ``h_{\text{eff}}^2 = h^2 + \delta^2``. The segment velocity remains exact (no quadrature):
+
+```math
+\mathbf{v}_{\text{seg}} = -\frac{1}{2\pi}\hat{\mathbf{t}} \left[F(u_a) - F(u_b)\right]
+```
+
 ## Ewald Summation
 
 ### Periodic Green's Functions
