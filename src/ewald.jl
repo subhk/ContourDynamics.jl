@@ -444,16 +444,14 @@ function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                 r_vec = r_vec0 - shift
                 r2 = r_vec[1]^2 + r_vec[2]^2
                 if px == 0 && py == 0
-                    # Central image: -(1/(2π))[erfc(αr)/r - 1/√(r²+δ²)]
-                    # Finite at GL points since r > 0 there.
-                    # Note: erfc(αr)/r diverges as r→0 (≈ 1/r), but GL quadrature
-                    # points are always interior to the segment so r > 0.
-                    if r2 > eps(T)
-                        r = sqrt(r2)
-                        G_corr -= inv2pi * (erfc(alpha * r) / r -
-                                            one(T) / sqrt(r2 + delta_sq))
-                    end
-                    # r ≈ 0 is unreachable at GL quadrature points
+                    # Central image: evaluate Ewald real-space at √(r²+δ²) instead
+                    # of r so the subtraction erfc(α·r_reg)/r_reg - 1/r_reg
+                    # = -erf(α·r_reg)/r_reg is bounded by 1/δ for all r ≥ 0.
+                    # This is an O(δ²/r) perturbation, within the existing
+                    # regularization error. Avoids 1/r divergence when contour
+                    # nodes from different PV levels pass very close together.
+                    r_reg = sqrt(r2 + delta_sq)
+                    G_corr += inv2pi * erf(alpha * r_reg) / r_reg
                 else
                     # Non-central images: -(1/(2π)) erfc(α|r|)/|r|  (smooth)
                     if r2 > eps(T)
