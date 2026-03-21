@@ -5,24 +5,25 @@
 # the velocity is obtained by converting the area integral of the
 # Green's function to a contour integral via Green's theorem:
 #
-#   u(x) = -(q/(4π)) ∮_C log|x-x'|² dy'
-#   v(x) =  (q/(4π)) ∮_C log|x-x'|² dx'
+#   u(x) = -(q/(4π)) ∮_C log|x-x'|² dx'
+#   v(x) = -(q/(4π)) ∮_C log|x-x'|² dy'
+#
+# i.e.  (u, v) = -(q/(4π)) ∮_C log|x-x'|²  ds'
 #
 # Each segment contribution is integrated analytically.
 
-# 5-point Gauss-Legendre nodes and weights on [-1,1], computed once per type.
-# Using @generated to const-fold the sqrt/division at compile time.
-@generated function _gl5_nodes_weights(::Type{T}) where {T<:AbstractFloat}
-    n2 = sqrt(3/7 - 2/7 * sqrt(6/5))
-    n3 = sqrt(3/7 + 2/7 * sqrt(6/5))
-    w1 = 128/225
-    w2 = (322 + 13*sqrt(70)) / 900
-    w3 = (322 - 13*sqrt(70)) / 900
-    nodes_tuple = (-n3, -n2, 0.0, n2, n3)
-    weights_tuple = (w3, w2, w1, w2, w3)
-    return quote
-        (SVector{5,$T}($nodes_tuple...), SVector{5,$T}($weights_tuple...))
-    end
+# 5-point Gauss-Legendre nodes and weights on [-1,1].
+# Computed in type T arithmetic so precision is preserved for BigFloat etc.
+# For Float64/Float32 the compiler will const-fold these trivial expressions.
+@inline function _gl5_nodes_weights(::Type{T}) where {T<:AbstractFloat}
+    n2 = sqrt(T(3)/T(7) - T(2)/T(7) * sqrt(T(6)/T(5)))
+    n3 = sqrt(T(3)/T(7) + T(2)/T(7) * sqrt(T(6)/T(5)))
+    w1 = T(128) / T(225)
+    w2 = (T(322) + T(13) * sqrt(T(70))) / T(900)
+    w3 = (T(322) - T(13) * sqrt(T(70))) / T(900)
+    nodes = SVector{5,T}(-n3, -n2, zero(T), n2, n3)
+    weights = SVector{5,T}(w3, w2, w1, w2, w3)
+    return (nodes, weights)
 end
 
 """
