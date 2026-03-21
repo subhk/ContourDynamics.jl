@@ -118,16 +118,6 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
 end
 
 """
-    reconnect!(contours, close_pairs)
-
-Perform contour reconnection for identified close segment pairs.
-Same contour → split; different contours with same PV → merge.
-
-Each sub-contour produced by a split contains both pinch-point nodes as
-its first and last vertices, ensuring a well-formed closing segment.
-Merged contours are stitched so that traversal orientation is preserved.
-"""
-"""
     _best_stitch_nodes(c1, i1, c2, i2)
 
 Given that segment `i1` of contour `c1` is close to segment `i2` of contour `c2`,
@@ -156,6 +146,16 @@ function _best_stitch_nodes(c1::PVContour{T}, i1::Int, c2::PVContour{T}, i2::Int
     return best
 end
 
+"""
+    reconnect!(contours, close_pairs)
+
+Perform contour reconnection for identified close segment pairs.
+Same contour → split; different contours with same PV → merge.
+
+Each sub-contour produced by a split contains both pinch-point nodes as
+its first and last vertices, ensuring a well-formed closing segment.
+Merged contours are stitched so that traversal orientation is preserved.
+"""
 function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{Int,Int,Int,Int}}) where {T}
     isempty(close_pairs) && return
 
