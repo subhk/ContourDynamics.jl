@@ -5,7 +5,7 @@ layout: home
 hero:
   name: "ContourDynamics.jl"
   text: "Lagrangian Vortex Patch Simulations"
-  tagline: Track vortex boundaries, not grid points — contour dynamics and surgery for 2D Euler, QG, and N-layer quasi-geostrophic flows in Julia
+  tagline: Track vortex boundaries, not grid points — contour dynamics and surgery for 2D Euler, SQG, QG, and N-layer quasi-geostrophic flows in Julia
   actions:
     - theme: brand
       text: Get Started
@@ -22,8 +22,8 @@ hero:
 
 features:
   - icon: 🌀
-    title: 2D Euler & QG Kernels
-    details: Exact log(r) antiderivative for Euler. K₀(r/Ld) with singular subtraction and 5-point Gauss-Legendre for QG. N-layer coupling via eigenmode decomposition — all without numerical diffusion.
+    title: 2D Euler, SQG & QG Kernels
+    details: Exact log(r) antiderivative for Euler. Regularized 1/r with arcsinh antiderivative for SQG. K₀(r/Ld) with singular subtraction and 5-point Gauss-Legendre for QG. N-layer coupling via eigenmode decomposition — all without numerical diffusion.
     link: /theory
     linkText: Learn the math
   - icon: ✂️
@@ -90,7 +90,7 @@ The key idea: for piecewise-constant PV distributions, the velocity at any point
 \mathbf{u}(\mathbf{x}) = \sum_j \frac{q_j}{2\pi} \oint_{C_j} G(|\mathbf{x} - \mathbf{x}'|) \times d\mathbf{x}'
 ```
 
-where ``G`` is the Green's function (``-\log r`` for 2D Euler, ``K_0(r/L_d)`` for QG). Each segment integral is computed **analytically** (Euler) or with **high-order quadrature** (QG), so the method introduces **no numerical diffusion**.
+where ``G`` is the Green's function (``-\log r`` for 2D Euler, ``-1/r`` for SQG, ``K_0(r/L_d)`` for QG). Each segment integral is computed **analytically** (Euler, SQG) or with **high-order quadrature** (QG), so the method introduces **no numerical diffusion**.
 
 **Contour surgery** (Dritschel, 1988) extends this to long-time integrations by automatically handling topological changes — vortex mergers, contour splitting, and filament removal — that would otherwise cause the contour to develop unresolvable complexity.
 
