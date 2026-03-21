@@ -37,6 +37,10 @@ resize_buffers!
 ```@docs
 surgery!
 remesh
+find_close_segments
+build_spatial_index
+reconnect!
+remove_filaments!
 ```
 
 ## Diagnostics
@@ -51,11 +55,32 @@ circulation
 angular_momentum
 ```
 
-## Utilities
+## Contour Helpers
 
 ```@docs
 nnodes
 nlayers
 total_nodes
 arc_lengths
+next_node
+beta_staircase
+is_spanning
+```
+
+## Ewald Summation
+
+```@docs
+EwaldCache
+build_ewald_cache
+clear_ewald_cache!
+```
+
+## Internals
+
+```@docs
+ContourDynamics._collect_all_nodes
+ContourDynamics._scatter_nodes!
+ContourDynamics._scatter_shifted!
+ContourDynamics._expint_e1
+ContourDynamics._segment_min_dist2
 ```
