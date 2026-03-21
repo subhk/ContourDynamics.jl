@@ -133,6 +133,32 @@ println("Vortex drift: Δx=$(round(cf[1]-c0[1]; digits=4)), Δy=$(round(cf[2]-c0
 println("(Cyclones drift north-westward on a beta plane)")
 ```
 
+## SQG Elliptical Vortex
+
+An elliptical surface buoyancy patch evolving under SQG dynamics. The fractional Laplacian Green's function `G(r) = -1/(2πr)` produces sharper fronts and stronger filamentation than the Euler kernel. The regularization parameter `delta` smooths the velocity singularity at the patch boundary.
+
+```julia
+using ContourDynamics
+using StaticArrays
+
+N = 200
+a, b_ax = 1.0, 0.5   # semi-axes (aspect ratio 2)
+pv = 2π
+delta = 0.01          # regularization length ≈ segment spacing
+
+nodes = [SVector(a * cos(2π * k / N), b_ax * sin(2π * k / N)) for k in 0:(N-1)]
+prob = ContourProblem(SQGKernel(delta), UnboundedDomain(), [PVContour(nodes, pv)])
+
+stepper = RK4Stepper(0.002, total_nodes(prob))
+params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 10)
+
+Γ0 = circulation(prob)
+evolve!(prob, stepper, params; nsteps=500)
+
+println("Final: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes")
+println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
+```
+
 ## Two-Layer QG
 
 A vortex patch in the upper layer of a two-layer quasi-geostrophic system with baroclinic coupling. The coupling matrix connects the PV in each layer to the streamfunction, and the solver uses eigenmode decomposition for efficient computation.
