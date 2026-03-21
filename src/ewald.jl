@@ -71,21 +71,22 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
-# Cache storage — keyed by (Lx, Ly, kernel_type, Ld) hash.
-# Uses UInt64 key and typed value Dict for type stability.
+# Cache storage — keyed by (Lx, Ly, kernel_type, Ld) exact-equality tuples.
+# Avoids hash collisions by using the actual key values for dict lookup.
 # FIFO eviction via _ewald_key_order vectors: oldest entries evicted first.
-const _ewald_caches_f64 = Dict{UInt64, EwaldCache{Float64}}()
-const _ewald_caches_f32 = Dict{UInt64, EwaldCache{Float32}}()
-const _ewald_key_order_f64 = UInt64[]
-const _ewald_key_order_f32 = UInt64[]
+const _EwaldCacheKey{T} = Tuple{T, T, DataType, T}  # (Lx, Ly, kernel_type, Ld)
+const _ewald_caches_f64 = Dict{_EwaldCacheKey{Float64}, EwaldCache{Float64}}()
+const _ewald_caches_f32 = Dict{_EwaldCacheKey{Float32}, EwaldCache{Float32}}()
+const _ewald_key_order_f64 = _EwaldCacheKey{Float64}[]
+const _ewald_key_order_f32 = _EwaldCacheKey{Float32}[]
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
-function _cache_key_hash(domain::PeriodicDomain, ::EulerKernel)
-    hash((domain.Lx, domain.Ly, EulerKernel, 0))
+function _cache_key(domain::PeriodicDomain{T}, ::EulerKernel) where {T}
+    (domain.Lx, domain.Ly, EulerKernel, zero(T))::_EwaldCacheKey{T}
 end
-function _cache_key_hash(domain::PeriodicDomain, k::QGKernel)
-    hash((domain.Lx, domain.Ly, QGKernel, k.Ld))
+function _cache_key(domain::PeriodicDomain{T}, k::QGKernel{T}) where {T}
+    (domain.Lx, domain.Ly, QGKernel, k.Ld)::_EwaldCacheKey{T}
 end
 
 _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
@@ -94,7 +95,7 @@ _ewald_key_order(::Type{Float64}) = _ewald_key_order_f64
 _ewald_key_order(::Type{Float32}) = _ewald_key_order_f32
 
 function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T}
-    key = _cache_key_hash(domain, kernel)
+    key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
     cache = lock(_ewald_cache_lock) do
@@ -110,6 +111,32 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
         caches[key]
     end
     return cache
+end
+
+"""
+    setup_ewald_cache!(domain, kernel; n_fourier=8, n_images=2)
+
+Pre-build and store an Ewald cache with custom parameters.  Call this before
+`evolve!` to override the default `n_fourier=8`, `n_images=2`.  The cached
+result is used automatically by all subsequent velocity computations on
+the same domain/kernel combination.
+"""
+function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
+                            n_fourier::Int=8, n_images::Int=2) where {T}
+    key = _cache_key(domain, kernel)
+    caches = _ewald_cache_dict(T)
+    order = _ewald_key_order(T)
+    lock(_ewald_cache_lock) do
+        if !haskey(caches, key)
+            while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
+                old_key = popfirst!(order)
+                delete!(caches, old_key)
+            end
+            push!(order, key)
+        end
+        caches[key] = build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images)
+    end
+    return nothing
 end
 
 """Clear all cached Ewald data."""
@@ -131,22 +158,26 @@ function _expint_e1(x::T) where {T<:AbstractFloat}
     if x <= zero(T)
         return T(Inf)
     end
-    if x < one(T)
+    if x < T(2)
         # Series: E₁(x) = -γ - ln(x) + Σ_{n=1}^∞ (-1)^{n+1} x^n / (n * n!)
+        # Converges well for x < 2: terms decay as x^n/(n*n!).
         γ = T(Base.MathConstants.eulergamma)
         s = -γ - log(x)
         term = one(T)
-        for n in 1:50
+        max_terms = max(60, ceil(Int, -2 * log(eps(T))))  # scale with precision
+        for n in 1:max_terms
             term *= -x / T(n)
             s += term / T(n)
-            abs(term / n) < eps(T) * abs(s) && break
+            abs(term / T(n)) < eps(T) * abs(s) && break
         end
         return s
     else
-        # Continued fraction for large x
+        # Continued fraction for x ≥ 2.
+        # Convergence ratio ≈ 1/(x+1); at x=2 need ~54 terms for Float64.
         ex = exp(-x)
         cf = zero(T)
-        for k in 30:-1:1
+        n_cf = max(60, ceil(Int, -log(eps(T)) / log(T(x) / (T(x) + one(T)))))
+        for k in n_cf:-1:1
             cf = T(k) / (one(T) + T(k) / (x + cf))
         end
         return ex / (x + cf)
