@@ -86,6 +86,12 @@ PVContour(nodes::Vector{SVector{2, T}}, pv::T) where {T<:AbstractFloat} =
 Number of nodes (vertices) in contour `c`.
 """
 nnodes(c::PVContour) = length(c.nodes)
+
+"""
+    is_spanning(c::PVContour) -> Bool
+
+Return `true` if contour `c` spans the periodic domain (i.e. has a non-zero wrap vector).
+"""
 is_spanning(c::PVContour) = any(!iszero, c.wrap)
 
 """Get the next node after index `j`, handling periodic wrap for spanning contours."""
