@@ -34,6 +34,9 @@ Write `base[i] + scale * delta[i]` into contour nodes without allocating.
 """
 function _scatter_shifted!(prob::ContourProblem, base::Vector{SVector{2,T}},
                            delta::Vector{SVector{2,T}}, scale::T) where {T}
+    N = total_nodes(prob)
+    @assert length(base) >= N "base length ($(length(base))) must be >= total nodes ($N)"
+    @assert length(delta) >= N "delta length ($(length(delta))) must be >= total nodes ($N)"
     idx = 1
     for c in prob.contours
         @inbounds for i in 1:nnodes(c)
@@ -52,6 +55,7 @@ function timestep!(prob::ContourProblem, stepper::RK4Stepper{T}) where {T}
     dt = stepper.dt
     N = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
+    @assert length(k1) >= N "Stepper buffer size ($(length(k1))) < total nodes ($N). Call resize_buffers! first."
 
     # Save original positions (one unavoidable allocation per step)
     nodes_orig = _collect_all_nodes(prob)
@@ -212,6 +216,9 @@ end
 
 function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVector{2,T}},
                            delta::Vector{SVector{2,T}}, scale::T) where {N, T}
+    Ntot = total_nodes(prob)
+    @assert length(base) >= Ntot "base length ($(length(base))) must be >= total nodes ($Ntot)"
+    @assert length(delta) >= Ntot "delta length ($(length(delta))) must be >= total nodes ($Ntot)"
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
@@ -227,6 +234,7 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     dt = stepper.dt
     Ntot = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
+    @assert length(k1) >= Ntot "Stepper buffer size ($(length(k1))) < total nodes ($Ntot). Call resize_buffers! first."
     nodes_orig = _collect_all_nodes(prob)
 
     vel_tuple = _make_vel_tuple(prob)
