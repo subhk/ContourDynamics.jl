@@ -397,7 +397,12 @@ The periodic correction decomposes as:
 """
 function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    cache = _get_ewald_cache(domain, kernel)
+    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, kernel))
+end
+
+function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                           cache::EwaldCache{T}) where {T}
     alpha = cache.alpha
     delta = kernel.delta
     delta_sq = delta * delta
