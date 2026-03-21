@@ -360,3 +360,95 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
 
     return v_euler + half_ds * corr_integral
 end
+
+"""
+    segment_velocity(kernel::SQGKernel, domain::PeriodicDomain, x, a, b)
+
+Velocity at point `x` from segment `a→b` in a periodic domain using the SQG kernel.
+
+Uses singular subtraction: the regularized unbounded SQG velocity (exact arcsinh
+antiderivative with ``\\delta > 0``) handles the ``1/r`` singularity analytically, and the
+smooth periodic correction ``G_{\\text{per}} - G_\\infty`` is integrated with 3-point
+Gauss-Legendre quadrature.
+
+The periodic correction decomposes as:
+- Central-image real-space: ``-(1/(2\\pi))[\\operatorname{erfc}(\\alpha r)/r - 1/\\sqrt{r^2+\\delta^2}]``
+  (finite at GL quadrature points since ``r > 0``)
+- Non-central real-space: ``-(1/(2\\pi)) \\operatorname{erfc}(\\alpha|\\mathbf{r}-\\mathbf{R}_n|)/|\\mathbf{r}-\\mathbf{R}_n|``
+- Fourier space: ``-(1/(2\\pi)) \\sum c_k \\cos(\\mathbf{k}\\cdot\\mathbf{r})``
+  with ``c_k = (2\\pi/|k|) e^{-k^2/(4\\alpha^2)}/A``
+"""
+function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
+    cache = _get_ewald_cache(domain, kernel)
+    alpha = cache.alpha
+    delta = kernel.delta
+    delta_sq = delta * delta
+    Lx, Ly = domain.Lx, domain.Ly
+
+    ds = b - a
+    ds_len = sqrt(ds[1]^2 + ds[2]^2)
+    ds_len < eps(T) && return zero(SVector{2,T})
+
+    # Exact unbounded regularized SQG velocity (handles the 1/r singularity via δ)
+    v_unbounded = segment_velocity(kernel, UnboundedDomain(), x, a, b)
+
+    # Smooth periodic correction: G_per_SQG(r) - G_∞_SQG_reg(r)
+    # G_∞_SQG_reg(r) = -(1/(2π))/√(r²+δ²) is the regularized unbounded Green's function.
+    # All correction terms are finite at GL quadrature points (r > 0).
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    mid = (a + b) / 2
+    half_ds = ds / 2
+
+    inv2pi = one(T) / (2 * T(π))
+
+    corr_integral = zero(T)
+
+    for q in 1:3
+        s_pt = mid + g_nodes[q] * half_ds
+        r_vec0 = x - s_pt
+        G_corr = zero(T)
+
+        # Real-space Ewald sum with central-image singularity subtracted
+        for px in -cache.n_images:cache.n_images
+            for py in -cache.n_images:cache.n_images
+                shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
+                r_vec = r_vec0 - shift
+                r2 = r_vec[1]^2 + r_vec[2]^2
+                if px == 0 && py == 0
+                    # Central image: -(1/(2π))[erfc(αr)/r - 1/√(r²+δ²)]
+                    # Finite at GL points since r > 0 there.
+                    # Note: erfc(αr)/r diverges as r→0 (≈ 1/r), but GL quadrature
+                    # points are always interior to the segment so r > 0.
+                    if r2 > eps(T)
+                        r = sqrt(r2)
+                        G_corr -= inv2pi * (erfc(alpha * r) / r -
+                                            one(T) / sqrt(r2 + delta_sq))
+                    end
+                    # r ≈ 0 is unreachable at GL quadrature points
+                else
+                    # Non-central images: -(1/(2π)) erfc(α|r|)/|r|  (smooth)
+                    if r2 > eps(T)
+                        r = sqrt(r2)
+                        G_corr -= inv2pi * erfc(alpha * r) / r
+                    end
+                end
+            end
+        end
+
+        # Fourier-space sum: -(1/(2π)) Σ fourier_coeffs cos(k·r)
+        for (mi, kxi) in enumerate(cache.kx)
+            for (ni, kyi) in enumerate(cache.ky)
+                coeff = cache.fourier_coeffs[mi, ni]
+                abs(coeff) < eps(T) && continue
+                phase = kxi * r_vec0[1] + kyi * r_vec0[2]
+                G_corr -= inv2pi * coeff * cos(phase)
+            end
+        end
+
+        corr_integral += g_weights[q] * G_corr
+    end
+
+    return v_unbounded + half_ds * corr_integral
+end
