@@ -207,59 +207,55 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
     return half_ds * G_integral
 end
 
+"""
+    segment_velocity(kernel::QGKernel, domain::PeriodicDomain, x, a, b)
+
+Velocity at point `x` from segment `a→b` in a periodic domain using the QG kernel.
+
+Decomposes the periodic QG Green's function as:
+  G_QG_per = G_Euler_per + G_correction
+where the Euler part is handled by the validated Ewald summation, and the
+correction is a smooth, rapidly convergent Fourier series:
+  G_corr(r) = (1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
+with κ = 1/Ld.  Coefficients decay as 1/k⁴, so the truncated sum converges
+without Gaussian damping.
+"""
 function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    cache = _get_ewald_cache(domain, kernel)
-    alpha = cache.alpha
-    Lx, Ly = domain.Lx, domain.Ly
-    Ld = kernel.Ld
-
     ds = b - a
     ds_len = sqrt(ds[1]^2 + ds[2]^2)
     ds_len < eps(T) && return zero(SVector{2,T})
+
+    # Euler periodic part (handles the log singularity via Ewald)
+    v_euler = segment_velocity(EulerKernel(), domain, x, a, b)
+
+    # Smooth QG–Euler correction via Fourier sum.
+    # G_QG_per - G_Euler_per = (1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
+    euler_cache = _get_ewald_cache(domain, EulerKernel())
+    kappa2 = one(T) / kernel.Ld^2
+    area = 4 * domain.Lx * domain.Ly
 
     g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     mid = (a + b) / 2
     half_ds = ds / 2
 
-    inv2pi = one(T) / (2 * T(π))
-
-    G_integral = zero(T)
-
+    corr_integral = zero(T)
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
-        G_val = zero(T)
-
-        # Real-space: QG Green's function G(r) = -(1/2π) K₀(r/Ld), screened
-        for px in -cache.n_images:cache.n_images
-            for py in -cache.n_images:cache.n_images
-                shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-                r_vec = x - s_pt - shift
-                r2 = r_vec[1]^2 + r_vec[2]^2
-                if r2 > eps(T)
-                    r = sqrt(r2)
-                    rr = r / Ld
-                    K0_val = besselk(0, rr)
-                    screening = erfc(alpha * r)
-                    G_val -= inv2pi * K0_val * screening
-                end
-            end
-        end
-
-        # Fourier-space sum
-        for (mi, kxi) in enumerate(cache.kx)
-            for (ni, kyi) in enumerate(cache.ky)
-                coeff = cache.fourier_coeffs[mi, ni]
-                abs(coeff) < eps(T) && continue
-                r_vec = x - s_pt
+        r_vec = x - s_pt
+        G_corr = zero(T)
+        for kxi in euler_cache.kx
+            for kyi in euler_cache.ky
+                k2 = kxi^2 + kyi^2
+                k2 < eps(T) && continue
+                coeff = kappa2 / (k2 * (k2 + kappa2) * area)
                 phase = kxi * r_vec[1] + kyi * r_vec[2]
-                G_val += coeff * cos(phase)
+                G_corr += coeff * cos(phase)
             end
         end
-
-        G_integral += g_weights[q] * G_val
+        corr_integral += g_weights[q] * G_corr
     end
 
-    return half_ds * G_integral
+    return v_euler + half_ds * corr_integral
 end
