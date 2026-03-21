@@ -15,7 +15,7 @@ include("timesteppers.jl")
 
 export AbstractKernel, EulerKernel, QGKernel, MultiLayerQGKernel
 export PVContour, nnodes, is_spanning, next_node, beta_staircase
-export AbstractDomain, UnboundedDomain, PeriodicDomain
+export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
 export ContourProblem, MultiLayerContourProblem
 export SurgeryParams
 export AbstractTimeStepper, RK4Stepper, LeapfrogStepper
