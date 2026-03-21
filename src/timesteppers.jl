@@ -109,7 +109,9 @@ First step uses forward Euler to bootstrap.
 function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
     dt = stepper.dt
     N = total_nodes(prob)
-    nodes_current = _collect_all_nodes(prob)
+    nodes_current = stepper.nodes_buf
+    @assert length(nodes_current) >= N "Stepper buffer size ($(length(nodes_current))) < total nodes ($N). Call resize_buffers! first."
+    _collect_all_nodes!(nodes_current, prob)
 
     vel = stepper.vel_buf
     velocity!(vel, prob)
@@ -119,11 +121,12 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
         # matching the leapfrog's order instead of dropping to 1st-order Euler.
         # Half-step: y_mid = y_n + dt/2 * v(y_n)
         _scatter_shifted!(prob, nodes_current, vel, dt / 2)
+        # One-time allocation for bootstrap midpoint velocity
         vel_mid = Vector{SVector{2,T}}(undef, N)
         velocity!(vel_mid, prob)
         # Full step: y_{n+1} = y_n + dt * v(y_mid)
-        stepper.nodes_prev .= nodes_current
         @inbounds for i in 1:N
+            stepper.nodes_prev[i] = nodes_current[i]  # save y_n into nodes_prev
             nodes_current[i] = nodes_current[i] + dt * vel_mid[i]
         end
         _scatter_nodes!(prob, nodes_current)
@@ -172,6 +175,7 @@ function resize_buffers!(stepper::LeapfrogStepper{T}, prob::ContourProblem) wher
     z = zero(SVector{2, T})
     resize!(stepper.nodes_prev, N); fill!(stepper.nodes_prev, z)
     resize!(stepper.vel_buf, N); fill!(stepper.vel_buf, z)
+    resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
     stepper.initialized = false
     return stepper
 end
@@ -181,10 +185,16 @@ end
 
 Main simulation loop: timestep → surgery (at interval) → callbacks.
 """
+# No-op for non-periodic domains
+_maybe_wrap_nodes!(::ContourProblem) = nothing
+# Wrap nodes for periodic domains to maintain Ewald convergence
+_maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = wrap_nodes!(prob)
+
 function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
                  params::SurgeryParams; nsteps::Int, callbacks=nothing)
     for step in 1:nsteps
         timestep!(prob, stepper)
+        _maybe_wrap_nodes!(prob)
 
         if step % params.n_surgery == 0
             surgery!(prob, params)
@@ -330,10 +340,14 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
     return prob
 end
 
+_maybe_wrap_nodes!(::MultiLayerContourProblem) = nothing
+_maybe_wrap_nodes!(prob::MultiLayerContourProblem{<:Any, <:Any, <:PeriodicDomain}) = wrap_nodes!(prob)
+
 function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
                  params::SurgeryParams; nsteps::Int, callbacks=nothing)
     for step in 1:nsteps
         timestep!(prob, stepper)
+        _maybe_wrap_nodes!(prob)
         if step % params.n_surgery == 0
             surgery!(prob, params)
             resize_buffers!(stepper, prob)
@@ -361,7 +375,9 @@ end
 function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{T}) where {NL, T}
     dt = stepper.dt
     Ntot = total_nodes(prob)
-    nodes_current = _collect_all_nodes(prob)
+    nodes_current = stepper.nodes_buf
+    @assert length(nodes_current) >= Ntot "Stepper buffer size ($(length(nodes_current))) < total nodes ($Ntot). Call resize_buffers! first."
+    _collect_all_nodes!(nodes_current, prob)
 
     vel_tuple = _make_vel_tuple(prob)
     velocity!(vel_tuple, prob)
@@ -372,10 +388,11 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
         _scatter_shifted!(prob, nodes_current, flat_vel, dt / 2)
         vel_tuple2 = _make_vel_tuple(prob)
         velocity!(vel_tuple2, prob)
+        # One-time allocation for bootstrap midpoint velocity
         flat_vel_mid = Vector{SVector{2,T}}(undef, Ntot)
         _collect_velocities!(flat_vel_mid, vel_tuple2)
-        stepper.nodes_prev .= nodes_current
         @inbounds for i in 1:Ntot
+            stepper.nodes_prev[i] = nodes_current[i]
             nodes_current[i] = nodes_current[i] + dt * flat_vel_mid[i]
         end
         _scatter_nodes!(prob, nodes_current)
@@ -398,6 +415,7 @@ function resize_buffers!(stepper::LeapfrogStepper{T}, prob::MultiLayerContourPro
     z = zero(SVector{2, T})
     resize!(stepper.nodes_prev, N); fill!(stepper.nodes_prev, z)
     resize!(stepper.vel_buf, N); fill!(stepper.vel_buf, z)
+    resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
     stepper.initialized = false
     return stepper
 end
