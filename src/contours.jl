@@ -12,42 +12,64 @@ function remesh(c::PVContour{T}, params::SurgeryParams{T}) where {T}
     mu = params.mu
     Delta_max = params.Delta_max
 
+    # Phase 1: compute cumulative arc lengths along original contour
+    arc = Vector{T}(undef, n)
+    arc[1] = zero(T)
+    for i in 2:n
+        d = nodes[i] - nodes[i-1]
+        arc[i] = arc[i-1] + sqrt(d[1]^2 + d[2]^2)
+    end
+
+    # Phase 2: walk the contour placing nodes at arc-length positions.
+    # When consecutive original nodes are too close (< mu), we advance
+    # along the original polyline to the correct arc-length position
+    # rather than simply skipping the node — this preserves curvature.
     new_nodes = SVector{2, T}[]
     push!(new_nodes, nodes[1])
+    target_s = zero(T)  # arc length of the last emitted node
 
     for i in 2:n
-        b = nodes[i]
-        last = new_nodes[end]
-        d = b - last
-        seg_len = sqrt(d[1]^2 + d[2]^2)
-
-        if seg_len < mu
+        gap = arc[i] - target_s
+        if gap < mu
+            # Too close — don't emit, but don't shortcut either;
+            # the next emitted node will be interpolated at the right spot.
             continue
-        elseif seg_len > Delta_max
-            n_segments = ceil(Int, seg_len / Delta_max)
-            for k in 1:(n_segments - 1)
-                t = T(k) / T(n_segments)
-                push!(new_nodes, last + t * d)
+        elseif gap > Delta_max
+            # Subdivide: place nodes at equal arc-length intervals from target_s
+            n_segments = ceil(Int, gap / Delta_max)
+            for k in 1:n_segments
+                s_target = target_s + gap * T(k) / T(n_segments)
+                # Find original segment containing s_target
+                seg = searchsortedlast(arc, s_target, 1, n, Base.Order.Forward)
+                seg = clamp(seg, 1, n - 1)
+                seg_len = arc[seg + 1] - arc[seg]
+                if seg_len > eps(T)
+                    t = (s_target - arc[seg]) / seg_len
+                    push!(new_nodes, nodes[seg] + t * (nodes[seg + 1] - nodes[seg]))
+                else
+                    push!(new_nodes, nodes[seg])
+                end
             end
-            push!(new_nodes, b)
+            target_s = arc[i]
         else
-            push!(new_nodes, b)
+            push!(new_nodes, nodes[i])
+            target_s = arc[i]
         end
     end
 
     # Check closing segment (last node back to first, with wrap for spanning contours)
     if length(new_nodes) >= 2
-        close_target = new_nodes[1] + c.wrap  # wrap = (0,0) for closed contours
+        close_target = new_nodes[1] + c.wrap
         d_close = close_target - new_nodes[end]
         close_len = sqrt(d_close[1]^2 + d_close[2]^2)
         if close_len < mu && length(new_nodes) > 3
             pop!(new_nodes)
         elseif close_len > Delta_max
-            last = new_nodes[end]
+            last_node = new_nodes[end]
             n_segments = ceil(Int, close_len / Delta_max)
             for k in 1:(n_segments - 1)
                 t = T(k) / T(n_segments)
-                push!(new_nodes, last + t * d_close)
+                push!(new_nodes, last_node + t * d_close)
             end
         end
     end
