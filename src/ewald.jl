@@ -73,8 +73,11 @@ end
 
 # Cache storage — keyed by (Lx, Ly, kernel_type, Ld) hash.
 # Uses UInt64 key and typed value Dict for type stability.
+# FIFO eviction via _ewald_key_order vectors: oldest entries evicted first.
 const _ewald_caches_f64 = Dict{UInt64, EwaldCache{Float64}}()
 const _ewald_caches_f32 = Dict{UInt64, EwaldCache{Float32}}()
+const _ewald_key_order_f64 = UInt64[]
+const _ewald_key_order_f32 = UInt64[]
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
@@ -87,16 +90,22 @@ end
 
 _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
 _ewald_cache_dict(::Type{Float32}) = _ewald_caches_f32
+_ewald_key_order(::Type{Float64}) = _ewald_key_order_f64
+_ewald_key_order(::Type{Float32}) = _ewald_key_order_f32
 
 function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T}
     key = _cache_key_hash(domain, kernel)
     caches = _ewald_cache_dict(T)
+    order = _ewald_key_order(T)
     cache = lock(_ewald_cache_lock) do
         if !haskey(caches, key)
-            if length(caches) >= _EWALD_CACHE_MAX
-                empty!(caches)
+            # FIFO eviction: remove oldest entries until under limit
+            while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
+                old_key = popfirst!(order)
+                delete!(caches, old_key)
             end
             caches[key] = build_ewald_cache(domain, kernel)
+            push!(order, key)
         end
         caches[key]
     end
@@ -108,6 +117,8 @@ function clear_ewald_cache!()
     lock(_ewald_cache_lock) do
         empty!(_ewald_caches_f64)
         empty!(_ewald_caches_f32)
+        empty!(_ewald_key_order_f64)
+        empty!(_ewald_key_order_f32)
     end
 end
 
