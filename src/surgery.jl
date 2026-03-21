@@ -159,54 +159,70 @@ Merged contours are stitched so that traversal orientation is preserved.
 function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{Int,Int,Int,Int}}) where {T}
     isempty(close_pairs) && return
 
-    # Process one reconnection at a time (simplest correct approach)
-    # After each reconnection, rebuild spatial index (handled by caller)
-    pair = close_pairs[1]
-    ci, i, cj, j = pair
+    # Process all independent pairs per iteration to reduce spatial index rebuilds.
+    # "Independent" means no shared contour indices between processed pairs.
+    # Splits first (they don't shift indices), then at most one merge (deleteat! shifts).
+    used = Set{Int}()
 
-    if ci == cj
-        # Split: pinch contour at the closest node pair from the two segments.
-        c = contours[ci]
-        i, j = _best_stitch_nodes(c, i, c, j)
-        nc = nnodes(c)
-        lo, hi = minmax(i, j)
-
-        # Daughter 1: nodes lo → hi (both endpoints included)
-        nodes1 = c.nodes[lo:hi]
-        # Daughter 2: nodes hi → lo wrapping around (both endpoints included)
-        nodes2 = vcat(c.nodes[hi:nc], c.nodes[1:lo])
-
-        if length(nodes1) >= 3 && length(nodes2) >= 3
-            contours[ci] = PVContour(nodes1, c.pv)
-            push!(contours, PVContour(nodes2, c.pv))
-        end
-    else
-        # Merge: stitch two same-PV contours at their closest node pair.
-        c1 = contours[ci]
-        c2 = contours[cj]
-        n1 = nnodes(c1)
-        n2 = nnodes(c2)
-
-        i, j = _best_stitch_nodes(c1, i, c2, j)
-
-        # Check orientation consistency: both contours should have the same
-        # sign of signed area. If they differ, reverse c2's node order so
-        # the merged contour has consistent winding.
-        a1 = vortex_area(c1)
-        a2 = vortex_area(c2)
-        c2_nodes = (sign(a1) == sign(a2) || abs(a2) < eps(T)) ? c2.nodes : reverse(c2.nodes)
-        # Recompute j for reversed contour
-        j_eff = (c2_nodes === c2.nodes) ? j : (n2 - j + 1)
-
-        new_nodes = vcat(
-            c1.nodes[1:i],
-            c2_nodes[j_eff:n2],
-            c2_nodes[1:j_eff-1],  # exclude j_eff to avoid duplicate at stitch point
-            c1.nodes[(i+1):n1]
-        )
-        contours[ci] = PVContour(new_nodes, c1.pv)
-        deleteat!(contours, cj)
+    # Pass 1: batch all independent splits (ci == cj, no index shifting)
+    for (ci, i, cj, j) in close_pairs
+        ci != cj && continue
+        ci in used && continue
+        _reconnect_split!(contours, ci, i, j)
+        push!(used, ci)
     end
+
+    # Pass 2: at most one merge (deleteat! shifts indices, so only one is safe)
+    for (ci, i, cj, j) in close_pairs
+        ci == cj && continue
+        (ci in used || cj in used) && continue
+        _reconnect_merge!(contours, ci, i, cj, j)
+        break
+    end
+end
+
+function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int) where {T}
+    c = contours[ci]
+    i, j = _best_stitch_nodes(c, i, c, j)
+    nc = nnodes(c)
+    lo, hi = minmax(i, j)
+
+    # Daughter 1: nodes lo → hi (both endpoints included)
+    nodes1 = c.nodes[lo:hi]
+    # Daughter 2: nodes hi → lo wrapping around (both endpoints included)
+    nodes2 = vcat(c.nodes[hi:nc], c.nodes[1:lo])
+
+    if length(nodes1) >= 3 && length(nodes2) >= 3
+        contours[ci] = PVContour(nodes1, c.pv)
+        push!(contours, PVContour(nodes2, c.pv))
+    end
+end
+
+function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::Int, j::Int) where {T}
+    c1 = contours[ci]
+    c2 = contours[cj]
+    n1 = nnodes(c1)
+    n2 = nnodes(c2)
+
+    i, j = _best_stitch_nodes(c1, i, c2, j)
+
+    # Check orientation consistency: both contours should have the same
+    # sign of signed area. If they differ, reverse c2's node order so
+    # the merged contour has consistent winding.
+    a1 = vortex_area(c1)
+    a2 = vortex_area(c2)
+    c2_nodes = (sign(a1) == sign(a2) || abs(a2) < eps(T)) ? c2.nodes : reverse(c2.nodes)
+    # Recompute j for reversed contour
+    j_eff = (c2_nodes === c2.nodes) ? j : (n2 - j + 1)
+
+    new_nodes = vcat(
+        c1.nodes[1:i],
+        c2_nodes[j_eff:n2],
+        c2_nodes[1:j_eff-1],  # exclude j_eff to avoid duplicate at stitch point
+        c1.nodes[(i+1):n1]
+    )
+    contours[ci] = PVContour(new_nodes, c1.pv)
+    deleteat!(contours, cj)
 end
 
 # ── Filament Removal ─────────────────────────────────────
