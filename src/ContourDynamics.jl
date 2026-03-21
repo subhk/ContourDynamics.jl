@@ -13,7 +13,7 @@ include("ewald.jl")
 include("diagnostics.jl")
 include("timesteppers.jl")
 
-export AbstractKernel, EulerKernel, QGKernel, MultiLayerQGKernel
+export AbstractKernel, EulerKernel, QGKernel, SQGKernel, MultiLayerQGKernel
 export PVContour, nnodes, is_spanning, next_node, beta_staircase
 export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
 export ContourProblem, MultiLayerContourProblem
