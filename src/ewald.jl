@@ -105,9 +105,14 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
-# Cache storage — keyed by (Lx, Ly, kernel_type, Ld) exact-equality tuples.
-# Avoids hash collisions by using the actual key values for dict lookup.
+# Cache storage — keyed by (Lx, Ly, kernel_type, Ld) tuples with snapped values.
+# Values are snapped to a canonical grid (1024 ULPs) so that near-identical
+# domain parameters from different arithmetic paths share the same cache entry.
 # FIFO eviction via _ewald_key_order vectors: oldest entries evicted first.
+@inline function _snap(x::T) where {T<:AbstractFloat}
+    e = T(1024) * eps(x)
+    return round(x / e) * e
+end
 const _EwaldCacheKey{T} = Tuple{T, T, DataType, T}  # (Lx, Ly, kernel_type, Ld)
 const _ewald_caches_f64 = Dict{_EwaldCacheKey{Float64}, EwaldCache{Float64}}()
 const _ewald_caches_f32 = Dict{_EwaldCacheKey{Float32}, EwaldCache{Float32}}()
@@ -117,13 +122,13 @@ const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
 function _cache_key(domain::PeriodicDomain{T}, ::EulerKernel) where {T}
-    (domain.Lx, domain.Ly, EulerKernel, zero(T))::_EwaldCacheKey{T}
+    (_snap(domain.Lx), _snap(domain.Ly), EulerKernel, zero(T))::_EwaldCacheKey{T}
 end
 function _cache_key(domain::PeriodicDomain{T}, k::QGKernel{T}) where {T}
-    (domain.Lx, domain.Ly, QGKernel, k.Ld)::_EwaldCacheKey{T}
+    (_snap(domain.Lx), _snap(domain.Ly), QGKernel, _snap(k.Ld))::_EwaldCacheKey{T}
 end
 function _cache_key(domain::PeriodicDomain{T}, k::SQGKernel{T}) where {T}
-    (domain.Lx, domain.Ly, SQGKernel, k.delta)::_EwaldCacheKey{T}
+    (_snap(domain.Lx), _snap(domain.Ly), SQGKernel, _snap(k.delta))::_EwaldCacheKey{T}
 end
 
 _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
