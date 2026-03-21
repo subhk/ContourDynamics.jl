@@ -97,19 +97,22 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
     @assert length(vel) == N "vel length ($(length(vel))) must equal total nodes ($N)"
 
-    # Build cumulative offset table for O(log C) node lookup via binary search.
     n_contours = length(contours)
-    cum_offsets = Vector{Int}(undef, n_contours + 1)
-    cum_offsets[1] = 0
-    for ci in 1:n_contours
-        cum_offsets[ci + 1] = cum_offsets[ci] + nnodes(contours[ci])
-    end
 
     # Thread over target nodes — each node accumulates its velocity independently
     @inbounds Threads.@threads for i in 1:N
-        # Binary search: find contour ci such that cum_offsets[ci] < i <= cum_offsets[ci+1]
-        ci = searchsortedlast(cum_offsets, i - 1, 1, n_contours, Base.Order.Forward)
-        local_i = i - cum_offsets[ci]
+        # Linear scan to find contour containing flat index i (zero-allocation).
+        # For typical contour counts (< 100) this is faster than binary search
+        # due to branch prediction and cache locality.
+        ci = 1
+        offset = 0
+        while ci < n_contours
+            nn = nnodes(contours[ci])
+            i <= offset + nn && break
+            offset += nn
+            ci += 1
+        end
+        local_i = i - offset
         xi = contours[ci].nodes[local_i]
 
         v = zero(SVector{2,T})
