@@ -150,7 +150,7 @@ end
 Kinetic energy of a [`ContourProblem`](@ref) or [`MultiLayerContourProblem`](@ref),
 computed via contour integrals of the appropriate Green's function.
 """
-function energy(prob::ContourProblem{EulerKernel, D, T}) where {D, T}
+function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     contours = prob.contours
     E = zero(T)
     inv4pi = one(T) / (4 * T(π))
@@ -211,7 +211,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     return sum(partial)
 end
 
-function energy(prob::ContourProblem{QGKernel{T}, D, T}) where {D, T}
+function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     contours = prob.contours
     Ld = prob.kernel.Ld
     E = zero(T)
