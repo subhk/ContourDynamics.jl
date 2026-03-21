@@ -170,10 +170,14 @@ end
 function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
+    is_self = ci.nodes === cj.nodes  # detect self-interaction
     # 2-point Gauss-Legendre nodes/weights on [-1,1]
     g = one(T) / sqrt(T(3))
     g_nodes = SVector{2,T}(-g, g)
     g_weight = one(T)  # both weights are 1
+    # Analytical self-segment integral:
+    # ∫₋₁¹∫₋₁¹ log(|s-t| * |half_ds|) ds dt = 4*log(2) - 6 + 4*log|half_ds|
+    self_seg_const = 4 * log(T(2)) - T(6)  # precompute constant part
     # Thread over outer segments, each thread accumulates a partial sum
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
@@ -190,17 +194,31 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
             dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-            # 2×2 Gauss-Legendre quadrature over both segments
-            quad = zero(T)
-            for qi in 1:2
-                pi_pt = midi + g_nodes[qi] * half_dsi
-                for qj in 1:2
-                    pj_pt = midj + g_nodes[qj] * half_dsj
-                    dx = pi_pt[1] - pj_pt[1]
-                    dy = pi_pt[2] - pj_pt[2]
-                    r2 = dx^2 + dy^2
-                    r2 < eps(T) && continue
-                    quad += g_weight * g_weight * log(r2) / 2
+
+            if is_self && i == j
+                # Self-segment: log singularity requires analytical integration.
+                # ∫₋₁¹∫₋₁¹ log(r²)/2 ds dt where r = |s-t|*|half_ds|
+                #   = ∫₋₁¹∫₋₁¹ (log|s-t| + log|half_ds|) ds dt
+                #   = (4*log(2) - 6) + 4*log|half_ds|
+                half_ds_len = sqrt(half_dsi[1]^2 + half_dsi[2]^2)
+                if half_ds_len > eps(T)
+                    quad = self_seg_const + 4 * log(half_ds_len)
+                else
+                    quad = zero(T)
+                end
+            else
+                # 2×2 Gauss-Legendre quadrature over both segments
+                quad = zero(T)
+                for qi in 1:2
+                    pi_pt = midi + g_nodes[qi] * half_dsi
+                    for qj in 1:2
+                        pj_pt = midj + g_nodes[qj] * half_dsj
+                        dx = pi_pt[1] - pj_pt[1]
+                        dy = pi_pt[2] - pj_pt[2]
+                        r2 = dx^2 + dy^2
+                        r2 < eps(T) && continue
+                        quad += g_weight * g_weight * log(r2) / 2
+                    end
                 end
             end
             # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
