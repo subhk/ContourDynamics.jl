@@ -71,34 +71,43 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
-# Cache storage — keyed by concrete (Lx, Ly, kernel_type, Ld) tuple to
-# avoid hash collisions.  Ld = 0 for EulerKernel.
-const _EwaldCacheKey = Tuple{Any, Any, Any, Any}   # (Lx, Ly, kernel type, Ld)
-const _ewald_caches = Dict{_EwaldCacheKey, Any}()
+# Cache storage — keyed by (Lx, Ly, kernel_type, Ld) hash.
+# Uses UInt64 key and typed value Dict for type stability.
+const _ewald_caches_f64 = Dict{UInt64, EwaldCache{Float64}}()
+const _ewald_caches_f32 = Dict{UInt64, EwaldCache{Float32}}()
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
-_cache_key(domain::PeriodicDomain, ::EulerKernel) = (domain.Lx, domain.Ly, EulerKernel, 0)
-_cache_key(domain::PeriodicDomain, k::QGKernel) = (domain.Lx, domain.Ly, QGKernel, k.Ld)
+function _cache_key_hash(domain::PeriodicDomain, ::EulerKernel)
+    hash((domain.Lx, domain.Ly, EulerKernel, 0))
+end
+function _cache_key_hash(domain::PeriodicDomain, k::QGKernel)
+    hash((domain.Lx, domain.Ly, QGKernel, k.Ld))
+end
+
+_ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
+_ewald_cache_dict(::Type{Float32}) = _ewald_caches_f32
 
 function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T}
-    key = _cache_key(domain, kernel)
+    key = _cache_key_hash(domain, kernel)
+    caches = _ewald_cache_dict(T)
     cache = lock(_ewald_cache_lock) do
-        if !haskey(_ewald_caches, key)
-            if length(_ewald_caches) >= _EWALD_CACHE_MAX
-                empty!(_ewald_caches)
+        if !haskey(caches, key)
+            if length(caches) >= _EWALD_CACHE_MAX
+                empty!(caches)
             end
-            _ewald_caches[key] = build_ewald_cache(domain, kernel)
+            caches[key] = build_ewald_cache(domain, kernel)
         end
-        _ewald_caches[key]
+        caches[key]
     end
-    return cache::EwaldCache{T}
+    return cache
 end
 
 """Clear all cached Ewald data."""
 function clear_ewald_cache!()
     lock(_ewald_cache_lock) do
-        empty!(_ewald_caches)
+        empty!(_ewald_caches_f64)
+        empty!(_ewald_caches_f32)
     end
 end
 
