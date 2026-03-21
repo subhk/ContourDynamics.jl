@@ -268,6 +268,181 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     return sum(partial)
 end
 
+"""
+    _eval_ewald_greens(r_vec, cache, domain)
+
+Evaluate the periodic Green's function at separation `r_vec` using Ewald summation.
+Returns `G_per(r)` = real-space Ewald sum + Fourier-space sum.
+"""
+function _eval_ewald_greens(r_vec::SVector{2,T}, cache::EwaldCache{T},
+                            domain::PeriodicDomain{T}) where {T}
+    alpha = cache.alpha
+    Lx, Ly = domain.Lx, domain.Ly
+    inv4pi = one(T) / (4 * T(π))
+    G_val = zero(T)
+
+    # Real-space sum
+    for px in -cache.n_images:cache.n_images
+        for py in -cache.n_images:cache.n_images
+            shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
+            rv = r_vec - shift
+            r2 = rv[1]^2 + rv[2]^2
+            if r2 > eps(T)
+                G_val += inv4pi * _expint_e1(alpha^2 * r2)
+            end
+        end
+    end
+
+    # Fourier-space sum
+    for (mi, kxi) in enumerate(cache.kx)
+        for (ni, kyi) in enumerate(cache.ky)
+            coeff = cache.fourier_coeffs[mi, ni]
+            abs(coeff) < eps(T) && continue
+            phase = kxi * r_vec[1] + kyi * r_vec[2]
+            G_val += coeff * cos(phase)
+        end
+    end
+
+    return G_val
+end
+
+function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
+                                              cache::EwaldCache{T},
+                                              domain::PeriodicDomain{T}) where {T}
+    nci = nnodes(ci)
+    ncj = nnodes(cj)
+    g = one(T) / sqrt(T(3))
+    g_nodes = SVector{2,T}(-g, g)
+    g_weight = one(T)
+    partial = zeros(T, nci)
+    @inbounds Threads.@threads for i in 1:nci
+        ai = ci.nodes[i]
+        bi = next_node(ci, i)
+        dsi = bi - ai
+        midi = (ai + bi) / 2
+        half_dsi = dsi / 2
+        local_s = zero(T)
+        for j in 1:ncj
+            aj = cj.nodes[j]
+            bj = next_node(cj, j)
+            dsj = bj - aj
+            midj = (aj + bj) / 2
+            half_dsj = dsj / 2
+            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
+            quad = zero(T)
+            for qi in 1:2
+                pi_pt = midi + g_nodes[qi] * half_dsi
+                for qj in 1:2
+                    pj_pt = midj + g_nodes[qj] * half_dsj
+                    r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
+                    # Replace log(r²)/2 with the periodic equivalent: -2π * G_per
+                    # since log(r²)/2 = -2π * G_∞ for unbounded Euler.
+                    G_per = _eval_ewald_greens(r_vec, cache, domain)
+                    quad += g_weight * g_weight * (-2 * T(π) * G_per)
+                end
+            end
+            local_s += quad / 4 * dot_ds
+        end
+        partial[i] = local_s
+    end
+    return sum(partial)
+end
+
+function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {T}
+    contours = prob.contours
+    cache = _get_ewald_cache(prob.domain, prob.kernel)
+    E = zero(T)
+    inv4pi = one(T) / (4 * T(π))
+    for ci in contours
+        nnodes(ci) < 2 && continue
+        for cj in contours
+            nnodes(cj) < 2 && continue
+            E += ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain)
+        end
+    end
+    return -inv4pi * E / 2
+end
+
+function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {T}
+    contours = prob.contours
+    Ld = prob.kernel.Ld
+    # Decompose: G_QG_per = G_Euler_per + G_correction
+    # Use Euler periodic energy + QG correction via Fourier sum.
+    euler_cache = _get_ewald_cache(prob.domain, EulerKernel())
+    E = zero(T)
+    inv4pi = one(T) / (4 * T(π))
+    kappa2 = one(T) / Ld^2
+    area = 4 * prob.domain.Lx * prob.domain.Ly
+    for ci in contours
+        nnodes(ci) < 2 && continue
+        for cj in contours
+            nnodes(cj) < 2 && continue
+            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain)
+            pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area)
+            E += ci.pv * cj.pv * pair_E
+        end
+    end
+    return -inv4pi * E / 2
+end
+
+"""QG-Euler correction for periodic energy: smooth Fourier series with κ²/(k²(k²+κ²)) coefficients."""
+function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
+                                             euler_cache::EwaldCache{T},
+                                             kappa2::T, area::T) where {T}
+    nci = nnodes(ci)
+    ncj = nnodes(cj)
+    g = one(T) / sqrt(T(3))
+    g_nodes = SVector{2,T}(-g, g)
+    g_weight = one(T)
+    partial = zeros(T, nci)
+    @inbounds Threads.@threads for i in 1:nci
+        ai = ci.nodes[i]
+        bi = next_node(ci, i)
+        dsi = bi - ai
+        midi = (ai + bi) / 2
+        half_dsi = dsi / 2
+        local_s = zero(T)
+        for j in 1:ncj
+            aj = cj.nodes[j]
+            bj = next_node(cj, j)
+            dsj = bj - aj
+            midj = (aj + bj) / 2
+            half_dsj = dsj / 2
+            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
+            quad = zero(T)
+            for qi in 1:2
+                pi_pt = midi + g_nodes[qi] * half_dsi
+                for qj in 1:2
+                    pj_pt = midj + g_nodes[qj] * half_dsj
+                    dx = pi_pt[1] - pj_pt[1]
+                    dy = pi_pt[2] - pj_pt[2]
+                    G_corr = zero(T)
+                    for kxi in euler_cache.kx
+                        for kyi in euler_cache.ky
+                            k2 = kxi^2 + kyi^2
+                            k2 < eps(T) && continue
+                            coeff = kappa2 / (k2 * (k2 + kappa2) * area)
+                            phase = kxi * dx + kyi * dy
+                            G_corr += coeff * cos(phase)
+                        end
+                    end
+                    quad += g_weight * g_weight * (-2 * T(π) * G_corr)
+                end
+            end
+            local_s += quad / 4 * dot_ds
+        end
+        partial[i] = local_s
+    end
+    return sum(partial)
+end
+
+# Fallback for unsupported kernel/domain combinations
+function energy(prob::ContourProblem)
+    throw(ArgumentError(
+        "energy is not implemented for $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
+        "Supported: EulerKernel/QGKernel on UnboundedDomain or PeriodicDomain."))
+end
+
 function circulation(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
     s = zero(T)
     for i in 1:N
