@@ -110,33 +110,31 @@ For single-layer files the result contains a `contours` field
 """
 function ContourDynamics.load_snapshot(filename::String, step::Int)
     group = "step_" * lpad(step, 6, '0')
-
     jldopen(filename, "r") do f
         haskey(f, group) || error("Step $step not found in $filename")
-        g = f[group]
+        _load_snapshot_from_group(f[group], step)
+    end
+end
 
-        time = haskey(g, "time") ? g["time"] : nothing
+function _load_snapshot_from_group(g, step::Int)
+    time = haskey(g, "time") ? g["time"] : nothing
+    is_multilayer = haskey(g, "nlayers")
 
-        # Detect multi-layer vs single-layer format
-        is_multilayer = haskey(g, "nlayers")
-
-        if is_multilayer
-            nlyr = g["nlayers"]::Int
-            all_layers = Vector{Vector{PVContour}}(undef, nlyr)
-            for li in 1:nlyr
-                lg = g["layer_" * lpad(li, 2, '0')]
-                nc = lg["ncontours"]::Int
-                all_layers[li] = _load_contours(lg, nc)
-            end
-
-            diag = _load_diagnostics(g)
-            return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
-        else
-            nc = g["ncontours"]
-            contours = _load_contours(g, nc)
-            diag = _load_diagnostics(g)
-            return (contours=contours, diagnostics=diag, step=step, time=time)
+    if is_multilayer
+        nlyr = g["nlayers"]::Int
+        all_layers = Vector{Vector{PVContour}}(undef, nlyr)
+        for li in 1:nlyr
+            lg = g["layer_" * lpad(li, 2, '0')]
+            nc = lg["ncontours"]::Int
+            all_layers[li] = _load_contours(lg, nc)
         end
+        diag = _load_diagnostics(g)
+        return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
+    else
+        nc = g["ncontours"]
+        contours = _load_contours(g, nc)
+        diag = _load_diagnostics(g)
+        return (contours=contours, diagnostics=diag, step=step, time=time)
     end
 end
 
@@ -186,8 +184,7 @@ function ContourDynamics.load_simulation(filename::String)
                          by = k -> parse(Int, k[6:end]))
         for key in step_keys
             step = parse(Int, key[6:end])
-            snap = ContourDynamics.load_snapshot(filename, step)
-            push!(snapshots, snap)
+            push!(snapshots, _load_snapshot_from_group(f[key], step))
         end
     end
     return snapshots
