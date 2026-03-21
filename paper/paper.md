@@ -37,7 +37,7 @@ from the absence of numerical diffusion; and (3) it automatically
 concentrates resolution on the dynamically active contour boundaries rather
 than wasting computation on quiescent interior regions.
 
-`ContourDynamics.jl` provides the first modern, open-source Julia
+`ContourDynamics.jl` provides an open-source Julia
 implementation of this method, supporting three flow regimes — 2D Euler,
 single-layer quasi-geostrophic (QG) with arbitrary Rossby deformation radius $L_d$,
 and N-layer QG — in both unbounded and doubly-periodic domains. The package
@@ -52,14 +52,12 @@ The contour dynamics/surgery framework has underpinned foundational GFD research
 for over three decades, including studies of 2D turbulence vortex mergers and
 the inverse energy cascade [@dritschel2008], filamentation and stripping of QG
 vortices [@dritschel1989], and stratospheric vortex dynamics. Despite this rich
-scientific legacy, the primary software implementing these methods is written in
-Fortran and distributed on a contact-only basis with no public repository or
-open license.
+scientific legacy, widely used implementations of these methods remain tied to
+legacy research codes, creating a barrier to transparent reuse and extension.
 
-The Julia GFD ecosystem has grown substantially in recent years, with
-`GeophysicalFlows.jl` providing GPU-accelerated pseudospectral QG solvers.
-However, **no Julia package implements Lagrangian contour dynamics**, leaving a
-methodological gap precisely where the method has its greatest advantages:
+The Julia GFD ecosystem has grown substantially in recent years. However,
+open-source Julia tooling for Lagrangian contour dynamics remains limited,
+leaving a methodological gap precisely where the method has its greatest advantages:
 long-time vortex interaction studies where pseudospectral diffusion artificially
 dissipates thin filaments.
 
@@ -93,7 +91,7 @@ The Green's functions are:
 
 | Regime | $G(r)$ |
 |--------|--------|
-| 2D Euler ($L_d \to \infty$) | $\frac{1}{2\pi}\ln r$ |
+| 2D Euler ($L_d \to \infty$) | $-\frac{1}{2\pi}\ln r$ |
 | QG (finite $L_d$) | $-\frac{1}{2\pi} K_0(r/L_d)$ |
 
 For 2D Euler, the velocity induced by a straight segment has a closed-form
@@ -135,7 +133,7 @@ the core package.
 The package is validated against known analytical results:
 
 1. **Kirchhoff ellipse**: rotation at the exact rate $\Omega = ab/(a+b)^2 q$,
-   reproduced to $10^{-4}$ relative error over one full period.
+   with the aspect ratio and circulation preserved over one full period.
 
 2. **Conservation**: energy, area, circulation, and centroid of a circular
    steady-state patch are conserved to $10^{-6}$ over $10^4$ RK4 timesteps.
@@ -145,7 +143,7 @@ The package is validated against known analytical results:
 
 # Acknowledgements
 
-The authors thank David Dritschel for making the original contour surgery
+The author thanks David Dritschel for making the original contour surgery
 algorithm available in the literature, which provided the mathematical
 foundation for this implementation.
 
