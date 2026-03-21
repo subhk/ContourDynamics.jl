@@ -111,7 +111,7 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
 
         v = zero(SVector{2,T})
         for c in contours
-            nc = nnodes(c)
+            local nc = nnodes(c)
             nc < 2 && continue
             pv = c.pv
             for j in 1:nc
