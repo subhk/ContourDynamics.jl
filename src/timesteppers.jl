@@ -17,6 +17,8 @@ end
 Collect all nodes into pre-allocated buffer `buf` (in-place, non-allocating).
 """
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+    N = total_nodes(prob)
+    @assert length(buf) >= N "buffer length ($(length(buf))) must be >= total nodes ($N)"
     idx = 1
     for c in prob.contours
         @inbounds for i in 1:nnodes(c)
@@ -32,6 +34,8 @@ end
 Write flat node vector back into contour node arrays.
 """
 function _scatter_nodes!(prob::ContourProblem, all_nodes::Vector{SVector{2,T}}) where {T}
+    N = total_nodes(prob)
+    @assert length(all_nodes) >= N "all_nodes length ($(length(all_nodes))) must be >= total nodes ($N)"
     idx = 1
     for c in prob.contours
         @inbounds for i in 1:nnodes(c)
@@ -220,6 +224,8 @@ function _collect_all_nodes(prob::MultiLayerContourProblem{N, K, D, T}) where {N
 end
 
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourProblem{N}) where {N, T}
+    Ntot = total_nodes(prob)
+    @assert length(buf) >= Ntot "buffer length ($(length(buf))) must be >= total nodes ($Ntot)"
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
@@ -232,6 +238,8 @@ function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourP
 end
 
 function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SVector{2,T}}) where {N, T}
+    Ntot = total_nodes(prob)
+    @assert length(all_nodes) >= Ntot "all_nodes length ($(length(all_nodes))) must be >= total nodes ($Ntot)"
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
