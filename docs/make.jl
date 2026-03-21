@@ -20,6 +20,7 @@ makedocs(;
         "Examples" => "examples.md",
         "Theory & Method" => "theory.md",
         "API Reference" => "api.md",
+        "Contributing" => "contributing.md",
     ],
     warnonly = true,
 )
