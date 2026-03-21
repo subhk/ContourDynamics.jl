@@ -23,7 +23,7 @@ makedocs(;
     warnonly = true,
 )
 
-DocumenterVitepress.deploydocs(;
+deploydocs(;
     repo = "github.com/subhk/ContourDynamics.jl",
     push_preview = true,
 )
