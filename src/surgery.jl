@@ -10,7 +10,8 @@ Build a spatial index for all contour segments, binned by grid of size `delta`.
 Each segment is binned at its endpoint *and* at its midpoint so that long segments
 whose interiors cross a bin boundary are discoverable via neighbour-bin queries.
 """
-function build_spatial_index(contours::Vector{PVContour{T}}, delta::T) where {T}
+function build_spatial_index(contours::Vector{PVContour{T}}, delta) where {T}
+    delta = T(delta)
     bins = Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}}()
 
     for (ci, c) in enumerate(contours)
@@ -72,7 +73,8 @@ using the spatial index for candidate filtering.
 Returns vector of `(ci, i, cj, j)` tuples where `i`,`j` are segment indices
 (each segment goes from node `i` to `next_node(c, i)`).
 """
-function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T}, delta::T) where {T}
+function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T}, delta) where {T}
+    delta = T(delta)
     close_pairs = Tuple{Int,Int,Int,Int}[]
     delta2 = delta^2
     seen = Set{Tuple{Int,Int,Int,Int}}()
@@ -228,8 +230,9 @@ end
 # ── Filament Removal ─────────────────────────────────────
 
 """Remove contours with |area| < area_min. Spanning contours are always kept."""
-function remove_filaments!(contours::Vector{PVContour{T}}, area_min::T) where {T}
-    filter!(c -> is_spanning(c) || abs(vortex_area(c)) >= area_min, contours)
+function remove_filaments!(contours::Vector{PVContour{T}}, area_min) where {T}
+    amin = T(area_min)
+    filter!(c -> is_spanning(c) || abs(vortex_area(c)) >= amin, contours)
 end
 
 # ── Top-Level Surgery ────────────────────────────────────
@@ -241,7 +244,8 @@ Warn if any closed contour node is within `delta` of a spanning contour node.
 This situation cannot be resolved by surgery (spanning contours are exempt from
 reconnection) and may indicate insufficient resolution or an overly large delta.
 """
-function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta::T) where {T}
+function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta) where {T}
+    delta = T(delta)
     delta2 = delta^2
     spanning_nodes = SVector{2,T}[]
     for c in contours
