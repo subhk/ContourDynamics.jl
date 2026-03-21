@@ -12,6 +12,21 @@ function _collect_all_nodes(prob::ContourProblem{K,D,T}) where {K,D,T}
 end
 
 """
+    _collect_all_nodes!(buf, prob::ContourProblem)
+
+Collect all nodes into pre-allocated buffer `buf` (in-place, non-allocating).
+"""
+function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+    idx = 1
+    for c in prob.contours
+        @inbounds for i in 1:nnodes(c)
+            buf[idx] = c.nodes[i]
+            idx += 1
+        end
+    end
+end
+
+"""
     _scatter_nodes!(prob::ContourProblem, all_nodes)
 
 Write flat node vector back into contour node arrays.
@@ -55,10 +70,11 @@ function timestep!(prob::ContourProblem, stepper::RK4Stepper{T}) where {T}
     dt = stepper.dt
     N = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
+    nodes_orig = stepper.nodes_buf
     @assert length(k1) >= N "Stepper buffer size ($(length(k1))) < total nodes ($N). Call resize_buffers! first."
 
-    # Save original positions (one unavoidable allocation per step)
-    nodes_orig = _collect_all_nodes(prob)
+    # Save original positions into pre-allocated buffer
+    _collect_all_nodes!(nodes_orig, prob)
 
     # k1 = v(t, y)
     velocity!(k1, prob)
@@ -95,7 +111,7 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
     N = total_nodes(prob)
     nodes_current = _collect_all_nodes(prob)
 
-    vel = Vector{SVector{2,T}}(undef, N)
+    vel = stepper.vel_buf
     velocity!(vel, prob)
 
     if !stepper.initialized
@@ -114,9 +130,14 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
         stepper.initialized = true
     else
         # Leapfrog: y_{n+1} = y_{n-1} + 2*dt * v(y_n)
+        nu = stepper.ra_coeff
         @inbounds for i in 1:N
-            nodes_current[i], stepper.nodes_prev[i] =
-                stepper.nodes_prev[i] + 2 * dt * vel[i], nodes_current[i]
+            y_next = stepper.nodes_prev[i] + 2 * dt * vel[i]
+            # Robert-Asselin filter: damp the computational mode by nudging
+            # y_n toward the mean of y_{n-1} and y_{n+1}.
+            y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + stepper.nodes_prev[i])
+            stepper.nodes_prev[i] = y_filtered
+            nodes_current[i] = y_next
         end
         _scatter_nodes!(prob, nodes_current)
     end
@@ -136,6 +157,7 @@ function resize_buffers!(stepper::RK4Stepper{T}, prob::ContourProblem) where {T}
     resize!(stepper.k2, N); fill!(stepper.k2, z)
     resize!(stepper.k3, N); fill!(stepper.k3, z)
     resize!(stepper.k4, N); fill!(stepper.k4, z)
+    resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
     return stepper
 end
 
@@ -149,6 +171,7 @@ function resize_buffers!(stepper::LeapfrogStepper{T}, prob::ContourProblem) wher
     N = total_nodes(prob)
     z = zero(SVector{2, T})
     resize!(stepper.nodes_prev, N); fill!(stepper.nodes_prev, z)
+    resize!(stepper.vel_buf, N); fill!(stepper.vel_buf, z)
     stepper.initialized = false
     return stepper
 end
@@ -272,11 +295,18 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
         for j in eachindex(contours)
             contours[j] = remesh(contours[j], params)
         end
+        reconnected = false
         for _ in 1:100
             idx = build_spatial_index(contours, params.delta)
             close_pairs = find_close_segments(contours, idx, params.delta)
             isempty(close_pairs) && break
             reconnect!(contours, close_pairs)
+            reconnected = true
+        end
+        if reconnected
+            for j in eachindex(contours)
+                contours[j] = remesh(contours[j], params)
+            end
         end
         remove_filaments!(contours, params.area_min)
     end
@@ -333,9 +363,12 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
         _scatter_nodes!(prob, nodes_current)
         stepper.initialized = true
     else
+        nu = stepper.ra_coeff
         @inbounds for i in 1:Ntot
-            nodes_current[i], stepper.nodes_prev[i] =
-                stepper.nodes_prev[i] + 2 * dt * flat_vel[i], nodes_current[i]
+            y_next = stepper.nodes_prev[i] + 2 * dt * flat_vel[i]
+            y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + stepper.nodes_prev[i])
+            stepper.nodes_prev[i] = y_filtered
+            nodes_current[i] = y_next
         end
         _scatter_nodes!(prob, nodes_current)
     end
