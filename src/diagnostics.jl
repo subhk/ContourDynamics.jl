@@ -200,7 +200,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
                     dy = pi_pt[2] - pj_pt[2]
                     r2 = dx^2 + dy^2
                     r2 < eps(T) && continue
-                    quad += g_weight * g_weight * log(sqrt(r2))
+                    quad += g_weight * g_weight * log(r2) / 2
                 end
             end
             # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
