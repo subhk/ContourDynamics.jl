@@ -229,6 +229,52 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
 end
 
 """
+    segment_velocity(::SQGKernel, ::UnboundedDomain, x, a, b)
+
+Velocity at point `x` due to a surface buoyancy patch contour segment from
+node `a` to node `b` with unit buoyancy jump, using the regularized SQG
+Green's function `G(r) = -1/(2π√(r²+δ²))`.
+
+The contour integral is:
+  v_seg = -(1/(2π)) t̂ [F(u_a) - F(u_b)]
+
+where `F(u) = log(u + √(u² + h_eff²))` and `h_eff² = h² + δ²`.
+
+The `-(1/(2π))` prefactor (vs `-(1/(4π))` for Euler) reflects the different
+Green's function normalisation: SQG uses `1/(2πr)` while Euler uses
+`log(r²)/(4π)`.
+"""
+function segment_velocity(kernel::SQGKernel{T}, ::UnboundedDomain,
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
+    ds = b - a
+    ds_len_sq = ds[1]^2 + ds[2]^2
+    ds_len = sqrt(ds_len_sq)
+
+    if ds_len < eps(T)
+        return zero(SVector{2,T})
+    end
+
+    t_hat = ds / ds_len
+    n_hat = SVector{2,T}(-t_hat[2], t_hat[1])
+
+    r0 = x - a  # vector from a to x
+    # Project onto segment coordinates
+    u_a = r0[1] * t_hat[1] + r0[2] * t_hat[2]   # tangential component
+    h   = r0[1] * n_hat[1] + r0[2] * n_hat[2]    # normal component
+    u_b = u_a - ds_len
+
+    h_eff_sq = h * h + kernel.delta^2
+
+    # Antiderivative F(u) = log(u + √(u² + h_eff²))
+    # = arcsinh(u / √h_eff²) + const  (the const cancels in F(u_a) - F(u_b))
+    F_a = log(u_a + sqrt(u_a * u_a + h_eff_sq))
+    F_b = log(u_b + sqrt(u_b * u_b + h_eff_sq))
+
+    inv2pi = one(T) / (2 * T(π))
+    return -inv2pi * t_hat * (F_a - F_b)
+end
+
+"""
     velocity!(vel, prob::MultiLayerContourProblem)
 
 Compute velocity at all nodes across all layers using modal decomposition.
