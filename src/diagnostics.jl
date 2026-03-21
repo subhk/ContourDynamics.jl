@@ -391,9 +391,41 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
                                               domain::PeriodicDomain{T}) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
+    is_self = ci.nodes === cj.nodes
     g = one(T) / sqrt(T(3))
     g_nodes = SVector{2,T}(-g, g)
     g_weight = one(T)
+    # Analytical self-segment integral for the log(r²)/2 singularity
+    self_seg_const = 4 * log(T(2)) - T(6)
+
+    # Precompute the limit of [-2π G_per(r) - log(r²)/2] as r→0.
+    # This is the smooth periodic correction at zero separation, needed for
+    # self-segment GL points where both quadrature indices coincide (r=0).
+    corr_at_zero = zero(T)
+    if is_self
+        alpha = cache.alpha
+        Lx, Ly = domain.Lx, domain.Ly
+        gamma_euler = T(Base.MathConstants.eulergamma)
+        # Central image: lim_{r→0} [-(1/2) E₁(α²r²) - log(r²)/2] = (γ + 2ln(α))/2
+        corr_at_zero = (gamma_euler + 2 * log(alpha)) / 2
+        # Non-central real-space images evaluated at r=0
+        for px in -cache.n_images:cache.n_images
+            for py in -cache.n_images:cache.n_images
+                (px == 0 && py == 0) && continue
+                shift_r2 = (2 * Lx * px)^2 + (2 * Ly * py)^2
+                corr_at_zero -= _expint_e1(alpha^2 * shift_r2) / 2
+            end
+        end
+        # Fourier-space sum at r=0 (cos(k·0) = 1)
+        for (mi, kxi) in enumerate(cache.kx)
+            for (ni, kyi) in enumerate(cache.ky)
+                coeff = cache.fourier_coeffs[mi, ni]
+                abs(coeff) < eps(T) && continue
+                corr_at_zero -= 2 * T(π) * coeff
+            end
+        end
+    end
+
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
         ai = ci.nodes[i]
@@ -409,16 +441,46 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
             dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-            quad = zero(T)
-            for qi in 1:2
-                pi_pt = midi + g_nodes[qi] * half_dsi
-                for qj in 1:2
-                    pj_pt = midj + g_nodes[qj] * half_dsj
-                    r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
-                    # Replace log(r²)/2 with the periodic equivalent: -2π * G_per
-                    # since log(r²)/2 = -2π * G_∞ for unbounded Euler.
-                    G_per = _eval_ewald_greens(r_vec, cache, domain)
-                    quad += g_weight * g_weight * (-2 * T(π) * G_per)
+
+            if is_self && i == j
+                # Self-segment: singular subtraction.
+                # 1) Analytical integral of log(r²)/2 (same as unbounded)
+                half_ds_len = sqrt(half_dsi[1]^2 + half_dsi[2]^2)
+                if half_ds_len > eps(T)
+                    quad_analytical = self_seg_const + 4 * log(half_ds_len)
+                else
+                    quad_analytical = zero(T)
+                end
+                # 2) Smooth periodic correction [-2π G_per(r) - log(r²)/2] via GL
+                quad_corr = zero(T)
+                for qi in 1:2
+                    pi_pt = midi + g_nodes[qi] * half_dsi
+                    for qj in 1:2
+                        pj_pt = midj + g_nodes[qj] * half_dsj
+                        r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
+                        r2 = r_vec[1]^2 + r_vec[2]^2
+                        if r2 > eps(T)
+                            G_per = _eval_ewald_greens(r_vec, cache, domain)
+                            quad_corr += g_weight * g_weight * (-2 * T(π) * G_per - log(r2) / 2)
+                        else
+                            # qi == qj: use precomputed finite limit
+                            quad_corr += g_weight * g_weight * corr_at_zero
+                        end
+                    end
+                end
+                quad = quad_analytical + quad_corr
+            else
+                quad = zero(T)
+                for qi in 1:2
+                    pi_pt = midi + g_nodes[qi] * half_dsi
+                    for qj in 1:2
+                        pj_pt = midj + g_nodes[qj] * half_dsj
+                        r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
+                        # Replace log(r²)/2 with the periodic equivalent: -2π * G_per
+                        # since log(r²)/2 = -2π * G_∞ for unbounded Euler.
+                        G_per = _eval_ewald_greens(r_vec, cache, domain)
+                        quad += g_weight * g_weight * (-2 * T(π) * G_per)
+                    end
                 end
             end
             local_s += quad / 4 * dot_ds
