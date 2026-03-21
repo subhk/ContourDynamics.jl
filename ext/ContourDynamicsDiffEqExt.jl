@@ -50,15 +50,22 @@ function _make_rhs(prob::ContourProblem{K,D,T}) where {K,D,T}
 end
 
 """
-    to_ode_problem(prob::ContourProblem, tspan; surgery_params=nothing)
+    to_ode_problem(prob::ContourProblem, tspan; surgery_params=nothing, surgery_dt=nothing)
 
 Wrap a `ContourProblem` as an `ODEProblem` for use with OrdinaryDiffEq solvers.
 
-If `surgery_params::SurgeryParams` is provided, a `DiscreteCallback` is added
-that performs contour surgery every `surgery_params.n_surgery` steps.
+If `surgery_params::SurgeryParams` is provided, a `PeriodicCallback` is added
+that performs contour surgery at fixed time intervals.
+
+The surgery interval is determined by:
+- `surgery_dt`: explicit time interval between surgery passes.
+- If `surgery_dt` is not given, defaults to `surgery_params.n_surgery * dt` where
+  `dt = (tspan[2] - tspan[1]) / 1000`. For fixed-step solvers, prefer setting
+  `surgery_dt` explicitly to match your step size.
 """
 function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
-                                         surgery_params=nothing)
+                                         surgery_params=nothing,
+                                         surgery_dt=nothing)
     u0 = ContourDynamics.flatten_nodes(prob)
     rhs! = _make_rhs(prob)
 
@@ -66,21 +73,28 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         return ODEProblem(rhs!, u0, tspan, prob)
     end
 
-    # Surgery callback: apply every n_surgery accepted steps.
-    # Use integrator.iter (the solver's own step counter) to avoid
-    # mutable closure state that can be called outside accepted-step context.
+    # Determine surgery time interval
+    dt_surgery = if surgery_dt !== nothing
+        surgery_dt
+    else
+        # Fallback: estimate from tspan
+        (tspan[2] - tspan[1]) / 1000 * surgery_params.n_surgery
+    end
+
+    # Time-based surgery condition (works with both fixed and adaptive solvers)
+    next_surgery_time = Ref(tspan[1] + dt_surgery)
     function condition(u, t, integrator)
-        return integrator.iter > 0 && integrator.iter % surgery_params.n_surgery == 0
+        return t >= next_surgery_time[]
     end
     function affect!(integrator)
         ContourDynamics.unflatten_nodes!(integrator.p, integrator.u)
         surgery!(integrator.p, surgery_params)
         new_u = ContourDynamics.flatten_nodes(integrator.p)
-        # Set u first, then resize (OrdinaryDiffEq callback convention)
         if length(new_u) != length(integrator.u)
             resize!(integrator, length(new_u))
         end
         copyto!(integrator.u, new_u)
+        next_surgery_time[] += dt_surgery
     end
     cb = DiscreteCallback(condition, affect!)
 
