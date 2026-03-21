@@ -41,9 +41,16 @@ function build_spatial_index(contours::Vector{PVContour{T}}, delta,
         for ni in 1:nc
             a = c.nodes[ni]
             b = next_node(c, ni)
-            mid = (a + b) / 2
-            # Bin the node and the segment midpoint
-            for pt in (a, mid)
+            seg = b - a
+            seg_len = sqrt(seg[1]^2 + seg[2]^2)
+            # Bin at evenly spaced points along the segment, spaced at most delta
+            # apart. This ensures every point on the segment is within delta/2 of
+            # a binned point, so the 3×3 neighbourhood query in find_close_segments
+            # can discover close pairs even when Delta_max >> delta.
+            n_samples = max(2, ceil(Int, seg_len / delta) + 1)
+            for k in 0:(n_samples - 1)
+                t = T(k) / T(n_samples - 1)
+                pt = a + t * seg
                 _insert_bin!(bins, pt, ci, ni, delta, domain)
             end
         end
@@ -296,6 +303,12 @@ Same contour → split; different contours with same PV → merge.
 Each sub-contour produced by a split contains both pinch-point nodes as
 its first and last vertices, ensuring a well-formed closing segment.
 Merged contours are stitched so that traversal orientation is preserved.
+
+!!! warning
+    Reconnection produces near-duplicate nodes at stitch points.
+    Callers should [`remesh`](@ref) all contours after reconnection to
+    clean up short/long segments.  The top-level [`surgery!`](@ref) does
+    this automatically.
 """
 function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{Int,Int,Int,Int}},
                     domain::AbstractDomain=UnboundedDomain()) where {T}
@@ -314,12 +327,20 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
         push!(used, ci)
     end
 
-    # Pass 2: at most one merge (deleteat! shifts indices, so only one is safe)
+    # Pass 2: batch independent merges, processing in decreasing cj order.
+    # Since ci < cj (canonical ordering from find_close_segments), deleting cj
+    # never invalidates indices of remaining pairs whose cj values are smaller.
+    merge_pairs = Tuple{Int,Int,Int,Int}[]
     for (ci, i, cj, j) in close_pairs
         ci == cj && continue
         (ci in used || cj in used) && continue
+        push!(merge_pairs, (ci, i, cj, j))
+        push!(used, ci)
+        push!(used, cj)
+    end
+    sort!(merge_pairs, by=p -> p[3], rev=true)
+    for (ci, i, cj, j) in merge_pairs
         _reconnect_merge!(contours, ci, i, cj, j, domain)
-        break
     end
 end
 
