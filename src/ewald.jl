@@ -150,6 +150,13 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     return cache
 end
 
+# Pre-fetch Ewald cache for use in threaded velocity computation.
+# Returns `nothing` for unbounded domains (no cache needed).
+_prefetch_ewald(::UnboundedDomain, ::AbstractKernel) = nothing
+_prefetch_ewald(domain::PeriodicDomain, ::EulerKernel) = _get_ewald_cache(domain, EulerKernel())
+_prefetch_ewald(domain::PeriodicDomain, kernel::QGKernel) = _get_ewald_cache(domain, EulerKernel())
+_prefetch_ewald(domain::PeriodicDomain, kernel::SQGKernel) = _get_ewald_cache(domain, kernel)
+
 """
     setup_ewald_cache!(domain, kernel; n_fourier=8, n_images=2)
 
@@ -237,7 +244,12 @@ The periodic correction decomposes as:
 """
 function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    cache = _get_ewald_cache(domain, kernel)
+    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, kernel))
+end
+
+function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                           cache::EwaldCache{T}) where {T}
     alpha = cache.alpha
     Lx, Ly = domain.Lx, domain.Ly
 
@@ -323,16 +335,21 @@ without Gaussian damping.
 """
 function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
+    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, EulerKernel()))
+end
+
+function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                           euler_cache::EwaldCache{T}) where {T}
     ds = b - a
     ds_len = sqrt(ds[1]^2 + ds[2]^2)
     ds_len < eps(T) && return zero(SVector{2,T})
 
     # Euler periodic part (handles the log singularity via Ewald)
-    v_euler = segment_velocity(EulerKernel(), domain, x, a, b)
+    v_euler = segment_velocity(EulerKernel(), domain, x, a, b, euler_cache)
 
     # Smooth QG–Euler correction via Fourier sum.
     # G_QG_per - G_Euler_per = (1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
-    euler_cache = _get_ewald_cache(domain, EulerKernel())
     kappa2 = one(T) / kernel.Ld^2
     area = 4 * domain.Lx * domain.Ly
 
