@@ -5,7 +5,7 @@
 
 A Julia package for simulating the evolution of vortex patches using the **contour dynamics** and **contour surgery** method. Tracks boundaries of uniform potential vorticity (PV) patches — all computations are performed analytically on contour boundaries without gridding.
 
-Supports **2D Euler**, **single-layer quasi-geostrophic (QG)**, and **N-layer QG** dynamics on unbounded and doubly-periodic domains.
+Supports **2D Euler**, **surface quasi-geostrophic (SQG)**, **single-layer quasi-geostrophic (QG)**, and **N-layer QG** dynamics on unbounded and doubly-periodic domains.
 
 ## Installation
 
@@ -49,6 +49,7 @@ angular_momentum(prob)  # angular momentum
 |--------|-----------------|----------|
 | `EulerKernel()` | G(r) = -1/(2π) log(r) | 2D incompressible Euler |
 | `QGKernel(Ld)` | G(r) = -1/(2π) K₀(r/Ld) | Single-layer QG with deformation radius Ld |
+| `SQGKernel(δ)` | G(r) = -1/(2π√(r²+δ²)) | Surface QG (fractional Laplacian) |
 | `MultiLayerQGKernel(Ld, C, H)` | Eigenmode decomposition | N-layer QG with coupling matrix C |
 
 The Euler kernel uses an exact antiderivative for the segment integral (no quadrature). The QG kernel uses singular subtraction: the log singularity is handled analytically (same as Euler), and the smooth remainder K₀(r/Ld) + log(r/Ld) is integrated via 5-point Gauss-Legendre quadrature.
