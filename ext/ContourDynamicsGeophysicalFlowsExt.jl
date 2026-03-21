@@ -25,7 +25,13 @@ function ContourDynamics.contours_from_gridfield(grid_pv::AbstractMatrix{T},
         iso_nodes = _marching_squares(grid_pv, xs, ys, level)
         for node_set in iso_nodes
             if length(node_set) >= 3
-                push!(contours, PVContour(node_set, pv_jump))
+                c = PVContour(node_set, pv_jump)
+                # Ensure CCW orientation (positive area) for positive PV,
+                # CW (negative area) for negative PV.
+                if pv_jump * vortex_area(c) < zero(T)
+                    reverse!(c.nodes)
+                end
+                push!(contours, c)
             end
         end
     end
