@@ -24,7 +24,7 @@ export velocity!, velocity, segment_velocity
 export vortex_area, centroid, ellipse_moments
 export energy, enstrophy, circulation, angular_momentum
 export remesh, arc_lengths, surgery!
-export EwaldCache, build_ewald_cache, clear_ewald_cache!
+export EwaldCache, build_ewald_cache, setup_ewald_cache!, clear_ewald_cache!
 export timestep!, resize_buffers!, evolve!
 
 # Extension stubs — implemented by package extensions
