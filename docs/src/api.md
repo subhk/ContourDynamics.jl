@@ -37,10 +37,10 @@ resize_buffers!
 ```@docs
 surgery!
 remesh
-find_close_segments
-build_spatial_index
-reconnect!
-remove_filaments!
+ContourDynamics.find_close_segments
+ContourDynamics.build_spatial_index
+ContourDynamics.reconnect!
+ContourDynamics.remove_filaments!
 ```
 
 ## Diagnostics
