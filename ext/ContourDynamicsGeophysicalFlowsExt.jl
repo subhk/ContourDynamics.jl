@@ -26,9 +26,9 @@ function ContourDynamics.contours_from_gridfield(grid_pv::AbstractMatrix{T},
         for node_set in iso_nodes
             if length(node_set) >= 3
                 c = PVContour(node_set, pv_jump)
-                # Ensure CCW orientation (positive area) for positive PV,
-                # CW (negative area) for negative PV.
-                if pv_jump * vortex_area(c) < zero(T)
+                # Enforce CCW orientation (positive area); the PV sign
+                # lives in c.pv, not in the winding direction.
+                if vortex_area(c) < zero(T)
                     reverse!(c.nodes)
                 end
                 push!(contours, c)
