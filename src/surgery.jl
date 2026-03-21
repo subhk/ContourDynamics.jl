@@ -203,14 +203,24 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
     end
 
     # 2. Reconnection — iterate until no more close pairs remain
+    reconnected = false
     for _ in 1:100  # safety limit
         idx = build_spatial_index(contours, params.delta)
         close_pairs = find_close_segments(contours, idx, params.delta)
         isempty(close_pairs) && break
         reconnect!(contours, close_pairs)
+        reconnected = true
     end
 
-    # 3. Remove filaments
+    # 3. Re-remesh after reconnection to clean up short/long segments
+    #    created at stitch junctions during merge or split.
+    if reconnected
+        for i in eachindex(contours)
+            contours[i] = remesh(contours[i], params)
+        end
+    end
+
+    # 4. Remove filaments
     remove_filaments!(contours, params.area_min)
 
     return prob
