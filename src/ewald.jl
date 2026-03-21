@@ -41,6 +41,40 @@ function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
 end
 
 """
+    build_ewald_cache(domain::PeriodicDomain, kernel::SQGKernel; n_fourier=8, n_images=2)
+
+Ewald cache for SQG kernel in periodic domain.
+
+The SQG Green's function `G(r) = -1/(2πr)` is split via Ewald summation.
+Fourier coefficients are `(2π/|k|) exp(-k²/(4α²)) / A`, reflecting the
+fractional Laplacian's half-order (`1/|k|` vs Euler's `1/k²`).
+"""
+function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
+                           n_fourier::Int=8, n_images::Int=2) where {T}
+    Lx, Ly = domain.Lx, domain.Ly
+    alpha = sqrt(T(π)) / min(Lx, Ly)
+
+    kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
+    ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
+
+    nk = length(kx)
+    fourier_coeffs = zeros(T, nk, nk)
+    area = 4 * Lx * Ly
+
+    for (mi, kxi) in enumerate(kx)
+        for (ni, kyi) in enumerate(ky)
+            k2 = kxi^2 + kyi^2
+            if k2 > eps(T)
+                k_mag = sqrt(k2)
+                fourier_coeffs[mi, ni] = 2 * T(π) * exp(-k2 / (4 * alpha^2)) / (k_mag * area)
+            end
+        end
+    end
+
+    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
+end
+
+"""
     build_ewald_cache(domain::PeriodicDomain, kernel::QGKernel; n_fourier=8, n_images=2)
 
 Ewald cache for QG kernel in periodic domain.
@@ -87,6 +121,9 @@ function _cache_key(domain::PeriodicDomain{T}, ::EulerKernel) where {T}
 end
 function _cache_key(domain::PeriodicDomain{T}, k::QGKernel{T}) where {T}
     (domain.Lx, domain.Ly, QGKernel, k.Ld)::_EwaldCacheKey{T}
+end
+function _cache_key(domain::PeriodicDomain{T}, k::SQGKernel{T}) where {T}
+    (domain.Lx, domain.Ly, SQGKernel, k.delta)::_EwaldCacheKey{T}
 end
 
 _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
