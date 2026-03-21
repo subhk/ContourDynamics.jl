@@ -210,6 +210,18 @@ function _collect_all_nodes(prob::MultiLayerContourProblem{N, K, D, T}) where {N
     return nodes
 end
 
+function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourProblem{N}) where {N, T}
+    idx = 1
+    for i in 1:N
+        for c in prob.layers[i]
+            @inbounds for j in 1:nnodes(c)
+                buf[idx] = c.nodes[j]
+                idx += 1
+            end
+        end
+    end
+end
+
 function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SVector{2,T}}) where {N, T}
     idx = 1
     for i in 1:N
@@ -257,8 +269,9 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     dt = stepper.dt
     Ntot = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
+    nodes_orig = stepper.nodes_buf
     @assert length(k1) >= Ntot "Stepper buffer size ($(length(k1))) < total nodes ($Ntot). Call resize_buffers! first."
-    nodes_orig = _collect_all_nodes(prob)
+    _collect_all_nodes!(nodes_orig, prob)
 
     vel_tuple = _make_vel_tuple(prob)
 
@@ -296,12 +309,16 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
             contours[j] = remesh(contours[j], params)
         end
         reconnected = false
-        for _ in 1:100
+        max_reconnect_iter = 100
+        for iter in 1:max_reconnect_iter
             idx = build_spatial_index(contours, params.delta)
             close_pairs = find_close_segments(contours, idx, params.delta)
             isempty(close_pairs) && break
             reconnect!(contours, close_pairs)
             reconnected = true
+            if iter == max_reconnect_iter
+                @warn "surgery!: layer $i reconnection limit ($max_reconnect_iter) reached with $(length(close_pairs)) close pairs remaining"
+            end
         end
         if reconnected
             for j in eachindex(contours)
@@ -337,6 +354,7 @@ function resize_buffers!(stepper::RK4Stepper{T}, prob::MultiLayerContourProblem)
     resize!(stepper.k2, N); fill!(stepper.k2, z)
     resize!(stepper.k3, N); fill!(stepper.k3, z)
     resize!(stepper.k4, N); fill!(stepper.k4, z)
+    resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
     return stepper
 end
 
@@ -347,7 +365,7 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
 
     vel_tuple = _make_vel_tuple(prob)
     velocity!(vel_tuple, prob)
-    flat_vel = Vector{SVector{2,T}}(undef, Ntot)
+    flat_vel = stepper.vel_buf
     _collect_velocities!(flat_vel, vel_tuple)
 
     if !stepper.initialized
@@ -379,6 +397,7 @@ function resize_buffers!(stepper::LeapfrogStepper{T}, prob::MultiLayerContourPro
     N = total_nodes(prob)
     z = zero(SVector{2, T})
     resize!(stepper.nodes_prev, N); fill!(stepper.nodes_prev, z)
+    resize!(stepper.vel_buf, N); fill!(stepper.vel_buf, z)
     stepper.initialized = false
     return stepper
 end
