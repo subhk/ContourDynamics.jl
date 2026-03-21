@@ -232,6 +232,65 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     return sum(partial)
 end
 
+function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T}
+    contours = prob.contours
+    delta = prob.kernel.delta
+    E = zero(T)
+    for ci in contours
+        nnodes(ci) < 2 && continue
+        for cj in contours
+            nnodes(cj) < 2 && continue
+            E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta)
+        end
+    end
+    # E_SQG = (1/(4π)) × (1/2) × Σ q_i q_j ∮∮ √(r²+δ²) ds·ds'
+    # Derived from ∫∫ (1/r) dA dA' = -∮∮ r ds·ds' via ∇'²r = 1/r
+    inv4pi = one(T) / (4 * T(π))
+    return inv4pi * E / 2
+end
+
+function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) where {T}
+    nci = nnodes(ci)
+    ncj = nnodes(cj)
+    delta_sq = delta^2
+    # 2-point Gauss-Legendre nodes/weights on [-1,1]
+    g = one(T) / sqrt(T(3))
+    g_nodes = SVector{2,T}(-g, g)
+    g_weight = one(T)  # both weights are 1
+    partial = zeros(T, nci)
+    @inbounds Threads.@threads for i in 1:nci
+        ai = ci.nodes[i]
+        bi = next_node(ci, i)
+        dsi = bi - ai
+        midi = (ai + bi) / 2
+        half_dsi = dsi / 2
+        local_s = zero(T)
+        for j in 1:ncj
+            aj = cj.nodes[j]
+            bj = next_node(cj, j)
+            dsj = bj - aj
+            midj = (aj + bj) / 2
+            half_dsj = dsj / 2
+            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
+            # 2×2 Gauss-Legendre quadrature — √(r²+δ²) is smooth everywhere
+            quad = zero(T)
+            for qi in 1:2
+                pi_pt = midi + g_nodes[qi] * half_dsi
+                for qj in 1:2
+                    pj_pt = midj + g_nodes[qj] * half_dsj
+                    dx = pi_pt[1] - pj_pt[1]
+                    dy = pi_pt[2] - pj_pt[2]
+                    quad += g_weight * g_weight * sqrt(dx^2 + dy^2 + delta_sq)
+                end
+            end
+            # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
+            local_s += quad / 4 * dot_ds
+        end
+        partial[i] = local_s
+    end
+    return sum(partial)
+end
+
 function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     contours = prob.contours
     Ld = prob.kernel.Ld
@@ -461,7 +520,7 @@ end
 function energy(prob::ContourProblem)
     throw(ArgumentError(
         "energy is not implemented for $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
-        "Supported: EulerKernel/QGKernel on UnboundedDomain or PeriodicDomain."))
+        "Supported: EulerKernel/QGKernel/SQGKernel on UnboundedDomain, EulerKernel/QGKernel on PeriodicDomain."))
 end
 
 function circulation(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
