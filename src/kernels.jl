@@ -85,6 +85,12 @@ function segment_velocity(::EulerKernel, ::UnboundedDomain,
     return -inv4pi * t_hat * (F(u_a) - F(u_b))
 end
 
+# Unbounded domains don't use Ewald caches; ignore the argument.
+@inline segment_velocity(k::AbstractKernel, d::UnboundedDomain,
+                          x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                          ::Nothing) where {T} =
+    segment_velocity(k, d, x, a, b)
+
 """
     velocity!(vel, prob::ContourProblem)
 
@@ -98,6 +104,9 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     @assert length(vel) == N "vel length ($(length(vel))) must equal total nodes ($N)"
 
     n_contours = length(contours)
+
+    # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
+    ewald = _prefetch_ewald(domain, kernel)
 
     # Thread over target nodes — each node accumulates its velocity independently
     @inbounds Threads.@threads for i in 1:N
@@ -123,7 +132,7 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
             for j in 1:nc
                 a = c.nodes[j]
                 b = next_node(c, j)
-                v = v + pv * segment_velocity(kernel, domain, xi, a, b)
+                v = v + pv * segment_velocity(kernel, domain, xi, a, b, ewald)
             end
         end
         vel[i] = v
@@ -292,6 +301,9 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     P = kernel.eigenvectors
     P_inv = kernel.eigenvectors_inv
 
+    # Pre-fetch Ewald cache once (all modes use the Euler cache for periodic domains)
+    ewald = _prefetch_ewald(domain, EulerKernel())
+
     # Pre-allocate scratch buffers sized to the largest layer
     max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
     target_nodes = Vector{SVector{2,T}}(undef, max_nodes)
@@ -337,7 +349,7 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                             a = sc.nodes[sj]
                             b = next_node(sc, sj)
                             v_mode = v_mode + source_weight * sc.pv *
-                                segment_velocity(mode_kernel, domain, x, a, b)
+                                segment_velocity(mode_kernel, domain, x, a, b, ewald)
                         end
                     end
                 end
