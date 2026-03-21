@@ -122,7 +122,7 @@ function _load_snapshot_from_group(g, step::Int)
 
     if is_multilayer
         nlyr = g["nlayers"]::Int
-        all_layers = Vector{Vector{PVContour}}(undef, nlyr)
+        all_layers = Vector{Any}(undef, nlyr)
         for li in 1:nlyr
             lg = g["layer_" * lpad(li, 2, '0')]
             nc = lg["ncontours"]::Int
@@ -141,12 +141,17 @@ end
 # ── helpers ──────────────────────────────────────────────────
 
 function _load_contours(g, nc::Int)
-    contours = PVContour[]
+    nc == 0 && return PVContour{Float64}[]
+
+    # Peek at first contour to determine element type
+    cg1 = g["contour_" * lpad(1, 4, '0')]
+    T = eltype(cg1["x"])
+
+    contours = PVContour{T}[]
     for ci in 1:nc
         cg = g["contour_" * lpad(ci, 4, '0')]
         x = cg["x"]
         y = cg["y"]
-        T = eltype(x)
         pv = T(cg["pv"])
         nodes = [SVector{2,T}(x[i], y[i]) for i in eachindex(x)]
         wrap = if haskey(cg, "wrap_x")
