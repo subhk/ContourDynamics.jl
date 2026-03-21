@@ -247,10 +247,24 @@ function ContourDynamics.gridfield_from_contours(prob::ContourProblem{K,D,T},
     ys = range(T(ylims[1]), T(ylims[2]), length=ny)
 
     for c in prob.contours
-        for (ix, x) in enumerate(xs)
-            for (iy, y) in enumerate(ys)
-                if _point_in_polygon(SVector{2,T}(x, y), c.nodes)
-                    field[ix, iy] += c.pv
+        if is_spanning(c)
+            # Spanning contours represent a PV jump across a horizontal band.
+            # Add PV to all grid points below the contour's y-level.
+            # (For a beta staircase, this reconstructs βy via cumulative jumps.)
+            y_level = sum(node[2] for node in c.nodes) / length(c.nodes)
+            for (ix, _) in enumerate(xs)
+                for (iy, y) in enumerate(ys)
+                    if y < y_level
+                        field[ix, iy] += c.pv
+                    end
+                end
+            end
+        else
+            for (ix, x) in enumerate(xs)
+                for (iy, y) in enumerate(ys)
+                    if _point_in_polygon(SVector{2,T}(x, y), c.nodes)
+                        field[ix, iy] += c.pv
+                    end
                 end
             end
         end
