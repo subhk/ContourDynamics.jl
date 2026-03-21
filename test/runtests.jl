@@ -21,8 +21,9 @@ include("test_utils.jl")
         # Domains
         d = UnboundedDomain()
         @test d isa AbstractDomain
-        pd = PeriodicDomain(π, π)
-        @test pd.Lx == π
+        pd = PeriodicDomain(Float64(π), Float64(π))
+        @test pd.Lx == Float64(π)
+        @test_throws MethodError PeriodicDomain(1, 1)  # Int not allowed
         @test_throws ArgumentError PeriodicDomain(-1.0, 1.0)
 
         # ContourProblem
