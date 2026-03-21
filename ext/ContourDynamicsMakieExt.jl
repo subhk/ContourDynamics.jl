@@ -16,10 +16,11 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
         for c in prob.contours
             nodes = c.nodes
             n = length(nodes)
+            close_node = nodes[1] + c.wrap  # wrap = (0,0) for closed contours
             xs = [nodes[i][1] for i in 1:n]
-            push!(xs, nodes[1][1])
+            push!(xs, close_node[1])
             ys = [nodes[i][2] for i in 1:n]
-            push!(ys, nodes[1][2])
+            push!(ys, close_node[2])
             Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu)
         end
     end
