@@ -10,7 +10,7 @@ tags:
   - potential vorticity
 authors:
   - name: Subhajit Kar
-    orcid: 0000-0000-0000-0000
+    orcid: 0000-0001-9737-3345
     affiliation: 1
 affiliations:
   - name: Tel Aviv University
