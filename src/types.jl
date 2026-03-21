@@ -222,11 +222,12 @@ struct RK4Stepper{T<:AbstractFloat} <: AbstractTimeStepper
     k2::Vector{SVector{2, T}}
     k3::Vector{SVector{2, T}}
     k4::Vector{SVector{2, T}}
+    nodes_buf::Vector{SVector{2, T}}  # pre-allocated buffer for original node positions
 end
 
 function RK4Stepper(dt::T, n::Int) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    RK4Stepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n))
+    RK4Stepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), fill(z, n))
 end
 
 """
@@ -238,10 +239,12 @@ The first step is bootstrapped with a forward-Euler half-step.
 mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
     dt::T
     nodes_prev::Vector{SVector{2, T}}
+    vel_buf::Vector{SVector{2, T}}  # pre-allocated velocity buffer
     initialized::Bool
+    ra_coeff::T  # Robert-Asselin filter coefficient (0 = no filter)
 end
 
-function LeapfrogStepper(dt::T, n::Int) where {T<:AbstractFloat}
+function LeapfrogStepper(dt::T, n::Int; ra_coeff::T=T(0.05)) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    LeapfrogStepper(dt, fill(z, n), false)
+    LeapfrogStepper(dt, fill(z, n), fill(z, n), false, ra_coeff)
 end
