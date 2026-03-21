@@ -108,20 +108,19 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
     ewald = _prefetch_ewald(domain, kernel)
 
+    # Build cumulative offset array for O(1) flat-index → contour lookup.
+    # offsets[ci] = total nodes in contours 1..ci-1, so flat index i belongs
+    # to contour ci where offsets[ci] < i <= offsets[ci+1].
+    offsets = Vector{Int}(undef, n_contours + 1)
+    offsets[1] = 0
+    for ci in 1:n_contours
+        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+    end
+
     # Thread over target nodes — each node accumulates its velocity independently
     @inbounds Threads.@threads for i in 1:N
-        # Linear scan to find contour containing flat index i (zero-allocation).
-        # For typical contour counts (< 100) this is faster than binary search
-        # due to branch prediction and cache locality.
-        ci = 1
-        offset = 0
-        while ci < n_contours
-            nn = nnodes(contours[ci])
-            i <= offset + nn && break
-            offset += nn
-            ci += 1
-        end
-        local_i = i - offset
+        ci = searchsortedlast(offsets, i - 1)
+        local_i = i - offsets[ci]
         xi = contours[ci].nodes[local_i]
 
         v = zero(SVector{2,T})
