@@ -34,8 +34,7 @@ Write flat node vector back into contour node arrays.
 function _scatter_nodes!(prob::ContourProblem, all_nodes::Vector{SVector{2,T}}) where {T}
     idx = 1
     for c in prob.contours
-        n = nnodes(c)
-        for i in 1:n
+        @inbounds for i in 1:nnodes(c)
             c.nodes[i] = all_nodes[idx]
             idx += 1
         end
@@ -236,7 +235,7 @@ function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SV
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
-            for j in 1:nnodes(c)
+            @inbounds for j in 1:nnodes(c)
                 c.nodes[j] = all_nodes[idx]
                 idx += 1
             end
