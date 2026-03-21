@@ -33,7 +33,9 @@ to node `b` with unit PV jump, using the 2D Euler Green's function in an
 unbounded domain.
 
 Computes the contour dynamics integral analytically:
-  v_seg = (1/(4π)) * (-(by-ay), (bx-ax)) * ∫₀¹ log|x - a - t(b-a)|² dt
+  v_seg = -(1/(4π)) * (bx-ax, by-ay) * ∫₀¹ log|x - a - t(b-a)|² dt
+
+The velocity direction is along `ds = b - a`, not rotated.
 """
 function segment_velocity(::EulerKernel, ::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -155,7 +157,7 @@ The contour dynamics velocity is:
   v_seg = (1/(2π)) ∫₀¹ K₀(|x-P(t)|/Ld) ds dt
 
 Uses singular subtraction: the log singularity in K₀ is handled analytically
-(matching the Euler kernel), and the smooth remainder [K₀(r/Ld) + log(r/Ld)]
+(matching the Euler kernel), and the smooth remainder [K₀(r/Ld) + log(r)]
 is integrated with 5-point Gauss-Legendre quadrature.
 """
 function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
@@ -171,15 +173,16 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     v_euler = segment_velocity(EulerKernel(), domain, x, a, b)
 
     # 5-point Gauss-Legendre on [-1, 1] for the smooth correction
-    # Correction integrand: K₀(r/Ld) + log(r/Ld) which is smooth at r=0
-    # (since K₀(s) ~ -log(s/2) - γ as s→0)
+    # Correction integrand: K₀(r/Ld) + log(r) which is smooth at r=0
+    # (since K₀(r/Ld) ~ -log(r) + log(2Ld) - γ as r→0)
     # The full QG integral is:
     #   v_seg = (1/(2π)) ds ∫₀¹ K₀(r/Ld) dt
     #         = (1/(2π)) ds ∫₀¹ [-log(r) + (K₀(r/Ld) + log(r))] dt
     # The -log(r) part gives the Euler contribution (with appropriate factors).
-    # The correction is: (1/(2π)) ds ∫₀¹ [K₀(r/Ld) + log(r/Ld)] dt
-    # Note: the log(Ld) term integrates to a constant times ds, which sums to
-    # zero around a closed contour.
+    # The correction is: (1/(2π)) ds ∫₀¹ [K₀(r/Ld) + log(r)] dt
+    # This uses log(r) (not log(r/Ld)) to match the Euler singularity exactly.
+    # Using log(r/Ld) would introduce a per-segment error of -log(Ld)*ds that
+    # cancels for closed contours (Σ ds = 0) but not for spanning contours.
 
     g_nodes, g_weights = _gl5_nodes_weights(T)
 
@@ -195,15 +198,15 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
         r2 = r_vec[1]^2 + r_vec[2]^2
 
         if r2 < eps(T)^2
-            # K₀(s) + log(s) → log(2) - γ as s→0, finite
-            corr_integral += g_weights[q] * (log(T(2)) - T(Base.MathConstants.eulergamma))
+            # K₀(r/Ld) + log(r) → log(2Ld) - γ as r→0, finite
+            corr_integral += g_weights[q] * (log(2 * Ld) - T(Base.MathConstants.eulergamma))
             continue
         end
 
         r = sqrt(r2)
         rr = r / Ld
-        # K₀(rr) + log(rr) is smooth and bounded near rr=0
-        corr_integral += g_weights[q] * (besselk(0, rr) + log(rr))
+        # K₀(r/Ld) + log(r) is smooth and bounded near r=0
+        corr_integral += g_weights[q] * (besselk(0, rr) + log(r))
     end
 
     # Scale: the Gauss quadrature approximates ∫₋₁¹ f(t) dt, and our
@@ -212,15 +215,10 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     # So: ∫₀¹ correction dt ≈ (1/2) * sum(w_i * f(t_i))
     corr_integral *= T(0.5)  # [-1,1] to [0,1] Jacobian
 
-    # v_corr = (1/(2π)) * ds * corr_integral
-    # But we need the negative sign to match the Euler convention
     # v_seg_QG = v_Euler + v_corr where v_Euler already has the correct sign
-    # From the derivation: v = (q/(2π)) oint K₀ (dx',dy') for CCW contour with positive PV
-    # The Euler part is v_Euler = -(q/(4π)) t_hat * (F(u_a) - F(u_b))
-    # which equals (q/(2π)) oint (-log(r)) (dx',dy')
-    # So the correction adds: (q/(2π)) oint [K₀(r/Ld) + log(r)] (dx',dy')
-    # = (q/(2π)) * ds * corr_integral
-    # But we multiply by pv in velocity!, so segment_velocity should return per-unit-pv.
+    # The Euler part handles the -log(r) singularity analytically.
+    # The correction adds: (1/(2π)) * ds * ∫₀¹ [K₀(r/Ld) + log(r)] dt
+    # (per unit PV; pv is multiplied in velocity!).
     v_corr = inv2pi * ds * corr_integral
 
     return v_euler + v_corr
