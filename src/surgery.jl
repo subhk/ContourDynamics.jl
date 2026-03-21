@@ -204,12 +204,16 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
 
     # 2. Reconnection — iterate until no more close pairs remain
     reconnected = false
-    for _ in 1:100  # safety limit
+    max_reconnect_iter = 100
+    for iter in 1:max_reconnect_iter
         idx = build_spatial_index(contours, params.delta)
         close_pairs = find_close_segments(contours, idx, params.delta)
         isempty(close_pairs) && break
         reconnect!(contours, close_pairs)
         reconnected = true
+        if iter == max_reconnect_iter
+            @warn "surgery!: reconnection iteration limit ($max_reconnect_iter) reached with $(length(close_pairs)) close pairs remaining"
+        end
     end
 
     # 3. Re-remesh after reconnection to clean up short/long segments
