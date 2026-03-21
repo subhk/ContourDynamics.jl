@@ -2,16 +2,33 @@
 
 ## Types
 
+### Kernels
+
 ```@docs
-PVContour
 EulerKernel
 QGKernel
 MultiLayerQGKernel
+```
+
+### Contours and Domains
+
+```@docs
+PVContour
 UnboundedDomain
 PeriodicDomain
+```
+
+### Problem Structs
+
+```@docs
 ContourProblem
 MultiLayerContourProblem
 SurgeryParams
+```
+
+### Time Steppers
+
+```@docs
 RK4Stepper
 LeapfrogStepper
 ```
@@ -72,7 +89,14 @@ is_spanning
 ```@docs
 EwaldCache
 build_ewald_cache
+setup_ewald_cache!
 clear_ewald_cache!
+```
+
+## Periodic Domains
+
+```@docs
+wrap_nodes!
 ```
 
 ## Internals
@@ -83,4 +107,6 @@ ContourDynamics._scatter_nodes!
 ContourDynamics._scatter_shifted!
 ContourDynamics._expint_e1
 ContourDynamics._segment_min_dist2
+ContourDynamics._best_stitch_nodes
+ContourDynamics._check_spanning_proximity
 ```
