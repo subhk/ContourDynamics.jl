@@ -74,16 +74,16 @@ end
 # Cache storage — keyed by concrete (Lx, Ly, kernel_type, Ld) tuple to
 # avoid hash collisions.  Ld = 0 for EulerKernel.
 const _EwaldCacheKey = Tuple{Any, Any, Any, Any}   # (Lx, Ly, kernel type, Ld)
-const _ewald_caches = Dict{_EwaldCacheKey, EwaldCache}()
+const _ewald_caches = Dict{_EwaldCacheKey, Any}()
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
 _cache_key(domain::PeriodicDomain, ::EulerKernel) = (domain.Lx, domain.Ly, EulerKernel, 0)
 _cache_key(domain::PeriodicDomain, k::QGKernel) = (domain.Lx, domain.Ly, QGKernel, k.Ld)
 
-function _get_ewald_cache(domain::PeriodicDomain, kernel::AbstractKernel)
+function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T}
     key = _cache_key(domain, kernel)
-    return lock(_ewald_cache_lock) do
+    cache = lock(_ewald_cache_lock) do
         if !haskey(_ewald_caches, key)
             if length(_ewald_caches) >= _EWALD_CACHE_MAX
                 empty!(_ewald_caches)
@@ -92,6 +92,7 @@ function _get_ewald_cache(domain::PeriodicDomain, kernel::AbstractKernel)
         end
         _ewald_caches[key]
     end
+    return cache::EwaldCache{T}
 end
 
 """Clear all cached Ewald data."""
