@@ -101,6 +101,6 @@ Contour dynamics is ideal when:
 - You need **exact PV conservation** (no diffusion, no dissipation)
 - The flow is well-described by **piecewise-constant PV** (vortex patches, PV staircases)
 - You want to study **vortex mergers, filamentation, and long-time dynamics**
-- You're working in **2D Euler or quasi-geostrophic** settings
+- You're working in **2D Euler, SQG, or quasi-geostrophic** settings
 
 It is less suitable for smooth PV distributions (use spectral/pseudospectral methods) or 3D flows.
