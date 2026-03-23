@@ -31,7 +31,7 @@
             j = mod1(i + 1, nnodes(c_out))
             d = c_out.nodes[j] - c_out.nodes[i]
             spacing = sqrt(d[1]^2 + d[2]^2)
-            @test spacing >= params.mu * 0.1
+            @test spacing >= params.mu * 0.9
         end
     end
 
@@ -39,8 +39,22 @@
         # Build spatial index and verify nodes are in correct bins
         nodes = [SVector(0.5, 0.5), SVector(1.5, 0.5), SVector(0.5, 1.5)]
         c = PVContour(nodes, 1.0)
-        idx = ContourDynamics.build_spatial_index([c], 1.0)
+        delta = 1.0
+        idx = ContourDynamics.build_spatial_index([c], delta)
         @test length(idx.bins) > 0  # at least one occupied bin
+        # Verify that nodes land in expected bins
+        # Node (0.5, 0.5) → bin (0, 0)
+        @test haskey(idx.bins, (0, 0))
+        # Node (1.5, 0.5) → bin (1, 0)
+        @test haskey(idx.bins, (1, 0))
+        # Node (0.5, 1.5) → bin (0, 1)
+        @test haskey(idx.bins, (0, 1))
+        # Bins reference the correct contour (contour 1)
+        @test all(ci == 1 for (ci, _) in idx.bins[(0, 0)])
+
+        # Finer delta produces more bins
+        idx2 = ContourDynamics.build_spatial_index([c], 0.5)
+        @test length(idx2.bins) >= length(idx.bins)
     end
 
     @testset "Reconnection: Merge Two Contours" begin
