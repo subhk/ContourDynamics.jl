@@ -374,6 +374,8 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
     if length(nodes1) >= 3 && length(nodes2) >= 3
         contours[ci] = PVContour(nodes1, c.pv)
         push!(contours, PVContour(nodes2, c.pv))
+    else
+        @warn "split aborted: daughter contours too small (n1=$(length(nodes1)), n2=$(length(nodes2))); contour $ci unchanged" maxlog=5
     end
 end
 
