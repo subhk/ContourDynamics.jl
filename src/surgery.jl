@@ -222,52 +222,42 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
             a_i = c.nodes[i]
             b_i = next_node(c, i)
             mid_i = (a_i + b_i) / 2
+
+            # Wrap query midpoint for consistent bin lookup in periodic domains
             mid_q = _wrap_query_pt(mid_i, domain)
-            seg_i = b_i - a_i
-            seg_len_i = sqrt(seg_i[1]^2 + seg_i[2]^2)
+            bx = floor(Int, mid_q[1] / delta)
+            by = floor(Int, mid_q[2] / delta)
 
-            # Query bins at multiple sample points along the query segment,
-            # mirroring how the index is built. This ensures close pairs near
-            # segment endpoints are detected even when Delta_max >> delta.
-            n_query = max(2, ceil(Int, seg_len_i / delta) + 1)
+            for dbx in -1:1, dby in -1:1
+                key = (bx + dbx, by + dby)
+                haskey(idx.bins, key) || continue
+                for (cj, j) in idx.bins[key]
+                    # Canonical ordering to avoid duplicates
+                    pair = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
+                    pair in seen && continue
+                    is_spanning(contours[cj]) && continue
+                    if ci == cj
+                        ncj = nnodes(contours[cj])
+                        dist_along = min(abs(i - j), ncj - abs(i - j))
+                        dist_along <= 2 && continue
+                    else
+                        # Reconnection only between contours at the same PV level.
+                        # Use tolerance to handle PV values from different arithmetic paths.
+                        pv_i, pv_j = contours[ci].pv, contours[cj].pv
+                        !isapprox(pv_i, pv_j; atol=eps(T)*100, rtol=eps(T)*100) && continue
+                    end
 
-            for qk in 0:(n_query - 1)
-                t_q = T(qk) / T(n_query - 1)
-                query_pt = _wrap_query_pt(a_i + t_q * seg_i, domain)
-                bx = floor(Int, query_pt[1] / delta)
-                by = floor(Int, query_pt[2] / delta)
+                    a_j = contours[cj].nodes[j]
+                    b_j = next_node(contours[cj], j)
 
-                for dbx in -1:1, dby in -1:1
-                    key = (bx + dbx, by + dby)
-                    haskey(idx.bins, key) || continue
-                    for (cj, j) in idx.bins[key]
-                        # Canonical ordering to avoid duplicates
-                        pair = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
-                        pair in seen && continue
-                        is_spanning(contours[cj]) && continue
-                        if ci == cj
-                            ncj = nnodes(contours[cj])
-                            dist_along = min(abs(i - j), ncj - abs(i - j))
-                            dist_along <= 2 && continue
-                        else
-                            # Reconnection only between contours at the same PV level.
-                            # Use tolerance to handle PV values from different arithmetic paths.
-                            pv_i, pv_j = contours[ci].pv, contours[cj].pv
-                            !isapprox(pv_i, pv_j; atol=eps(T)*100, rtol=eps(T)*100) && continue
-                        end
+                    # Shift segment j to closest periodic image of segment i
+                    # Use wrapped mid_q (not raw mid_i) so the minimum-image
+                    # computation selects the correct periodic replica.
+                    a_j_img, b_j_img = _shift_segment_to_image(a_j, b_j, mid_q, domain)
 
-                        a_j = contours[cj].nodes[j]
-                        b_j = next_node(contours[cj], j)
-
-                        # Shift segment j to closest periodic image of segment i
-                        # Use wrapped mid_q (not raw mid_i) so the minimum-image
-                        # computation selects the correct periodic replica.
-                        a_j_img, b_j_img = _shift_segment_to_image(a_j, b_j, mid_q, domain)
-
-                        if _segment_min_dist2(a_i, b_i, a_j_img, b_j_img) < delta2
-                            push!(seen, pair)
-                            push!(close_pairs, pair)
-                        end
+                    if _segment_min_dist2(a_i, b_i, a_j_img, b_j_img) < delta2
+                        push!(seen, pair)
+                        push!(close_pairs, pair)
                     end
                 end
             end
