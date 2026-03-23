@@ -250,7 +250,10 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                             dist_along = min(abs(i - j), ncj - abs(i - j))
                             dist_along <= 2 && continue
                         else
-                            contours[ci].pv != contours[cj].pv && continue
+                            # Reconnection only between contours at the same PV level.
+                            # Use tolerance to handle PV values from different arithmetic paths.
+                            pv_i, pv_j = contours[ci].pv, contours[cj].pv
+                            !isapprox(pv_i, pv_j; atol=eps(T)*100, rtol=eps(T)*100) && continue
                         end
 
                         a_j = contours[cj].nodes[j]
