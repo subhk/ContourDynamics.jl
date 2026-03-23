@@ -275,9 +275,17 @@ function _expint_e1(x::T) where {T<:AbstractFloat}
         # Continued fraction for x ≥ 2.
         # Convergence ratio ≈ 1/(x+1); at x=2 need ~54 terms for Float64.
         # Cap at 300 terms: for x ≥ 2 the CF converges well within this.
+        # For very large x, E₁(x) ≈ exp(-x)/x underflows to zero; short-circuit
+        # to avoid InexactError from ceil(Int, Inf) when log(x/(x+1)) rounds to 0.
         ex = exp(-x)
+        ex == zero(T) && return zero(T)
         cf = zero(T)
-        n_cf = min(300, max(60, ceil(Int, -log(eps(T)) / log(T(x) / (T(x) + one(T))))))
+        log_ratio = log(T(x) / (T(x) + one(T)))
+        n_cf = if log_ratio < -eps(T)
+            min(300, max(60, ceil(Int, -log(eps(T)) / (-log_ratio))))
+        else
+            60  # x so large the CF converges trivially
+        end
         for k in n_cf:-1:1
             cf = T(k) / (one(T) + T(k) / (x + cf))
         end
