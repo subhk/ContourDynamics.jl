@@ -38,6 +38,27 @@ Computes the contour dynamics integral analytically:
 
 The velocity direction is along `ds = b - a`, not rotated.
 """
+# Antiderivative for the Euler segment velocity integral.
+# F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*atan(u, h)
+@inline function _euler_antideriv(u::T, h::T, h_sq::T) where {T}
+    r2 = u * u + h_sq
+    if r2 < eps(T)^2
+        return zero(T)
+    end
+    val = u * log(r2) - 2 * u
+    if abs(h) > eps(T)
+        val += 2 * h * atan(u, h)
+    else
+        # h = 0: atan(u/h) = ±π/2 for u ≠ 0
+        if u > zero(T)
+            val += h * T(π)
+        elseif u < zero(T)
+            val -= h * T(π)
+        end
+    end
+    return val
+end
+
 function segment_velocity(::EulerKernel, ::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
     ds = b - a
@@ -58,31 +79,9 @@ function segment_velocity(::EulerKernel, ::UnboundedDomain,
     u_b = u_a - ds_len
 
     h_sq = h * h
-    eps2 = eps(T)^2
-
-    # Antiderivative F(u) = u*log(u^2 + h^2) - 2u + 2|h|*atan(u/|h|)
-    # Handle h ≈ 0 case (point on segment line)
-    function F(u)
-        r2 = u*u + h_sq
-        if r2 < eps2
-            return zero(T)
-        end
-        val = u * log(r2) - 2*u
-        if abs(h) > eps(T)
-            val += 2 * h * atan(u, h)
-        else
-            # h = 0: atan(u/h) = ±π/2 for u ≠ 0
-            if u > zero(T)
-                val += h * T(π)
-            elseif u < zero(T)
-                val -= h * T(π)
-            end
-        end
-        return val
-    end
 
     inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * t_hat * (F(u_a) - F(u_b))
+    return -inv4pi * t_hat * (_euler_antideriv(u_a, h, h_sq) - _euler_antideriv(u_b, h, h_sq))
 end
 
 # Unbounded domains don't use Ewald caches; ignore the argument.
@@ -294,6 +293,8 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     domain = prob.domain
 
     for i in 1:N
+        n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
+        @assert length(vel[i]) == n_layer "vel[$i] length ($(length(vel[i]))) must equal layer $i nodes ($n_layer)"
         fill!(vel[i], zero(SVector{2,T}))
     end
 
@@ -304,7 +305,11 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     # Pre-fetch Ewald cache once (all modes use the Euler cache for periodic domains)
     ewald = _prefetch_ewald(domain, EulerKernel())
 
-    # Pre-allocate scratch buffers sized to the largest layer
+    # Pre-allocate scratch buffers sized to the largest layer.
+    # NOTE: these are reused across the sequential mode/target_layer loops below.
+    # The @threads parallelism is only over target nodes (innermost loop), so
+    # there is no race.  Do NOT parallelize the outer mode or layer loops without
+    # giving each thread its own copy of these buffers.
     max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
     target_nodes = Vector{SVector{2,T}}(undef, max_nodes)
     mode_vel = Vector{SVector{2,T}}(undef, max_nodes)

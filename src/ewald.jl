@@ -140,21 +140,36 @@ _ewald_cache_dict(::Type{Float32}) = _ewald_caches_f32
 _ewald_key_order(::Type{Float64}) = _ewald_key_order_f64
 _ewald_key_order(::Type{Float32}) = _ewald_key_order_f32
 
+# Generic fallback for other float types (BigFloat, Float16, etc.)
+const _ewald_caches_generic = Dict{Any, Any}()
+const _ewald_key_order_generic = Any[]
+_ewald_cache_dict(::Type{T}) where {T<:AbstractFloat} = _ewald_caches_generic
+_ewald_key_order(::Type{T}) where {T<:AbstractFloat} = _ewald_key_order_generic
+
 function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T}
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
+    # Fast path: check under lock, return immediately if cached
+    existing = lock(_ewald_cache_lock) do
+        get(caches, key, nothing)
+    end
+    existing !== nothing && return existing
+    # Slow path: build outside lock to avoid blocking other threads
+    new_cache = build_ewald_cache(domain, kernel)
     cache = lock(_ewald_cache_lock) do
-        if !haskey(caches, key)
-            # FIFO eviction: remove oldest entries until under limit
+        # Re-check: another thread may have inserted while we were building
+        if haskey(caches, key)
+            caches[key]
+        else
             while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
                 old_key = popfirst!(order)
                 delete!(caches, old_key)
             end
-            caches[key] = build_ewald_cache(domain, kernel)
+            caches[key] = new_cache
             push!(order, key)
+            new_cache
         end
-        caches[key]
     end
     return cache
 end
@@ -257,9 +272,10 @@ function _expint_e1(x::T) where {T<:AbstractFloat}
     else
         # Continued fraction for x ≥ 2.
         # Convergence ratio ≈ 1/(x+1); at x=2 need ~54 terms for Float64.
+        # Cap at 300 terms: for x ≥ 2 the CF converges well within this.
         ex = exp(-x)
         cf = zero(T)
-        n_cf = max(60, ceil(Int, -log(eps(T)) / log(T(x) / (T(x) + one(T)))))
+        n_cf = min(300, max(60, ceil(Int, -log(eps(T)) / log(T(x) / (T(x) + one(T))))))
         for k in n_cf:-1:1
             cf = T(k) / (one(T) + T(k) / (x + cf))
         end

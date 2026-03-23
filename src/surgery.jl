@@ -373,9 +373,11 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     # Check orientation consistency: both contours should have the same
     # sign of signed area. If they differ, reverse c2's node order so
     # the merged contour has consistent winding.
+    # Use a robust threshold: only reverse if c2 has a meaningfully signed area
+    # (well above numerical noise from the shoelace formula).
     a1 = vortex_area(c1)
     a2 = vortex_area(c2)
-    reversed = sign(a1) != sign(a2) && abs(a2) >= eps(T)
+    reversed = sign(a1) != sign(a2) && abs(a2) > eps(T) * T(1000)
     c2_nodes = reversed ? reverse(c2.nodes) : c2.nodes
     j_eff = reversed ? (n2 - j + 1) : j
 
@@ -425,21 +427,38 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta,
                                    domain::AbstractDomain=UnboundedDomain()) where {T}
     delta = T(delta)
     delta2 = delta^2
-    spanning_nodes = SVector{2,T}[]
+    # Bin spanning nodes for O(1) proximity lookup instead of O(N_spanning) per query
+    spanning_bins = Dict{Tuple{Int,Int}, Vector{SVector{2,T}}}()
+    has_spanning = false
     for c in contours
         is_spanning(c) || continue
-        append!(spanning_nodes, c.nodes)
+        has_spanning = true
+        for sn in c.nodes
+            bx = floor(Int, sn[1] / delta)
+            by = floor(Int, sn[2] / delta)
+            key = (bx, by)
+            if !haskey(spanning_bins, key)
+                spanning_bins[key] = SVector{2,T}[]
+            end
+            push!(spanning_bins[key], sn)
+        end
     end
-    isempty(spanning_nodes) && return
+    has_spanning || return
     for c in contours
         is_spanning(c) && continue
         for node in c.nodes
-            for sn in spanning_nodes
-                r = _min_image(node - sn, domain)
-                d2 = r[1]^2 + r[2]^2
-                if d2 < delta2
-                    @warn "surgery!: closed contour node within delta of spanning contour — this cannot be resolved by reconnection" distance=sqrt(d2) delta maxlog=1
-                    return
+            bx = floor(Int, node[1] / delta)
+            by = floor(Int, node[2] / delta)
+            for dbx in -1:1, dby in -1:1
+                key = (bx + dbx, by + dby)
+                haskey(spanning_bins, key) || continue
+                for sn in spanning_bins[key]
+                    r = _min_image(node - sn, domain)
+                    d2 = r[1]^2 + r[2]^2
+                    if d2 < delta2
+                        @warn "surgery!: closed contour node within delta of spanning contour — this cannot be resolved by reconnection" distance=sqrt(d2) delta maxlog=1
+                        return
+                    end
                 end
             end
         end
@@ -461,17 +480,32 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
         contours[i] = remesh(contours[i], params)
     end
 
-    # 2. Reconnection — iterate until no more close pairs remain
+    # 2. Reconnection — iterate until no more close pairs remain.
+    #    Stall detection: if close-pair count fails to decrease for 3
+    #    consecutive iterations, stop early to avoid infinite cycling.
     reconnected = false
     max_reconnect_iter = 100
+    prev_n_pairs = typemax(Int)
+    stall_count = 0
     for iter in 1:max_reconnect_iter
         idx = build_spatial_index(contours, params.delta, domain)
         close_pairs = find_close_segments(contours, idx, params.delta, domain)
         isempty(close_pairs) && break
+        n_pairs = length(close_pairs)
+        if n_pairs >= prev_n_pairs
+            stall_count += 1
+            if stall_count >= 3
+                @warn "surgery!: reconnection stalled (close pairs not decreasing: $n_pairs) — stopping early"
+                break
+            end
+        else
+            stall_count = 0
+        end
+        prev_n_pairs = n_pairs
         reconnect!(contours, close_pairs, domain)
         reconnected = true
         if iter == max_reconnect_iter
-            @warn "surgery!: reconnection iteration limit ($max_reconnect_iter) reached with $(length(close_pairs)) close pairs remaining"
+            @warn "surgery!: reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
         end
     end
 

@@ -80,7 +80,9 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
         eig = eigen(Symmetric(cmat))
         eigenvalues = SVector{N,T}(eig.values)
         eigenvectors = SMatrix{N,N,T}(eig.vectors)
-        eigenvectors_inv = SMatrix{N,N,T}(inv(eig.vectors))
+        # eigen(Symmetric(...)) returns orthonormal eigenvectors, so P⁻¹ = Pᵀ.
+        # Using transpose is both faster and more numerically stable than inv().
+        eigenvectors_inv = SMatrix{N,N,T}(eig.vectors')
 
         # Physical validation: coupling eigenvalues should be non-positive
         # (the stretching operator is dissipative in the QG energy norm)
@@ -197,7 +199,18 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat}
     kernel::K
     domain::D
     contours::Vector{PVContour{T}}
+    function ContourProblem(kernel::K, domain::D, contours::Vector{PVContour{T}}) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat}
+        _check_kernel_type(kernel, T)
+        new{K, D, T}(kernel, domain, contours)
+    end
 end
+
+# Warn if kernel's floating-point type doesn't match contour type
+_check_kernel_type(::AbstractKernel, ::Type) = nothing  # no-op for unparameterized kernels
+_check_kernel_type(k::QGKernel{Tk}, ::Type{T}) where {Tk, T} =
+    Tk !== T && @warn "ContourProblem: QGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
+_check_kernel_type(k::SQGKernel{Tk}, ::Type{T}) where {Tk, T} =
+    Tk !== T && @warn "ContourProblem: SQGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
 
 """
     MultiLayerContourProblem{N,K,D,T}(kernel, domain, layers)
@@ -262,6 +275,9 @@ struct SurgeryParams{T<:AbstractFloat}
         Delta_max > mu || throw(ArgumentError("Delta_max must be greater than mu"))
         area_min > zero(T) || throw(ArgumentError("area_min must be positive"))
         n_surgery > 0 || throw(ArgumentError("n_surgery must be positive"))
+        if delta > mu
+            @warn "SurgeryParams: delta ($delta) > mu ($mu); typically delta ≤ mu/4 for correct Dritschel surgery" maxlog=1
+        end
         new{T}(delta, mu, Delta_max, area_min, n_surgery)
     end
 end
@@ -303,6 +319,7 @@ mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
     nodes_prev::Vector{SVector{2, T}}
     vel_buf::Vector{SVector{2, T}}      # pre-allocated velocity buffer
     nodes_buf::Vector{SVector{2, T}}    # pre-allocated current-nodes buffer
+    vel_mid::Vector{SVector{2, T}}      # pre-allocated bootstrap midpoint velocity buffer
     initialized::Bool
     ra_coeff::T  # Robert-Asselin filter coefficient (0 = no filter)
     vel_bufs::Vector{Vector{SVector{2, T}}}  # reusable per-layer velocity buffers (multi-layer)
@@ -310,6 +327,6 @@ end
 
 function LeapfrogStepper(dt::T, n::Int; ra_coeff::T=T(0.05)) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), false, ra_coeff,
+    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, ra_coeff,
                     Vector{Vector{SVector{2, T}}}())
 end

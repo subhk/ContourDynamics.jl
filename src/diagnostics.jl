@@ -174,10 +174,9 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     nci = nnodes(ci)
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes  # detect self-interaction
-    # 2-point Gauss-Legendre nodes/weights on [-1,1]
-    g = one(T) / sqrt(T(3))
-    g_nodes = SVector{2,T}(-g, g)
-    g_weight = one(T)  # both weights are 1
+    # 3-point Gauss-Legendre nodes/weights on [-1,1]
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     # Analytical self-segment integral:
     # ∫₋₁¹∫₋₁¹ log(|s-t| * |half_ds|) ds dt = 4*log(2) - 6 + 4*log|half_ds|
     self_seg_const = 4 * log(T(2)) - T(6)  # precompute constant part
@@ -210,17 +209,17 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
                     quad = zero(T)
                 end
             else
-                # 2×2 Gauss-Legendre quadrature over both segments
+                # 3×3 Gauss-Legendre quadrature over both segments
                 quad = zero(T)
-                for qi in 1:2
+                for qi in 1:3
                     pi_pt = midi + g_nodes[qi] * half_dsi
-                    for qj in 1:2
+                    for qj in 1:3
                         pj_pt = midj + g_nodes[qj] * half_dsj
                         dx = pi_pt[1] - pj_pt[1]
                         dy = pi_pt[2] - pj_pt[2]
                         r2 = dx^2 + dy^2
                         r2 < eps(T) && continue
-                        quad += g_weight * g_weight * log(r2) / 2
+                        quad += g_weights[qi] * g_weights[qj] * log(r2) / 2
                     end
                 end
             end
@@ -253,10 +252,9 @@ function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) 
     nci = nnodes(ci)
     ncj = nnodes(cj)
     delta_sq = delta^2
-    # 2-point Gauss-Legendre nodes/weights on [-1,1]
-    g = one(T) / sqrt(T(3))
-    g_nodes = SVector{2,T}(-g, g)
-    g_weight = one(T)  # both weights are 1
+    # 3-point Gauss-Legendre nodes/weights on [-1,1]
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
         ai = ci.nodes[i]
@@ -272,15 +270,15 @@ function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) 
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
             dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-            # 2×2 Gauss-Legendre quadrature — √(r²+δ²) is smooth everywhere
+            # 3×3 Gauss-Legendre quadrature — √(r²+δ²) is smooth everywhere
             quad = zero(T)
-            for qi in 1:2
+            for qi in 1:3
                 pi_pt = midi + g_nodes[qi] * half_dsi
-                for qj in 1:2
+                for qj in 1:3
                     pj_pt = midj + g_nodes[qj] * half_dsj
                     dx = pi_pt[1] - pj_pt[1]
                     dy = pi_pt[2] - pj_pt[2]
-                    quad += g_weight * g_weight * sqrt(dx^2 + dy^2 + delta_sq)
+                    quad += g_weights[qi] * g_weights[qj] * sqrt(dx^2 + dy^2 + delta_sq)
                 end
             end
             # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
@@ -309,10 +307,15 @@ end
 function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
-    # 2-point Gauss-Legendre nodes/weights on [-1,1]
-    g = one(T) / sqrt(T(3))
-    g_nodes = SVector{2,T}(-g, g)
-    g_weight = one(T)
+    is_self = ci.nodes === cj.nodes  # detect self-interaction
+    # 3-point Gauss-Legendre nodes/weights on [-1,1]
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    # Analytical self-segment integral for the log(r²)/2 singularity
+    # (same formula as Euler self-segment)
+    self_seg_const = 4 * log(T(2)) - T(6)
+    # Smooth limit of K₀(r/Ld) + log(r) as r→0
+    k0_smooth_at_zero = log(2 * Ld) - T(Base.MathConstants.eulergamma)
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
         ai = ci.nodes[i]
@@ -328,17 +331,54 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
             dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-            # 2×2 Gauss-Legendre quadrature over both segments
-            quad = zero(T)
-            for qi in 1:2
-                pi_pt = midi + g_nodes[qi] * half_dsi
-                for qj in 1:2
-                    pj_pt = midj + g_nodes[qj] * half_dsj
-                    dx = pi_pt[1] - pj_pt[1]
-                    dy = pi_pt[2] - pj_pt[2]
-                    r = sqrt(dx^2 + dy^2)
-                    r < eps(T) * Ld && continue
-                    quad += g_weight * g_weight * besselk(0, r / Ld)
+
+            if is_self && i == j
+                # Self-segment: singular subtraction.
+                # Decompose K₀(r/Ld) = [-log(r)] + [K₀(r/Ld) + log(r)]
+                # 1) The -log(r) part has a known analytical integral:
+                #    ∫₋₁¹∫₋₁¹ log(|s-t|·|half_ds|) ds dt = self_seg_const + 4·log|half_ds|
+                half_ds_len = sqrt(half_dsi[1]^2 + half_dsi[2]^2)
+                if half_ds_len > eps(T)
+                    quad_log = self_seg_const + 4 * log(half_ds_len)
+                else
+                    quad_log = zero(T)
+                end
+                # 2) The smooth remainder K₀(r/Ld) + log(r) → log(2Ld) - γ at r=0
+                #    is safe for GL quadrature.
+                quad_smooth = zero(T)
+                for qi in 1:3
+                    pi_pt = midi + g_nodes[qi] * half_dsi
+                    for qj in 1:3
+                        pj_pt = midj + g_nodes[qj] * half_dsj
+                        dx = pi_pt[1] - pj_pt[1]
+                        dy = pi_pt[2] - pj_pt[2]
+                        r2 = dx^2 + dy^2
+                        if r2 < eps(T)^2
+                            # qi == qj: use smooth limit
+                            quad_smooth += g_weights[qi] * g_weights[qj] * k0_smooth_at_zero
+                        else
+                            r = sqrt(r2)
+                            quad_smooth += g_weights[qi] * g_weights[qj] * (besselk(0, r / Ld) + log(r))
+                        end
+                    end
+                end
+                # Combined: K₀(r/Ld) = [-log(r)] + [K₀(r/Ld) + log(r)]
+                # The analytical part gives ∫∫ log(r) ds dt (with the half_ds scaling).
+                # The smooth part gives ∫∫ [K₀+log(r)] ds dt via GL.
+                quad = quad_log + quad_smooth
+            else
+                # 3×3 Gauss-Legendre quadrature over both segments
+                quad = zero(T)
+                for qi in 1:3
+                    pi_pt = midi + g_nodes[qi] * half_dsi
+                    for qj in 1:3
+                        pj_pt = midj + g_nodes[qj] * half_dsj
+                        dx = pi_pt[1] - pj_pt[1]
+                        dy = pi_pt[2] - pj_pt[2]
+                        r = sqrt(dx^2 + dy^2)
+                        r < eps(T) * Ld && continue
+                        quad += g_weights[qi] * g_weights[qj] * besselk(0, r / Ld)
+                    end
                 end
             end
             local_s += quad / 4 * dot_ds
@@ -392,9 +432,9 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     nci = nnodes(ci)
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes
-    g = one(T) / sqrt(T(3))
-    g_nodes = SVector{2,T}(-g, g)
-    g_weight = one(T)
+    # 3-point Gauss-Legendre nodes/weights on [-1,1]
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     # Analytical self-segment integral for the log(r²)/2 singularity
     self_seg_const = 4 * log(T(2)) - T(6)
 
@@ -453,33 +493,33 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
                 end
                 # 2) Smooth periodic correction [-2π G_per(r) - log(r²)/2] via GL
                 quad_corr = zero(T)
-                for qi in 1:2
+                for qi in 1:3
                     pi_pt = midi + g_nodes[qi] * half_dsi
-                    for qj in 1:2
+                    for qj in 1:3
                         pj_pt = midj + g_nodes[qj] * half_dsj
                         r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
                         r2 = r_vec[1]^2 + r_vec[2]^2
                         if r2 > eps(T)
                             G_per = _eval_ewald_greens(r_vec, cache, domain)
-                            quad_corr += g_weight * g_weight * (-2 * T(π) * G_per - log(r2) / 2)
+                            quad_corr += g_weights[qi] * g_weights[qj] * (-2 * T(π) * G_per - log(r2) / 2)
                         else
                             # qi == qj: use precomputed finite limit
-                            quad_corr += g_weight * g_weight * corr_at_zero
+                            quad_corr += g_weights[qi] * g_weights[qj] * corr_at_zero
                         end
                     end
                 end
                 quad = quad_analytical + quad_corr
             else
                 quad = zero(T)
-                for qi in 1:2
+                for qi in 1:3
                     pi_pt = midi + g_nodes[qi] * half_dsi
-                    for qj in 1:2
+                    for qj in 1:3
                         pj_pt = midj + g_nodes[qj] * half_dsj
                         r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
                         # Replace log(r²)/2 with the periodic equivalent: -2π * G_per
                         # since log(r²)/2 = -2π * G_∞ for unbounded Euler.
                         G_per = _eval_ewald_greens(r_vec, cache, domain)
-                        quad += g_weight * g_weight * (-2 * T(π) * G_per)
+                        quad += g_weights[qi] * g_weights[qj] * (-2 * T(π) * G_per)
                     end
                 end
             end
@@ -533,9 +573,9 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
                                              kappa2::T, area::T) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
-    g = one(T) / sqrt(T(3))
-    g_nodes = SVector{2,T}(-g, g)
-    g_weight = one(T)
+    # 3-point Gauss-Legendre nodes/weights on [-1,1]
+    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
+    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     partial = zeros(T, nci)
     @inbounds Threads.@threads for i in 1:nci
         ai = ci.nodes[i]
@@ -552,9 +592,9 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
             half_dsj = dsj / 2
             dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
             quad = zero(T)
-            for qi in 1:2
+            for qi in 1:3
                 pi_pt = midi + g_nodes[qi] * half_dsi
-                for qj in 1:2
+                for qj in 1:3
                     pj_pt = midj + g_nodes[qj] * half_dsj
                     dx = pi_pt[1] - pj_pt[1]
                     dy = pi_pt[2] - pj_pt[2]
@@ -568,7 +608,7 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
                             G_corr += coeff * cos(phase)
                         end
                     end
-                    quad += g_weight * g_weight * (-2 * T(π) * G_corr)
+                    quad += g_weights[qi] * g_weights[qj] * (-2 * T(π) * G_corr)
                 end
             end
             local_s += quad / 4 * dot_ds

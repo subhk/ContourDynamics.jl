@@ -88,10 +88,11 @@ function ContourDynamics.save_snapshot(filename::String,
 
         if diagnostics
             dg = JLD2.Group(g, "diagnostics")
-            dg["energy"] = energy(prob)
             dg["circulation"] = circulation(prob)
             dg["enstrophy"] = enstrophy(prob)
             dg["total_nodes"] = total_nodes(prob)
+            try dg["energy"] = energy(prob) catch end
+            try dg["angular_momentum"] = angular_momentum(prob) catch end
         end
     end
 

@@ -94,7 +94,11 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
             resize!(integrator, length(new_u))
         end
         copyto!(integrator.u, new_u)
-        next_surgery_time[] += dt_surgery
+        # Advance past the current time so that large adaptive steps
+        # that skip multiple intervals don't leave the threshold behind.
+        while next_surgery_time[] <= integrator.t
+            next_surgery_time[] += dt_surgery
+        end
     end
     cb = DiscreteCallback(condition, affect!)
 
