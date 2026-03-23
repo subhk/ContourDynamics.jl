@@ -18,7 +18,7 @@ Collect all nodes into pre-allocated buffer `buf` (in-place, non-allocating).
 """
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
-    @assert length(buf) >= N "buffer length ($(length(buf))) must be >= total nodes ($N)"
+    length(buf) >= N || throw(DimensionMismatch("buffer length ($(length(buf))) must be >= total nodes ($N)"))
     idx = 1
     for c in prob.contours
         @inbounds for i in 1:nnodes(c)
@@ -35,7 +35,7 @@ Write flat node vector back into contour node arrays.
 """
 function _scatter_nodes!(prob::ContourProblem, all_nodes::Vector{SVector{2,T}}) where {T}
     N = total_nodes(prob)
-    @assert length(all_nodes) >= N "all_nodes length ($(length(all_nodes))) must be >= total nodes ($N)"
+    length(all_nodes) >= N || throw(DimensionMismatch("all_nodes length ($(length(all_nodes))) must be >= total nodes ($N)"))
     idx = 1
     for c in prob.contours
         @inbounds for i in 1:nnodes(c)
@@ -53,8 +53,8 @@ Write `base[i] + scale * delta[i]` into contour nodes without allocating.
 function _scatter_shifted!(prob::ContourProblem, base::Vector{SVector{2,T}},
                            delta::Vector{SVector{2,T}}, scale::T) where {T}
     N = total_nodes(prob)
-    @assert length(base) >= N "base length ($(length(base))) must be >= total nodes ($N)"
-    @assert length(delta) >= N "delta length ($(length(delta))) must be >= total nodes ($N)"
+    length(base) >= N || throw(DimensionMismatch("base length ($(length(base))) must be >= total nodes ($N)"))
+    length(delta) >= N || throw(DimensionMismatch("delta length ($(length(delta))) must be >= total nodes ($N)"))
     idx = 1
     for c in prob.contours
         @inbounds for i in 1:nnodes(c)
@@ -74,7 +74,7 @@ function timestep!(prob::ContourProblem, stepper::RK4Stepper{T}) where {T}
     N = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
     nodes_orig = stepper.nodes_buf
-    @assert length(k1) >= N "Stepper buffer size ($(length(k1))) < total nodes ($N). Call resize_buffers! first."
+    length(k1) >= N || throw(DimensionMismatch("Stepper buffer size ($(length(k1))) < total nodes ($N). Call resize_buffers! first."))
 
     # Save original positions into pre-allocated buffer
     _collect_all_nodes!(nodes_orig, prob)
@@ -113,7 +113,7 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
     dt = stepper.dt
     N = total_nodes(prob)
     nodes_current = stepper.nodes_buf
-    @assert length(nodes_current) >= N "Stepper buffer size ($(length(nodes_current))) < total nodes ($N). Call resize_buffers! first."
+    length(nodes_current) >= N || throw(DimensionMismatch("Stepper buffer size ($(length(nodes_current))) < total nodes ($N). Call resize_buffers! first."))
     _collect_all_nodes!(nodes_current, prob)
 
     vel = stepper.vel_buf
@@ -224,7 +224,7 @@ end
 
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourProblem{N}) where {N, T}
     Ntot = total_nodes(prob)
-    @assert length(buf) >= Ntot "buffer length ($(length(buf))) must be >= total nodes ($Ntot)"
+    length(buf) >= Ntot || throw(DimensionMismatch("buffer length ($(length(buf))) must be >= total nodes ($Ntot)"))
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
@@ -238,7 +238,7 @@ end
 
 function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SVector{2,T}}) where {N, T}
     Ntot = total_nodes(prob)
-    @assert length(all_nodes) >= Ntot "all_nodes length ($(length(all_nodes))) must be >= total nodes ($Ntot)"
+    length(all_nodes) >= Ntot || throw(DimensionMismatch("all_nodes length ($(length(all_nodes))) must be >= total nodes ($Ntot)"))
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
@@ -252,7 +252,7 @@ end
 
 function _collect_velocities!(flat::Vector{SVector{2,T}}, vel::NTuple{N, Vector{SVector{2,T}}}) where {N, T}
     total = sum(length(vel[i]) for i in 1:N)
-    @assert length(flat) >= total "flat length ($(length(flat))) must be >= total velocities ($total)"
+    length(flat) >= total || throw(DimensionMismatch("flat length ($(length(flat))) must be >= total velocities ($total)"))
     idx = 1
     for i in 1:N
         @inbounds for j in eachindex(vel[i])
@@ -287,8 +287,8 @@ end
 function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVector{2,T}},
                            delta::Vector{SVector{2,T}}, scale::T) where {N, T}
     Ntot = total_nodes(prob)
-    @assert length(base) >= Ntot "base length ($(length(base))) must be >= total nodes ($Ntot)"
-    @assert length(delta) >= Ntot "delta length ($(length(delta))) must be >= total nodes ($Ntot)"
+    length(base) >= Ntot || throw(DimensionMismatch("base length ($(length(base))) must be >= total nodes ($Ntot)"))
+    length(delta) >= Ntot || throw(DimensionMismatch("delta length ($(length(delta))) must be >= total nodes ($Ntot)"))
     idx = 1
     for i in 1:N
         for c in prob.layers[i]
@@ -305,7 +305,7 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     Ntot = total_nodes(prob)
     k1, k2, k3, k4 = stepper.k1, stepper.k2, stepper.k3, stepper.k4
     nodes_orig = stepper.nodes_buf
-    @assert length(k1) >= Ntot "Stepper buffer size ($(length(k1))) < total nodes ($Ntot). Call resize_buffers! first."
+    length(k1) >= Ntot || throw(DimensionMismatch("Stepper buffer size ($(length(k1))) < total nodes ($Ntot). Call resize_buffers! first."))
     _collect_all_nodes!(nodes_orig, prob)
 
     vel_tuple = _ensure_vel_bufs!(stepper.vel_bufs, prob)
@@ -417,7 +417,7 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
     dt = stepper.dt
     Ntot = total_nodes(prob)
     nodes_current = stepper.nodes_buf
-    @assert length(nodes_current) >= Ntot "Stepper buffer size ($(length(nodes_current))) < total nodes ($Ntot). Call resize_buffers! first."
+    length(nodes_current) >= Ntot || throw(DimensionMismatch("Stepper buffer size ($(length(nodes_current))) < total nodes ($Ntot). Call resize_buffers! first."))
     _collect_all_nodes!(nodes_current, prob)
 
     vel_tuple = _ensure_vel_bufs!(stepper.vel_bufs, prob)
