@@ -168,7 +168,7 @@ end
 function _load_diagnostics(g)
     if haskey(g, "diagnostics")
         dg = g["diagnostics"]
-        (energy = dg["energy"],
+        (energy = haskey(dg, "energy") ? dg["energy"] : nothing,
          circulation = dg["circulation"],
          enstrophy = dg["enstrophy"],
          angular_momentum = haskey(dg, "angular_momentum") ? dg["angular_momentum"] : nothing,

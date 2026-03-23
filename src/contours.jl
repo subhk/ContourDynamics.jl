@@ -91,13 +91,17 @@ function remesh(c::PVContour{T}, params::SurgeryParams) where {T}
         if final_len < mu
             pop!(new_nodes)
             # After popping, if the new closing segment exceeds Delta_max,
-            # insert a midpoint node to keep it within bounds.
+            # subdivide it evenly to keep sub-segments within [~mu, Delta_max].
             if length(new_nodes) >= 3
                 d_new = close_target - new_nodes[end]
                 new_len = sqrt(d_new[1]^2 + d_new[2]^2)
                 if new_len > Delta_max
-                    mid_pt = (new_nodes[end] + close_target) / 2
-                    push!(new_nodes, mid_pt)
+                    n_sub = ceil(Int, new_len / Delta_max)
+                    base = new_nodes[end]
+                    seg = close_target - base
+                    for k in 1:(n_sub - 1)
+                        push!(new_nodes, base + seg * T(k) / T(n_sub))
+                    end
                 end
             end
         end

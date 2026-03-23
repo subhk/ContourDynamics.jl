@@ -427,28 +427,33 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta,
                                    domain::AbstractDomain=UnboundedDomain()) where {T}
     delta = T(delta)
     delta2 = delta^2
-    # Bin spanning nodes for O(1) proximity lookup instead of O(N_spanning) per query
+    # Bin spanning nodes for O(1) proximity lookup instead of O(N_spanning) per query.
+    # Wrap coordinates before binning so that spanning nodes (which may have drifted
+    # outside [-Lx,Lx) since wrap_nodes! skips them) land in the same bin space as
+    # the wrapped closed-contour nodes.
     spanning_bins = Dict{Tuple{Int,Int}, Vector{SVector{2,T}}}()
     has_spanning = false
     for c in contours
         is_spanning(c) || continue
         has_spanning = true
         for sn in c.nodes
-            bx = floor(Int, sn[1] / delta)
-            by = floor(Int, sn[2] / delta)
+            sn_w = _wrap_query_pt(sn, domain)
+            bx = floor(Int, sn_w[1] / delta)
+            by = floor(Int, sn_w[2] / delta)
             key = (bx, by)
             if !haskey(spanning_bins, key)
                 spanning_bins[key] = SVector{2,T}[]
             end
-            push!(spanning_bins[key], sn)
+            push!(spanning_bins[key], sn)  # store original (unwrapped) for _min_image
         end
     end
     has_spanning || return
     for c in contours
         is_spanning(c) && continue
         for node in c.nodes
-            bx = floor(Int, node[1] / delta)
-            by = floor(Int, node[2] / delta)
+            node_w = _wrap_query_pt(node, domain)
+            bx = floor(Int, node_w[1] / delta)
+            by = floor(Int, node_w[2] / delta)
             for dbx in -1:1, dby in -1:1
                 key = (bx + dbx, by + dby)
                 haskey(spanning_bins, key) || continue

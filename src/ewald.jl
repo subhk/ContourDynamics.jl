@@ -242,8 +242,10 @@ function clear_ewald_cache!()
     lock(_ewald_cache_lock) do
         empty!(_ewald_caches_f64)
         empty!(_ewald_caches_f32)
+        empty!(_ewald_caches_generic)
         empty!(_ewald_key_order_f64)
         empty!(_ewald_key_order_f32)
+        empty!(_ewald_key_order_generic)
     end
 end
 
