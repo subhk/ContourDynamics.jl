@@ -45,7 +45,11 @@ function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
                 increase!(clock, advance)
                 last_time[] = t
             end
-            push!(energy_rec, energy(p))
+            try
+                push!(energy_rec, energy(p))
+            catch e
+                e isa Union{MethodError, ArgumentError} || rethrow()
+            end
             push!(enstrophy_rec, enstrophy(p))
             push!(circulation_rec, circulation(p))
         end
