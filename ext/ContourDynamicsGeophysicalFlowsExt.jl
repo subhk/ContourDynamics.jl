@@ -76,28 +76,33 @@ end
 # Which edges does a given marching-squares case cross?
 # Edges: 1=bottom, 2=right, 3=top, 4=left
 @inline function _has_crossing(case::Int, side::Int)
-    # Lookup table: for each case, which edges are crossed
-    #  case  edges
-    #  1     1,4    6     2,4    11    2,4
-    #  2     1,2    7     3,4    12    3,4
-    #  3     2,4    8     3,4    13    1,4
-    #  4     2,3    9     1,4    14    1,2
-    #  5     1,3(×2) 10   1,3(×2) 15   none
+    # Lookup table: for each case, which edges are crossed.
+    # An edge crosses when its two corner values differ (one above, one below level).
+    # Edge 1=bottom (f00↔f10), 2=right (f10↔f11), 3=top (f01↔f11), 4=left (f00↔f01).
+    # Complement check: case N and case 15-N must cross the same edges.
+    #  case  edges    case  edges
+    #  1     1,4      14    1,4
+    #  2     1,2      13    1,2
+    #  3     2,4      12    2,4
+    #  4     2,3      11    2,3
+    #  5     1,2,3,4  10    1,2,3,4
+    #  6     1,3       9    1,3
+    #  7     3,4       8    3,4
     crossing = (
-        (true,false,false,true),   # 1
-        (true,true,false,false),   # 2
-        (false,true,false,true),   # 3
-        (false,true,true,false),   # 4
-        (true,true,true,true),     # 5  saddle
-        (false,true,false,true),   # 6
-        (false,false,true,true),   # 7
-        (false,false,true,true),   # 8
-        (true,false,false,true),   # 9
-        (true,true,true,true),     # 10 saddle
-        (false,true,false,true),   # 11
-        (false,false,true,true),   # 12
-        (true,false,false,true),   # 13
-        (true,true,false,false),   # 14
+        (true,false,false,true),   # 1:  1,4
+        (true,true,false,false),   # 2:  1,2
+        (false,true,false,true),   # 3:  2,4
+        (false,true,true,false),   # 4:  2,3
+        (true,true,true,true),     # 5:  saddle (1,2,3,4)
+        (true,false,true,false),   # 6:  1,3
+        (false,false,true,true),   # 7:  3,4
+        (false,false,true,true),   # 8:  3,4
+        (true,false,true,false),   # 9:  1,3
+        (true,true,true,true),     # 10: saddle (1,2,3,4)
+        (false,true,true,false),   # 11: 2,3
+        (false,true,false,true),   # 12: 2,4
+        (true,true,false,false),   # 13: 1,2
+        (true,false,false,true),   # 14: 1,4
     )
     (case < 1 || case > 14) && return false
     return crossing[case][side]
@@ -106,8 +111,8 @@ end
 @inline function _case_edges(case::Int)
     # Returns the pair(s) of edges crossed for each case
     table = (
-        (1,4), (1,2), (2,4), (2,3), (1,2,3,4), (2,4), (3,4),  # 1-7
-        (3,4), (1,4), (1,2,3,4), (2,4), (3,4), (1,4), (1,2),  # 8-14
+        (1,4), (1,2), (2,4), (2,3), (1,2,3,4), (1,3), (3,4),  # 1-7
+        (3,4), (1,3), (1,2,3,4), (2,3), (2,4), (1,2), (1,4),  # 8-14
     )
     return table[case]
 end
