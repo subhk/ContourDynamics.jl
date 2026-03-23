@@ -101,6 +101,20 @@ include("test_utils.jl")
         ratio, angle = ellipse_moments(e)
         @test ratio ≈ 2.0 rtol=0.05
         @test abs(angle) < 0.1
+
+        # Rotated ellipse: Jxy ≠ 0, catches incorrect product-of-inertia formula
+        θ = π / 4  # 45 degrees
+        e_rot = rotated_elliptical_patch(2.0, 1.0, 128, 1.0, θ)
+        ratio_rot, angle_rot = ellipse_moments(e_rot)
+        @test ratio_rot ≈ 2.0 rtol=0.05
+        @test angle_rot ≈ θ atol=0.05
+
+        # 30-degree rotation
+        θ30 = π / 6
+        e_rot30 = rotated_elliptical_patch(2.0, 1.0, 128, 1.0, θ30)
+        ratio30, angle30 = ellipse_moments(e_rot30)
+        @test ratio30 ≈ 2.0 rtol=0.05
+        @test angle30 ≈ θ30 atol=0.05
     end
 
     @testset "Problem-Level Diagnostics" begin
