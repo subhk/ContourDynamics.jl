@@ -194,6 +194,12 @@ _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = w
 
 function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
                  params::SurgeryParams; nsteps::Int, callbacks=nothing)
+    # Call callbacks at step 0 to capture the initial condition
+    if callbacks !== nothing
+        for cb in callbacks
+            cb(prob, 0)
+        end
+    end
     for step in 1:nsteps
         timestep!(prob, stepper)
         _maybe_wrap_nodes!(prob)
@@ -385,6 +391,12 @@ _maybe_wrap_nodes!(prob::MultiLayerContourProblem{<:Any, <:Any, <:PeriodicDomain
 
 function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
                  params::SurgeryParams; nsteps::Int, callbacks=nothing)
+    # Call callbacks at step 0 to capture the initial condition
+    if callbacks !== nothing
+        for cb in callbacks
+            cb(prob, 0)
+        end
+    end
     for step in 1:nsteps
         timestep!(prob, stepper)
         _maybe_wrap_nodes!(prob)
