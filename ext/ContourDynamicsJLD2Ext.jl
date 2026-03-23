@@ -47,8 +47,16 @@ function ContourDynamics.save_snapshot(filename::String,
             dg["circulation"] = circulation(prob)
             dg["enstrophy"] = enstrophy(prob)
             dg["total_nodes"] = total_nodes(prob)
-            try dg["energy"] = energy(prob) catch end
-            try dg["angular_momentum"] = angular_momentum(prob) catch end
+            try
+                dg["energy"] = energy(prob)
+            catch e
+                e isa Union{MethodError, ArgumentError} || rethrow()
+            end
+            try
+                dg["angular_momentum"] = angular_momentum(prob)
+            catch e
+                e isa Union{MethodError, ArgumentError} || rethrow()
+            end
         end
     end
 
@@ -91,8 +99,16 @@ function ContourDynamics.save_snapshot(filename::String,
             dg["circulation"] = circulation(prob)
             dg["enstrophy"] = enstrophy(prob)
             dg["total_nodes"] = total_nodes(prob)
-            try dg["energy"] = energy(prob) catch end
-            try dg["angular_momentum"] = angular_momentum(prob) catch end
+            try
+                dg["energy"] = energy(prob)
+            catch e
+                e isa Union{MethodError, ArgumentError} || rethrow()
+            end
+            try
+                dg["angular_momentum"] = angular_momentum(prob)
+            catch e
+                e isa Union{MethodError, ArgumentError} || rethrow()
+            end
         end
     end
 
