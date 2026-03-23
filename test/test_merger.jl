@@ -15,7 +15,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
         stepper = RK4Stepper(0.05, total_nodes(prob))
-        params = SurgeryParams(0.005, 0.02, 0.3, 1e-4, 5)
+        params = SurgeryParams(0.005, 0.02, 0.1, 1e-4, 5)
 
         circ_initial = circulation(prob)
         evolve!(prob, stepper, params; nsteps=200)
@@ -33,7 +33,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
         stepper = RK4Stepper(0.05, total_nodes(prob))
-        params = SurgeryParams(0.005, 0.02, 0.3, 1e-4, 5)
+        params = SurgeryParams(0.005, 0.02, 0.1, 1e-4, 5)
 
         evolve!(prob, stepper, params; nsteps=10)
 
