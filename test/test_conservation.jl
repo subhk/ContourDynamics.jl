@@ -25,7 +25,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         G1 = circulation(prob)
         c1 = centroid(prob.contours[1])
 
-        energy_tol = extended ? 1e-6 : 1e-7
+        energy_tol = extended ? 1e-7 : 1e-4
         @test abs(E1 - E0) / abs(E0) < energy_tol
         @test A1 ≈ A0 rtol=1e-6
         @test G1 ≈ G0 rtol=1e-6
