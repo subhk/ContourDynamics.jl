@@ -165,7 +165,7 @@ include("test_utils.jl")
             cb = (p, step) -> push!(areas, vortex_area(p.contours[1]))
 
             evolve!(prob, stepper, params; nsteps=10, callbacks=[cb])
-            @test length(areas) == 10
+            @test length(areas) == 11  # step 0 (initial) + steps 1-10
             @test all(a -> abs(a - initial_area) / abs(initial_area) < 1e-4, areas)
         end
     end
