@@ -31,7 +31,7 @@ include("test_utils.jl")
         @test total_nodes(prob) == 64
 
         # SurgeryParams validation
-        sp = SurgeryParams(0.01, 0.005, 0.1, 1e-6, 10)
+        sp = SurgeryParams(0.001, 0.005, 0.1, 1e-6, 10)
         @test sp.n_surgery == 10
         @test_throws ArgumentError SurgeryParams(0.01, 0.005, 0.003, 1e-6, 10)  # Delta_max < mu
 
@@ -194,7 +194,7 @@ include("test_utils.jl")
     @testset "Multi-Layer QG" begin
         Ld = SVector(1.0)
         H = SVector(1.0, 1.0)
-        coupling = SMatrix{2,2}(1.0, -0.5, -0.5, 1.0)
+        coupling = SMatrix{2,2}(-1.0, 1.0, 1.0, -1.0)
 
         kernel = MultiLayerQGKernel(Ld, coupling, H)
         @test nlayers(kernel) == 2
@@ -244,7 +244,7 @@ include("test_utils.jl")
         @test wrapped ≈ c.nodes[1] + c.wrap
 
         # Velocity computation works with spanning + closed contours mixed
-        vortex = PVContour([SVector{2,T}(0.3*cos(2π*k/16), 0.3*sin(2π*k/16)) for k in 0:15], T(2π))
+        vortex = PVContour([SVector{2,T}(0.3*cos(2π*k/16), 0.5 + 0.3*sin(2π*k/16)) for k in 0:15], T(2π))
         all_contours = vcat(staircase, [vortex])
         kernel = QGKernel(T(1.0))
         prob = ContourProblem(kernel, domain, all_contours)
@@ -253,7 +253,7 @@ include("test_utils.jl")
         @test all(v -> all(isfinite, v), vel)
 
         # Surgery skips spanning contours in reconnection and filament removal
-        params = SurgeryParams(T(0.1), T(0.05), T(0.5), T(1e-4), 10)
+        params = SurgeryParams(T(0.01), T(0.05), T(0.5), T(1e-4), 10)
         surgery!(prob, params)
         # All spanning contours should survive surgery
         n_spanning = count(is_spanning, prob.contours)
