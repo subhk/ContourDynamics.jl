@@ -284,6 +284,60 @@ function segment_velocity(kernel::SQGKernel{T}, ::UnboundedDomain,
     return -inv2pi * t_hat * (F_a - F_b)
 end
 
+# Function barrier: the concrete kernel type is resolved here so that
+# segment_velocity is fully specialised inside the @threads loop.
+function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
+                                    prob::MultiLayerContourProblem{N},
+                                    mode::Int, mode_kernel::K,
+                                    target_nodes::Vector{SVector{2,T}},
+                                    mode_vel::Vector{SVector{2,T}},
+                                    ewald) where {N, T, K}
+    P = prob.kernel.eigenvectors
+    P_inv = prob.kernel.eigenvectors_inv
+    domain = prob.domain
+
+    for target_layer in 1:N
+        target_contours = prob.layers[target_layer]
+        projection_weight = P[target_layer, mode]
+        abs(projection_weight) < eps(T) && continue
+
+        n_target = sum(nnodes(tc) for tc in target_contours; init=0)
+        n_target == 0 && continue
+
+        idx = 0
+        for tc in target_contours
+            for ti in 1:nnodes(tc)
+                idx += 1
+                target_nodes[idx] = tc.nodes[ti]
+            end
+        end
+
+        @inbounds Threads.@threads for ti in 1:n_target
+            x = target_nodes[ti]
+            v_mode = zero(SVector{2,T})
+            for source_layer in 1:N
+                source_weight = P_inv[mode, source_layer]
+                abs(source_weight) < eps(T) && continue
+                for sc in prob.layers[source_layer]
+                    nsc = nnodes(sc)
+                    nsc < 2 && continue
+                    for sj in 1:nsc
+                        a = sc.nodes[sj]
+                        b = next_node(sc, sj)
+                        v_mode = v_mode + source_weight * sc.pv *
+                            segment_velocity(mode_kernel, domain, x, a, b, ewald)
+                    end
+                end
+            end
+            mode_vel[ti] = v_mode
+        end
+
+        for ti in 1:n_target
+            vel[target_layer][ti] = vel[target_layer][ti] + projection_weight * mode_vel[ti]
+        end
+    end
+end
+
 """
     velocity!(vel, prob::MultiLayerContourProblem)
 
