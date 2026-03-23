@@ -272,11 +272,13 @@ function segment_velocity(kernel::SQGKernel{T}, ::UnboundedDomain,
     u_b = u_a - ds_len
 
     h_eff_sq = h * h + kernel.delta^2
+    h_eff = sqrt(h_eff_sq)
 
-    # Antiderivative F(u) = log(u + √(u² + h_eff²))
-    # = arcsinh(u / √h_eff²) + const  (the const cancels in F(u_a) - F(u_b))
-    F_a = log(u_a + sqrt(u_a * u_a + h_eff_sq))
-    F_b = log(u_b + sqrt(u_b * u_b + h_eff_sq))
+    # Antiderivative F(u) = arcsinh(u / h_eff)
+    # Numerically stable form of log(u + √(u² + h_eff²)) — avoids
+    # catastrophic cancellation when u is large negative.
+    F_a = asinh(u_a / h_eff)
+    F_b = asinh(u_b / h_eff)
 
     inv2pi = one(T) / (2 * T(π))
     return -inv2pi * t_hat * (F_a - F_b)
@@ -318,52 +320,12 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
         lam = evals[mode]
 
         if abs(lam) < eps(T) * 100
-            mode_kernel = EulerKernel()
+            _multilayer_mode_velocity!(vel, prob, mode, EulerKernel(),
+                                       target_nodes, mode_vel, ewald)
         else
             Ld_mode = one(T) / sqrt(abs(lam))
-            mode_kernel = QGKernel(Ld_mode)
-        end
-
-        for target_layer in 1:N
-            target_contours = prob.layers[target_layer]
-            projection_weight = P[target_layer, mode]
-            abs(projection_weight) < eps(T) && continue
-
-            # Flatten target nodes into pre-allocated buffer
-            n_target = sum(nnodes(tc) for tc in target_contours; init=0)
-            n_target == 0 && continue
-
-            idx = 0
-            for tc in target_contours
-                for ti in 1:nnodes(tc)
-                    idx += 1
-                    target_nodes[idx] = tc.nodes[ti]
-                end
-            end
-
-            @inbounds Threads.@threads for ti in 1:n_target
-                x = target_nodes[ti]
-                v_mode = zero(SVector{2,T})
-                for source_layer in 1:N
-                    source_weight = P_inv[mode, source_layer]
-                    abs(source_weight) < eps(T) && continue
-                    for sc in prob.layers[source_layer]
-                        nsc = nnodes(sc)
-                        nsc < 2 && continue
-                        for sj in 1:nsc
-                            a = sc.nodes[sj]
-                            b = next_node(sc, sj)
-                            v_mode = v_mode + source_weight * sc.pv *
-                                segment_velocity(mode_kernel, domain, x, a, b, ewald)
-                        end
-                    end
-                end
-                mode_vel[ti] = v_mode
-            end
-
-            for ti in 1:n_target
-                vel[target_layer][ti] = vel[target_layer][ti] + projection_weight * mode_vel[ti]
-            end
+            _multilayer_mode_velocity!(vel, prob, mode, QGKernel(Ld_mode),
+                                       target_nodes, mode_vel, ewald)
         end
     end
 
