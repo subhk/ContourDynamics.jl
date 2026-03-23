@@ -5,7 +5,8 @@ using Makie
 
 function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
                                           nsteps::Int, frameskip::Int=10,
-                                          filename="contour_evolution.mp4")
+                                          filename="contour_evolution.mp4",
+                                          callbacks=nothing)
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
@@ -17,7 +18,13 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
         if frame > 0
             prev_frame = frame - frameskip
             steps_to_take = min(frameskip, nsteps - max(prev_frame, 0))
-            steps_to_take > 0 && evolve!(prob, stepper, params; nsteps=steps_to_take)
+            if steps_to_take > 0
+                if callbacks !== nothing
+                    evolve!(prob, stepper, params; nsteps=steps_to_take, callbacks=callbacks)
+                else
+                    evolve!(prob, stepper, params; nsteps=steps_to_take)
+                end
+            end
         end
         Makie.empty!(ax)
         for c in prob.contours
@@ -37,7 +44,8 @@ end
 
 function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, stepper, params;
                                           nsteps::Int, frameskip::Int=10,
-                                          filename="contour_evolution.mp4") where {N}
+                                          filename="contour_evolution.mp4",
+                                          callbacks=nothing) where {N}
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
@@ -47,7 +55,13 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
         if frame > 0
             prev_frame = frame - frameskip
             steps_to_take = min(frameskip, nsteps - max(prev_frame, 0))
-            steps_to_take > 0 && evolve!(prob, stepper, params; nsteps=steps_to_take)
+            if steps_to_take > 0
+                if callbacks !== nothing
+                    evolve!(prob, stepper, params; nsteps=steps_to_take, callbacks=callbacks)
+                else
+                    evolve!(prob, stepper, params; nsteps=steps_to_take)
+                end
+            end
         end
         Makie.empty!(ax)
         for (li, layer) in enumerate(prob.layers)
