@@ -68,7 +68,7 @@ function ellipse_moments(c::PVContour{T}) where {T}
         cross = xi * yj - xj * yi
         Jxx += (xi^2 + xi * xj + xj^2) * cross
         Jyy += (yi^2 + yi * yj + yj^2) * cross
-        Jxy += (xi * yj + xi * yi + xj * yj + xj * yi) * cross
+        Jxy += (xi * yj + 2 * xi * yi + 2 * xj * yj + xj * yi) * cross
     end
 
     Jxx /= 12
