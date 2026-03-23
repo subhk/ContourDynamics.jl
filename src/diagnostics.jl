@@ -363,9 +363,10 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
                     end
                 end
                 # Combined: K₀(r/Ld) = [-log(r)] + [K₀(r/Ld) + log(r)]
-                # The analytical part gives ∫∫ log(r) ds dt (with the half_ds scaling).
-                # The smooth part gives ∫∫ [K₀+log(r)] ds dt via GL.
-                quad = quad_log + quad_smooth
+                # quad_log = ∫∫ log(r) ds dt (positive).
+                # The -log(r) part contributes -quad_log.
+                # The smooth part contributes +quad_smooth.
+                quad = -quad_log + quad_smooth
             else
                 # 3×3 Gauss-Legendre quadrature over both segments
                 quad = zero(T)
