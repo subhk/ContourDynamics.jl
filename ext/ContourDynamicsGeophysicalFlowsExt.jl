@@ -141,8 +141,11 @@ function _trace_contour(field::AbstractMatrix{T}, xs, ys, level::T,
         case = _cell_case(field, i, j, level)
         (case == 0 || case == 15) && break
 
-        # Record the crossing point where we enter this cell
-        visited_edges[i, j, entry_side] && length(nodes) > 2 && break
+        # Detect loop closure: check if we've returned to the starting edge
+        # (not via shared visited_edges, which could be marked by a different trace)
+        if i == start_i && j == start_j && entry_side == start_side && length(nodes) > 2
+            break
+        end
         visited_edges[i, j, entry_side] = true
         push!(nodes, _edge_point_level(T, field, xs, ys, i, j, entry_side, level))
 
