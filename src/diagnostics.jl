@@ -49,6 +49,12 @@ function ellipse_moments(c::PVContour{T}) where {T}
     nodes = c.nodes
     n = length(nodes)
     A = vortex_area(c)
+
+    # Guard against degenerate contours (zero or near-zero area)
+    if abs(A) < eps(T) || n < 3
+        return (one(T), zero(T))
+    end
+
     ctr = centroid(c)
 
     Jxx = zero(T)
@@ -62,7 +68,7 @@ function ellipse_moments(c::PVContour{T}) where {T}
         cross = xi * yj - xj * yi
         Jxx += (xi^2 + xi * xj + xj^2) * cross
         Jyy += (yi^2 + yi * yj + yj^2) * cross
-        Jxy += (xi * yj + 2 * xi * yi + 2 * xj * yj + xj * yi) * cross
+        Jxy += (xi * yj + xi * yi + xj * yj + xj * yi) * cross
     end
 
     Jxx /= 12
