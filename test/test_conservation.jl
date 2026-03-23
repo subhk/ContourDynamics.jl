@@ -46,13 +46,17 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         A0 = vortex_area(prob.contours[1])
         G0 = circulation(prob)
+        E0 = energy(prob)
 
         evolve!(prob, stepper, params; nsteps=nsteps)
 
         A1 = vortex_area(prob.contours[1])
         G1 = circulation(prob)
+        E1 = energy(prob)
 
         @test A1 ≈ A0 rtol=1e-6
         @test G1 ≈ G0 rtol=1e-6
+        qg_energy_tol = extended ? 1e-6 : 1e-4
+        @test abs(E1 - E0) / abs(E0) < qg_energy_tol
     end
 end
