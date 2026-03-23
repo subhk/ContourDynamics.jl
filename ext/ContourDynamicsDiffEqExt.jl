@@ -38,6 +38,8 @@ function _make_rhs(prob::ContourProblem{K,D,T}) where {K,D,T}
         if length(vel) != Ncur
             resize!(vel, Ncur)
         end
+        length(du) >= 2 * Ncur || throw(DimensionMismatch(
+            "du length ($(length(du))) too small for $Ncur nodes (need $(2*Ncur))"))
         velocity!(vel, p)
         idx = 1
         for i in 1:Ncur
