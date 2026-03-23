@@ -256,7 +256,7 @@ function ContourDynamics.jld2_recorder(filename::String;
     step_dt = dt  # capture for closure
 
     return function(prob, step)
-        if step % interval == 0 || step == 1
+        if step % interval == 0 || step == 0
             ContourDynamics.save_snapshot(filename, prob, step;
                                           dt=step_dt, diagnostics=diagnostics)
         end
