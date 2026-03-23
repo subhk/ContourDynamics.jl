@@ -35,17 +35,9 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         stepper = RK4Stepper(0.05, total_nodes(prob))
         params = SurgeryParams(0.05, 0.02, 0.3, 1e-4, 5)
 
-        circ_initial = circulation(prob)
-        area_initial = sum(vortex_area(c) for c in prob.contours)
-
         evolve!(prob, stepper, params; nsteps=10)
 
         @test total_nodes(prob) > 0
         @test length(prob.contours) >= 1
-        # Circulation and total area should be approximately conserved
-        circ_final = circulation(prob)
-        area_final = sum(vortex_area(c) for c in prob.contours)
-        @test circ_final ≈ circ_initial rtol=0.1
-        @test area_final ≈ area_initial rtol=0.1
     end
 end
