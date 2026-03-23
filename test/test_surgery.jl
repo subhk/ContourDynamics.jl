@@ -6,7 +6,7 @@
         ], 1.0)
         normal = circular_patch(1.0, 64, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [normal, tiny])
-        params = SurgeryParams(0.01, 0.005, 0.1, 1e-4, 10)
+        params = SurgeryParams(0.001, 0.005, 0.1, 1e-4, 10)
 
         surgery!(prob, params)
         @test length(prob.contours) == 1  # tiny contour removed
@@ -60,6 +60,7 @@
     @testset "Reconnection: Merge Two Contours" begin
         # Two contours with same PV whose boundaries are within delta → should merge
         delta = 0.1
+        mu = 0.5
         # Two squares very close to each other (gap < delta)
         c1 = PVContour([
             SVector(0.0, 0.0), SVector(1.0, 0.0), SVector(1.0, 1.0), SVector(0.0, 1.0)
@@ -68,7 +69,7 @@
             SVector(1.05, 0.0), SVector(2.0, 0.0), SVector(2.0, 1.0), SVector(1.05, 1.0)
         ], 1.0)  # gap of 0.05 < delta
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
-        params = SurgeryParams(delta, 0.05, 0.5, 1e-6, 10)
+        params = SurgeryParams(delta, mu, 1.5, 1e-6, 10)
 
         surgery!(prob, params)
         # Should have merged into one contour (same PV, within delta)
@@ -78,6 +79,7 @@
     @testset "No Reconnection: Different PV" begin
         # Two contours with different PV within delta → should NOT merge
         delta = 0.1
+        mu = 0.5
         c1 = PVContour([
             SVector(0.0, 0.0), SVector(1.0, 0.0), SVector(1.0, 1.0), SVector(0.0, 1.0)
         ], 1.0)
@@ -85,7 +87,7 @@
             SVector(1.05, 0.0), SVector(2.0, 0.0), SVector(2.0, 1.0), SVector(1.05, 1.0)
         ], 2.0)  # different PV
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
-        params = SurgeryParams(delta, 0.05, 0.5, 1e-6, 10)
+        params = SurgeryParams(delta, mu, 1.5, 1e-6, 10)
 
         surgery!(prob, params)
         @test length(prob.contours) == 2  # should remain separate
