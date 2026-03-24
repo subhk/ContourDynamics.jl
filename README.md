@@ -50,7 +50,7 @@ angular_momentum(prob)  # angular momentum
 | `EulerKernel()` | G(r) = -1/(2π) log(r) | 2D incompressible Euler |
 | `QGKernel(Ld)` | G(r) = -1/(2π) K₀(r/Ld) | Single-layer QG with deformation radius Ld |
 | `SQGKernel(δ)` | G(r) = -1/(2π√(r²+δ²)) | Surface QG (fractional Laplacian) |
-| `MultiLayerQGKernel(Ld, C, H)` | Eigenmode decomposition | N-layer QG with coupling matrix C |
+| `MultiLayerQGKernel(Ld, C)` | Eigenmode decomposition | N-layer QG with coupling matrix C |
 
 The Euler kernel uses an exact antiderivative for the segment integral (no quadrature). The QG kernel uses singular subtraction: the log singularity is handled analytically (same as Euler), and the smooth remainder K₀(r/Ld) + log(r/Ld) is integrated via 5-point Gauss-Legendre quadrature.
 
@@ -109,10 +109,9 @@ end
 using ContourDynamics, StaticArrays, LinearAlgebra
 
 Ld = SVector(1.0)                                  # deformation radius
-H = SVector(0.5, 0.5)                              # layer depths
 coupling = SMatrix{2,2}([-1.0, 1.0, 1.0, -1.0])   # 2-layer coupling matrix
 
-kernel = MultiLayerQGKernel(Ld, coupling, H)
+kernel = MultiLayerQGKernel(Ld, coupling)
 
 nodes = [SVector(0.5*cos(2π*k/100), 0.5*sin(2π*k/100)) for k in 0:99]
 
