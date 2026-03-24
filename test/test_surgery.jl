@@ -97,7 +97,7 @@
         c = circular_patch(1.0, 64, 1.0)
         pv_before = c.pv
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
-        params = SurgeryParams(0.01, 0.02, 0.3, 1e-6, 10)
+        params = SurgeryParams(0.005, 0.02, 0.3, 1e-6, 10)
         surgery!(prob, params)
         # PV jump should be preserved
         @test prob.contours[1].pv == pv_before
