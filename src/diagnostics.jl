@@ -612,7 +612,7 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
                             k2 < eps(T) && continue
                             coeff = kappa2 / (k2 * (k2 + kappa2) * area)
                             phase = kxi * dx + kyi * dy
-                            G_corr += coeff * cos(phase)
+                            G_corr -= coeff * cos(phase)
                         end
                     end
                     quad += g_weights[qi] * g_weights[qj] * (-2 * T(π) * G_corr)
