@@ -201,7 +201,16 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
         end
     end
     for step in 1:nsteps
-        total_nodes(prob) == 0 && continue  # all contours removed by surgery
+        if total_nodes(prob) == 0
+            # All contours removed by surgery — skip dynamics but still fire
+            # callbacks so that recording callbacks observe every step.
+            if callbacks !== nothing
+                for cb in callbacks
+                    cb(prob, step)
+                end
+            end
+            continue
+        end
         timestep!(prob, stepper)
         _maybe_wrap_nodes!(prob)
 
@@ -399,7 +408,14 @@ function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
         end
     end
     for step in 1:nsteps
-        total_nodes(prob) == 0 && continue  # all contours removed by surgery
+        if total_nodes(prob) == 0
+            if callbacks !== nothing
+                for cb in callbacks
+                    cb(prob, step)
+                end
+            end
+            continue
+        end
         timestep!(prob, stepper)
         _maybe_wrap_nodes!(prob)
         if step % params.n_surgery == 0
