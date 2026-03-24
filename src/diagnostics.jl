@@ -123,6 +123,11 @@ end
 
 Total circulation `Γ = ∑ qᵢ Aᵢ` of a [`ContourProblem`](@ref) or
 [`MultiLayerContourProblem`](@ref).
+
+!!! warning
+    Spanning contours have undefined area and are silently excluded.
+    If your problem uses spanning contours (e.g. from [`beta_staircase`](@ref)),
+    the returned circulation only reflects closed contours.
 """
 function circulation(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
@@ -137,6 +142,10 @@ end
 
 Enstrophy `½ ∑ qᵢ² Aᵢ` of a [`ContourProblem`](@ref) or
 [`MultiLayerContourProblem`](@ref).
+
+Uses signed area `Aᵢ` from the shoelace formula (positive for CCW, negative
+for CW contours), so contributions from inner boundaries are subtracted.
+Spanning contours are excluded (see [`circulation`](@ref)).
 """
 function enstrophy(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
