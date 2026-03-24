@@ -28,6 +28,7 @@ function ContourDynamics.save_snapshot(filename::String,
             g["time"] = step * dt
         end
         g["ncontours"] = length(prob.contours)
+        g["float_type"] = string(T)
 
         for (ci, c) in enumerate(prob.contours)
             cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))
@@ -76,6 +77,7 @@ function ContourDynamics.save_snapshot(filename::String,
 
         g["step"] = step
         g["nlayers"] = N
+        g["float_type"] = string(T)
         if dt !== nothing
             g["time"] = step * dt
         end
@@ -157,8 +159,22 @@ end
 
 # ── helpers ──────────────────────────────────────────────────
 
+const _FLOAT_TYPE_MAP = Dict{String, DataType}(
+    "Float64" => Float64,
+    "Float32" => Float32,
+    "Float16" => Float16,
+)
+
 function _load_contours(g, nc::Int)
-    nc == 0 && return PVContour{Float64}[]
+    if nc == 0
+        # Use stored float type if available; fall back to Float64 for older files
+        T = if haskey(g, "float_type")
+            get(_FLOAT_TYPE_MAP, g["float_type"], Float64)
+        else
+            Float64
+        end
+        return PVContour{T}[]
+    end
 
     # Peek at first contour to determine element type
     cg1 = g["contour_" * lpad(1, 4, '0')]
