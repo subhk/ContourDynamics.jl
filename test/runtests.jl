@@ -189,6 +189,7 @@ include("test_utils.jl")
     include("test_conservation.jl")
 
     @testset "Periodic Domain (Ewald)" begin
+        clear_ewald_cache!()
         c = circular_patch(0.1, 16, 1.0)
         prob_unbounded = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
         prob_periodic = ContourProblem(EulerKernel(), PeriodicDomain(10.0, 10.0), [c])
