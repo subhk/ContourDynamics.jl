@@ -68,12 +68,13 @@ The surgery interval is determined by:
   `dt = (tspan[2] - tspan[1]) / 1000`. For fixed-step solvers, prefer setting
   `surgery_dt` explicitly to match your step size.
 
-!!! warning "Thread safety"
-    The RHS closure shares a pre-allocated velocity buffer and mutates `prob.contours`
-    in-place. This is safe for single-stage sequential solvers (e.g. `RK4()`,
-    `Euler()`), but **not** for adaptive solvers that evaluate the RHS at multiple
-    trial points concurrently (e.g. `Tsit5()` with threading). Use `adaptive=false`
-    or a fixed-step solver to avoid data races.
+!!! warning "Solver compatibility"
+    The RHS closure mutates `prob.contours` in-place on every evaluation.
+    This is **only safe** with fixed-step, non-adaptive solvers (e.g. `RK4()`,
+    `Euler()` with `adaptive=false`).  Adaptive solvers (e.g. `Tsit5()`) evaluate
+    the RHS at multiple trial points with step rejection, causing rejected-step
+    state to overwrite accepted-step state.  Always use `adaptive=false` or a
+    fixed-step solver.
 """
 function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
                                          surgery_params=nothing,
