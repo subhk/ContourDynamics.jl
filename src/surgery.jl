@@ -496,8 +496,10 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
     end
 
     # 2. Reconnection — iterate until no more close pairs remain.
-    #    Stall detection: if close-pair count fails to decrease for 3
-    #    consecutive iterations, stop early to avoid infinite cycling.
+    #    Stall detection: if close-pair count increases for 3 consecutive
+    #    iterations, stop early to avoid infinite cycling.  A stable count
+    #    (equal) is allowed because topological changes (splits) can maintain
+    #    the same pair count while making genuine progress.
     reconnected = false
     max_reconnect_iter = 100
     prev_n_pairs = typemax(Int)
@@ -507,10 +509,10 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
         close_pairs = find_close_segments(contours, idx, params.delta, domain)
         isempty(close_pairs) && break
         n_pairs = length(close_pairs)
-        if n_pairs >= prev_n_pairs
+        if n_pairs > prev_n_pairs
             stall_count += 1
             if stall_count >= 3
-                @warn "surgery!: reconnection stalled (close pairs not decreasing: $n_pairs) — stopping early"
+                @warn "surgery!: reconnection stalled (close pairs increasing: $n_pairs) — stopping early"
                 break
             end
         else
