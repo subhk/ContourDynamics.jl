@@ -173,11 +173,10 @@ N = 100
 
 # Two-layer coupling
 Ld = SVector(1.0)                               # interface deformation radius
-H = SVector(0.5, 0.5)                           # equal layer depths
 F = 1.0 / Ld[1]^2
 coupling = SMatrix{2,2}(1.0+F, -F, -F, 1.0+F)  # symmetric coupling matrix
 
-kernel = MultiLayerQGKernel(Ld, coupling, H)
+kernel = MultiLayerQGKernel(Ld, coupling)
 
 nodes = [SVector(R * cos(2π * k / N), R * sin(2π * k / N)) for k in 0:(N-1)]
 
