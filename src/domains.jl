@@ -3,6 +3,9 @@
 """Square periodic domain with half-width L."""
 PeriodicDomain(L::T) where {T<:AbstractFloat} = PeriodicDomain(L, L)
 
+"""Identity wrap for unbounded domains — returns the point unchanged."""
+@inline wrap_node(p::SVector{2,T}, ::UnboundedDomain) where {T} = p
+
 """
     wrap_node(p, domain::PeriodicDomain)
 
