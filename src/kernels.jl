@@ -16,8 +16,8 @@
 # Computed in type T arithmetic so precision is preserved for BigFloat etc.
 # For Float64/Float32 the compiler will const-fold these trivial expressions.
 @inline function _gl5_nodes_weights(::Type{T}) where {T<:AbstractFloat}
-    n2 = sqrt(T(3)/T(7) - T(2)/T(7) * sqrt(T(6)/T(5)))
-    n3 = sqrt(T(3)/T(7) + T(2)/T(7) * sqrt(T(6)/T(5)))
+    n2 = sqrt((T(5) - T(2) * sqrt(T(10)/T(7))) / T(9))
+    n3 = sqrt((T(5) + T(2) * sqrt(T(10)/T(7))) / T(9))
     w1 = T(128) / T(225)
     w2 = (T(322) + T(13) * sqrt(T(70))) / T(900)
     w3 = (T(322) - T(13) * sqrt(T(70))) / T(900)
