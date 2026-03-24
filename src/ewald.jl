@@ -255,7 +255,8 @@ end
 Compute the exponential integral E₁(x) = ∫_x^∞ e^{-t}/t dt for x > 0.
 """
 function _expint_e1(x::T) where {T<:AbstractFloat}
-    if x <= zero(T)
+    x < zero(T) && throw(DomainError(x, "E₁(x) is not real-valued for x < 0"))
+    if x == zero(T)
         return T(Inf)
     end
     if x < T(2)
