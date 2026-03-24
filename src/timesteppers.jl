@@ -107,7 +107,7 @@ end
     timestep!(prob::ContourProblem, stepper::LeapfrogStepper)
 
 Advance all contour nodes by one leapfrog step.
-First step uses forward Euler to bootstrap.
+First step uses RK2 midpoint method to bootstrap.
 """
 function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
     dt = stepper.dt
@@ -201,6 +201,7 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
         end
     end
     for step in 1:nsteps
+        total_nodes(prob) == 0 && continue  # all contours removed by surgery
         timestep!(prob, stepper)
         _maybe_wrap_nodes!(prob)
 
@@ -398,6 +399,7 @@ function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
         end
     end
     for step in 1:nsteps
+        total_nodes(prob) == 0 && continue  # all contours removed by surgery
         timestep!(prob, stepper)
         _maybe_wrap_nodes!(prob)
         if step % params.n_surgery == 0
