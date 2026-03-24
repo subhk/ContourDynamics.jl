@@ -574,7 +574,7 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     return -inv4pi * E / 2
 end
 
-"""QG-Euler correction for periodic energy: smooth Fourier series with κ²/(k²(k²+κ²)) coefficients."""
+"""QG-Euler correction for periodic energy: smooth Fourier series with -κ²/(k²(k²+κ²)) coefficients."""
 function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
                                              euler_cache::EwaldCache{T},
                                              kappa2::T, area::T) where {T}
