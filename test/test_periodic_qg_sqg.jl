@@ -86,9 +86,8 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
     @testset "Multi-layer periodic energy" begin
         Ld = SVector(1.0)
-        H = SVector(1.0, 1.0)
         coupling = SMatrix{2,2}(-1.0, 1.0, 1.0, -1.0)
-        kernel = MultiLayerQGKernel(Ld, coupling, H)
+        kernel = MultiLayerQGKernel(Ld, coupling)
 
         c1 = circular_patch(0.3, 32, 1.0)
         c2 = circular_patch(0.3, 32, -1.0)
