@@ -52,11 +52,14 @@ struct SQGKernel{T<:AbstractFloat} <: AbstractKernel
 end
 
 """
-    MultiLayerQGKernel{N,M,T}(Ld, coupling, H)
+    MultiLayerQGKernel{N,M,T}(Ld, coupling)
 
-Kernel for `N`-layer quasi-geostrophic dynamics with `M = N-1` deformation radii `Ld`,
-layer coupling matrix `coupling`, and layer thicknesses `H`.  The constructor
-eigen-decomposes the coupling matrix for efficient velocity evaluation.
+Kernel for `N`-layer quasi-geostrophic dynamics with `M = N-1` deformation radii `Ld`
+and layer coupling matrix `coupling`.  The constructor eigen-decomposes the coupling
+matrix for efficient velocity evaluation.
+
+The coupling matrix should already incorporate layer thicknesses (i.e. it is the
+full stretching operator, not raw interface stretching coefficients).
 
 !!! note
     The evolution and energy diagnostics derive modal deformation radii from the
@@ -67,14 +70,12 @@ eigen-decomposes the coupling matrix for efficient velocity evaluation.
 struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     Ld::SVector{M, T}
     coupling::SMatrix{N, N, T}
-    H::SVector{N, T}
     eigenvalues::SVector{N, T}
     eigenvectors::SMatrix{N, N, T}
     eigenvectors_inv::SMatrix{N, N, T}
-    function MultiLayerQGKernel(Ld::SVector{M, T}, coupling::SMatrix{N, N, T}, H::SVector{N, T}) where {N, M, T<:AbstractFloat}
+    function MultiLayerQGKernel(Ld::SVector{M, T}, coupling::SMatrix{N, N, T}) where {N, M, T<:AbstractFloat}
         M == N - 1 || throw(ArgumentError("Number of deformation radii M=$M must equal N-1=$(N-1)"))
         all(>(zero(T)), Ld) || throw(ArgumentError("Deformation radii Ld must all be positive"))
-        all(>(zero(T)), H) || throw(ArgumentError("Layer thicknesses must be positive"))
         cmat = Matrix(coupling)
         issymmetric(cmat) || throw(ArgumentError("Coupling matrix must be symmetric; got asymmetry ‖C-Cᵀ‖ = $(norm(cmat - cmat', Inf))"))
         eig = eigen(Symmetric(cmat))
@@ -110,8 +111,15 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
             end
         end
 
-        new{N, M, T}(Ld, coupling, H, eigenvalues, eigenvectors, eigenvectors_inv)
+        new{N, M, T}(Ld, coupling, eigenvalues, eigenvectors, eigenvectors_inv)
     end
+end
+
+# Backward-compatible constructor: accepts H but ignores it with a deprecation warning
+function MultiLayerQGKernel(Ld::SVector{M, T}, coupling::SMatrix{N, N, T}, H::SVector{N, T}) where {N, M, T<:AbstractFloat}
+    Base.depwarn("MultiLayerQGKernel(Ld, coupling, H) is deprecated; H (layer thicknesses) " *
+                 "is not used in dynamics. Use MultiLayerQGKernel(Ld, coupling) instead.", :MultiLayerQGKernel)
+    MultiLayerQGKernel(Ld, coupling)
 end
 
 """
