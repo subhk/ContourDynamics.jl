@@ -166,6 +166,7 @@ is_spanning(c::PVContour) = any(!iszero, c.wrap)
 
 """Get the next node after index `j`, handling periodic wrap for spanning contours."""
 @inline function next_node(c::PVContour{T}, j::Int) where {T}
+    @boundscheck (1 <= j <= length(c.nodes) || throw(BoundsError(c.nodes, j)))
     j < length(c.nodes) ? c.nodes[j + 1] : c.nodes[1] + c.wrap
 end
 
@@ -281,10 +282,9 @@ Parameters controlling contour surgery.
     Surgery may change the number of nodes (via reconnection, filament removal,
     and remeshing), which invalidates the previous-step history required by
     [`LeapfrogStepper`](@ref).  After each surgery pass the leapfrog method
-    re-bootstraps with a forward-Euler half-step, temporarily reducing to
-    first-order accuracy.  If high-order accuracy is important, prefer
-    [`RK4Stepper`](@ref) or increase `n_surgery` to reduce the frequency of
-    re-bootstrapping.
+    re-bootstraps with an RK2 midpoint half-step, maintaining second-order
+    accuracy.  If high-order accuracy is important, prefer [`RK4Stepper`](@ref)
+    or increase `n_surgery` to reduce the frequency of re-bootstrapping.
 """
 struct SurgeryParams{T<:AbstractFloat}
     delta::T
@@ -335,7 +335,7 @@ end
     LeapfrogStepper{T}(dt, n)
 
 Leapfrog (second-order centred) time stepper with step size `dt`.
-The first step is bootstrapped with a forward-Euler half-step.
+The first step is bootstrapped with an RK2 midpoint half-step.
 """
 mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
     dt::T
