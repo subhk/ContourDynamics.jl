@@ -39,6 +39,7 @@ function build_spatial_index(contours::Vector{PVContour{T}}, delta,
     for (ci, c) in enumerate(contours)
         is_spanning(c) && continue  # spanning contours never participate in reconnection
         nc = nnodes(c)
+        nc < 3 && continue  # degenerate contours cannot participate in surgery
         for ni in 1:nc
             a = c.nodes[ni]
             b = next_node(c, ni)
@@ -243,8 +244,9 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                     else
                         # Reconnection only between contours at the same PV level.
                         # Use tolerance to handle PV values from different arithmetic paths.
+                        # sqrt(eps) ≈ 1.5e-8 for Float64, generous enough for typical roundoff.
                         pv_i, pv_j = contours[ci].pv, contours[cj].pv
-                        !isapprox(pv_i, pv_j; atol=eps(T)*100, rtol=eps(T)*100) && continue
+                        !isapprox(pv_i, pv_j; atol=sqrt(eps(T)), rtol=sqrt(eps(T))) && continue
                     end
 
                     a_j = contours[cj].nodes[j]
