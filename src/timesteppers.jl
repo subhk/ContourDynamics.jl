@@ -387,7 +387,7 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
 end
 
 _maybe_wrap_nodes!(::MultiLayerContourProblem) = nothing
-_maybe_wrap_nodes!(prob::MultiLayerContourProblem{<:Any, <:Any, <:PeriodicDomain}) = wrap_nodes!(prob)
+_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLayerQGKernel{N}, D<:PeriodicDomain} = wrap_nodes!(prob)
 
 function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
                  params::SurgeryParams; nsteps::Int, callbacks=nothing)
