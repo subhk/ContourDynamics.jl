@@ -397,7 +397,7 @@ Decomposes the periodic QG Green's function as:
   G_QG_per = G_Euler_per + G_correction
 where the Euler part is handled by the validated Ewald summation, and the
 correction is a smooth, rapidly convergent Fourier series:
-  G_corr(r) = (1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
+  G_corr(r) = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
 with κ = 1/Ld.  Coefficients decay as 1/k⁴, so the truncated sum converges
 without Gaussian damping.
 """
@@ -417,7 +417,9 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     v_euler = segment_velocity(EulerKernel(), domain, x, a, b, euler_cache)
 
     # Smooth QG–Euler correction via Fourier sum.
-    # G_QG_per - G_Euler_per = (1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
+    # G_QG_per - G_Euler_per = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
+    # The sign is negative because the QG kernel (K₀) is screened relative
+    # to the Euler kernel (log): F{K₀(κr)/(2π)} = 1/(k²+κ²) < 1/k² = F{-log(r)/(2π)}.
     kappa2 = one(T) / kernel.Ld^2
     area = 4 * domain.Lx * domain.Ly
 
@@ -437,7 +439,7 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                 k2 < eps(T) && continue
                 coeff = kappa2 / (k2 * (k2 + kappa2) * area)
                 phase = kxi * r_vec[1] + kyi * r_vec[2]
-                G_corr += coeff * cos(phase)
+                G_corr -= coeff * cos(phase)
             end
         end
         corr_integral += g_weights[q] * G_corr
