@@ -18,14 +18,14 @@ function ContourDynamics.flatten_nodes(prob::ContourProblem{K,D,T}) where {K,D,T
     return u
 end
 
-function ContourDynamics.unflatten_nodes!(prob::ContourProblem, u::AbstractVector{T}) where {T}
+function ContourDynamics.unflatten_nodes!(prob::ContourProblem{K,D,Tc}, u::AbstractVector) where {K,D,Tc}
     expected = 2 * total_nodes(prob)
     length(u) >= expected || throw(DimensionMismatch(
         "u length ($(length(u))) must be >= 2 * total_nodes ($(expected))"))
     idx = 1
     for c in prob.contours
         for i in 1:nnodes(c)
-            c.nodes[i] = SVector{2,T}(u[idx], u[idx+1])
+            c.nodes[i] = SVector{2,Tc}(Tc(u[idx]), Tc(u[idx+1]))
             idx += 2
         end
     end
