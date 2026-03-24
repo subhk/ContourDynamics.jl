@@ -205,6 +205,8 @@ include("test_utils.jl")
 
     include("test_merger.jl")
 
+    include("test_periodic_qg_sqg.jl")
+
     @testset "Multi-Layer QG" begin
         Ld = SVector(1.0)
         H = SVector(1.0, 1.0)
