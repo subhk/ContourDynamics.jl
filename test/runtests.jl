@@ -168,6 +168,104 @@ include("test_utils.jl")
             @test area_after ≈ area_before rtol=1e-8
         end
 
+        @testset "Leapfrog construction" begin
+            lf = LeapfrogStepper(0.01, 64)
+            @test lf.dt == 0.01
+            @test length(lf.nodes_prev) == 64
+            @test lf.initialized == false
+            @test lf.ra_coeff == 0.05  # default
+
+            lf0 = LeapfrogStepper(0.01, 32; ra_coeff=0.0)
+            @test lf0.ra_coeff == 0.0
+        end
+
+        @testset "Leapfrog single step (bootstrap)" begin
+            c = circular_patch(1.0, 64, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            stepper = LeapfrogStepper(0.01, total_nodes(prob))
+
+            @test stepper.initialized == false
+            area_before = vortex_area(prob.contours[1])
+            timestep!(prob, stepper)
+            area_after = vortex_area(prob.contours[1])
+
+            # Bootstrap uses RK2 midpoint — area conserved to high precision
+            @test area_after ≈ area_before rtol=1e-6
+            @test stepper.initialized == true
+        end
+
+        @testset "Leapfrog multiple steps" begin
+            c = circular_patch(1.0, 64, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            stepper = LeapfrogStepper(0.01, total_nodes(prob))
+
+            area_before = vortex_area(prob.contours[1])
+            # Step 1: bootstrap (RK2), Steps 2+: leapfrog
+            for _ in 1:10
+                timestep!(prob, stepper)
+            end
+            area_after = vortex_area(prob.contours[1])
+            @test area_after ≈ area_before rtol=1e-4
+        end
+
+        @testset "Leapfrog resize_buffers! resets initialization" begin
+            c = circular_patch(1.0, 64, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            stepper = LeapfrogStepper(0.01, total_nodes(prob))
+
+            # Take one step to initialize
+            timestep!(prob, stepper)
+            @test stepper.initialized == true
+
+            # resize_buffers! should reset
+            resize_buffers!(stepper, prob)
+            @test stepper.initialized == false
+
+            # Next step should re-bootstrap without error
+            timestep!(prob, stepper)
+            @test stepper.initialized == true
+        end
+
+        @testset "Leapfrog ra_coeff=0 vs default" begin
+            # Two identical problems, one with RA filter, one without
+            c1 = circular_patch(1.0, 32, 1.0)
+            c2 = circular_patch(1.0, 32, 1.0)
+            prob1 = ContourProblem(EulerKernel(), UnboundedDomain(), [c1])
+            prob2 = ContourProblem(EulerKernel(), UnboundedDomain(), [c2])
+            lf_filtered = LeapfrogStepper(0.01, 32; ra_coeff=0.05)
+            lf_pure = LeapfrogStepper(0.01, 32; ra_coeff=0.0)
+
+            for _ in 1:5
+                timestep!(prob1, lf_filtered)
+                timestep!(prob2, lf_pure)
+            end
+
+            # After multiple leapfrog steps, the filtered and unfiltered
+            # trajectories should differ (the RA filter modifies the history)
+            any_differ = false
+            for i in 1:32
+                if !(prob1.contours[1].nodes[i] ≈ prob2.contours[1].nodes[i])
+                    any_differ = true
+                    break
+                end
+            end
+            @test any_differ
+        end
+
+        @testset "Leapfrog evolve! with surgery" begin
+            c = circular_patch(1.0, 64, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            stepper = LeapfrogStepper(0.01, total_nodes(prob))
+            params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 5)
+
+            A0 = vortex_area(prob.contours[1])
+            evolve!(prob, stepper, params; nsteps=10)
+            A1 = vortex_area(prob.contours[1])
+
+            # Area conserved even with surgery triggering re-bootstrap
+            @test A1 ≈ A0 rtol=1e-3
+        end
+
         @testset "evolve! with callbacks" begin
             c = circular_patch(1.0, 64, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
