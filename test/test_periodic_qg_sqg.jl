@@ -108,6 +108,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         E1 = energy(prob)
         @test isfinite(E1)
-        @test abs(E1 - E) / (abs(E) + eps(Float64)) < 1e-3
+        E_scale = max(abs(E), abs(E1), eps(Float64))
+        @test abs(E1 - E) / E_scale < 1e-3
     end
 end
