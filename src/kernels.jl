@@ -94,7 +94,7 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     domain = prob.domain
     contours = prob.contours
     N = total_nodes(prob)
-    length(vel) == N || throw(DimensionMismatch("vel length ($(length(vel))) must equal total nodes ($N)"))
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
 
     n_contours = length(contours)
 
@@ -344,7 +344,7 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
 
     for i in 1:N
         n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
-        length(vel[i]) == n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must equal layer $i nodes ($n_layer)"))
+        length(vel[i]) >= n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must be >= layer $i nodes ($n_layer)"))
         fill!(vel[i], zero(SVector{2,T}))
     end
 
