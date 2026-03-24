@@ -1,14 +1,17 @@
 module ContourDynamicsGeophysicalFlowsExt
 
 using ContourDynamics
-using GeophysicalFlows
 using StaticArrays
+# Note: GeophysicalFlows triggers this extension but no symbols from it are used directly.
+# The extension provides conversion between grid fields and contour representations.
 
 function ContourDynamics.contours_from_gridfield(grid_pv::AbstractMatrix{T},
                                                   levels::AbstractVector{T};
                                                   grid=nothing) where {T}
     nx, ny = size(grid_pv)
     contours = PVContour{T}[]
+
+    issorted(levels) || throw(ArgumentError("levels must be sorted in ascending order"))
 
     if grid === nothing
         xs = range(zero(T), one(T), length=nx)
