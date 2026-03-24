@@ -138,7 +138,7 @@ include("test_utils.jl")
             SVector(1.0, 0.0), SVector(1.0, 1.0), SVector(0.0, 1.0),
         ]
         c = PVContour(nodes, 1.0)
-        params = SurgeryParams(0.01, 0.01, 0.05, 1e-6, 10)
+        params = SurgeryParams(0.002, 0.01, 0.05, 1e-6, 10)
 
         c_new = remesh(c, params)
 
@@ -172,7 +172,7 @@ include("test_utils.jl")
             c = circular_patch(1.0, 64, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
             stepper = RK4Stepper(0.01, total_nodes(prob))
-            params = SurgeryParams(0.01, 0.01, 0.2, 1e-8, 100)
+            params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100)
 
             initial_area = vortex_area(prob.contours[1])
             areas = Float64[]
@@ -210,10 +210,9 @@ include("test_utils.jl")
 
     @testset "Multi-Layer QG" begin
         Ld = SVector(1.0)
-        H = SVector(1.0, 1.0)
         coupling = SMatrix{2,2}(-1.0, 1.0, 1.0, -1.0)
 
-        kernel = MultiLayerQGKernel(Ld, coupling, H)
+        kernel = MultiLayerQGKernel(Ld, coupling)
         @test nlayers(kernel) == 2
 
         c1 = circular_patch(1.0, 64, 1.0)
