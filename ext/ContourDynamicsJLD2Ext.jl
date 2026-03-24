@@ -148,7 +148,7 @@ function _load_snapshot_from_group(g, step::Int)
         diag = _load_diagnostics(g)
         return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
     else
-        nc = g["ncontours"]
+        nc = g["ncontours"]::Int
         contours = _load_contours(g, nc)
         diag = _load_diagnostics(g)
         return (contours=contours, diagnostics=diag, step=step, time=time)
@@ -200,7 +200,7 @@ end
 Load all snapshots from a JLD2 file, sorted by step number.
 """
 function ContourDynamics.load_simulation(filename::String)
-    snapshots = []
+    snapshots = NamedTuple[]
     jldopen(filename, "r") do f
         step_keys = sort(filter(k -> startswith(k, "step_"), keys(f));
                          by = k -> parse(Int, k[6:end]))
