@@ -16,10 +16,9 @@ pv = 2π
 
 # --- Two-layer parameters ---
 Ld = SVector{1,T}(1.0)                          # single deformation radius (N-1 = 1)
-H = SVector{2,T}(0.5, 0.5)                      # equal layer depths
 coupling = SMatrix{2,2,T}([-1.0, 1.0, 1.0, -1.0])  # standard 2-layer coupling
 
-kernel = MultiLayerQGKernel(Ld, coupling, H)
+kernel = MultiLayerQGKernel(Ld, coupling)
 
 println("Two-layer QG kernel:")
 println("  Eigenvalues: $(kernel.eigenvalues)")
