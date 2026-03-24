@@ -188,7 +188,7 @@ end
 Main simulation loop: timestep → surgery (at interval) → callbacks.
 """
 # No-op for non-periodic domains
-_maybe_wrap_nodes!(::ContourProblem) = nothing
+_maybe_wrap_nodes!(::ContourProblem{<:AbstractKernel, UnboundedDomain}) = nothing
 # Wrap nodes for periodic domains to maintain Ewald convergence
 _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = wrap_nodes!(prob)
 
@@ -386,7 +386,7 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
     return prob
 end
 
-_maybe_wrap_nodes!(::MultiLayerContourProblem) = nothing
+_maybe_wrap_nodes!(::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain}) = nothing
 _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLayerQGKernel{N}, D<:PeriodicDomain} = wrap_nodes!(prob)
 
 function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
