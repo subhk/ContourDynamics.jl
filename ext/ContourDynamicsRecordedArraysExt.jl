@@ -25,9 +25,10 @@ e = getentries(rec.energy)
 ```
 """
 function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
-                                              dt::T,
+                                              dt::Real,
                                               nsteps::Int,
                                               dt_record::Int=1) where {K,D,T}
+    dt = T(dt)
     tmax = dt * T(nsteps)
     clock = ContinuousClock(tmax)
 
