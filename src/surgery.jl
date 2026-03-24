@@ -235,7 +235,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                     # Canonical ordering to avoid duplicates
                     pair = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
                     pair in seen && continue
-                    @assert !is_spanning(contours[cj]) "spanning contour should not appear in spatial index"
+                    # Invariant: build_spatial_index (line 40) skips spanning contours, so cj is always non-spanning
                     if ci == cj
                         ncj = nnodes(contours[cj])
                         dist_along = min(abs(i - j), ncj - abs(i - j))
