@@ -126,6 +126,8 @@ rightmost node back to the leftmost node shifted by one period.
 """
 function beta_staircase(beta::T, domain::PeriodicDomain{T}, n_steps::Int;
                         nodes_per_contour::Int=64) where {T}
+    nodes_per_contour >= 3 || throw(ArgumentError("nodes_per_contour must be >= 3, got $nodes_per_contour"))
+    n_steps >= 2 || throw(ArgumentError("n_steps must be >= 2, got $n_steps"))
     Lx, Ly = domain.Lx, domain.Ly
     dy = 2 * Ly / n_steps
     dq = beta * dy  # PV jump per contour
@@ -151,6 +153,7 @@ Return a vector of segment lengths for each consecutive node pair in contour `c`
 """
 function arc_lengths(c::PVContour{T}) where {T}
     n = nnodes(c)
+    n < 1 && return T[]
     lengths = Vector{T}(undef, n)
     @inbounds for i in 1:n
         d = next_node(c, i) - c.nodes[i]
