@@ -98,9 +98,10 @@ function ellipse_moments(c::PVContour{T}) where {T}
     Jyy /= 12
     Jxy /= 24
 
-    Jxx /= abs(A)
-    Jyy /= abs(A)
-    Jxy /= abs(A)
+    # Use signed area so that CW contours (A < 0) produce positive moments
+    Jxx /= A
+    Jyy /= A
+    Jxy /= A
 
     trace = Jxx + Jyy
     det = Jxx * Jyy - Jxy^2
