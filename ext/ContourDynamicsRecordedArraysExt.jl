@@ -49,6 +49,7 @@ function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
                 push!(energy_rec, energy(p))
             catch e
                 e isa Union{MethodError, ArgumentError} || rethrow()
+                push!(energy_rec, T(NaN))
             end
             push!(enstrophy_rec, enstrophy(p))
             push!(circulation_rec, circulation(p))
