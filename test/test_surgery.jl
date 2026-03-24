@@ -93,6 +93,69 @@
         @test length(prob.contours) == 2  # should remain separate
     end
 
+    @testset "Reconnection: Split Self-Approaching Contour" begin
+        # Test the split reconnection path directly (bypassing remesh) by
+        # constructing a dumbbell contour where segments on opposite sides
+        # of a narrow neck are within delta of each other.
+        #
+        # The contour is two circles connected by a narrow bridge at y ≈ ±gap.
+        # Segments near the bridge on the top path (large node index) are
+        # close in space to segments on the bottom path (small node index)
+        # but far apart along the contour (dist_along >> 2).
+        gap = 0.002        # half-gap at neck
+        delta = 0.01       # proximity threshold (2*gap = 0.004 < delta ✓)
+        N_half = 30        # nodes per semicircle
+
+        nodes = SVector{2,Float64}[]
+        # Right lobe: semicircle from (1, -1) up to (1, 1), center (1, 0)
+        for k in 0:N_half
+            θ = -π/2 + π * k / N_half
+            push!(nodes, SVector(1.0 + cos(θ), sin(θ)))
+        end
+        # Top bridge: straight across from right to left at y = +gap
+        for k in 1:5
+            x = 1.0 - k * 2.0 / 6
+            push!(nodes, SVector(x, gap))
+        end
+        # Left lobe: semicircle from (-1, 1) down to (-1, -1), center (-1, 0)
+        for k in 0:N_half
+            θ = π/2 + π * k / N_half
+            push!(nodes, SVector(-1.0 + cos(θ), sin(θ)))
+        end
+        # Bottom bridge: straight across from left to right at y = -gap
+        for k in 1:5
+            x = -1.0 + k * 2.0 / 6
+            push!(nodes, SVector(x, -gap))
+        end
+
+        c = PVContour(nodes, 1.0)
+        contours = [c]
+        area_before = abs(vortex_area(c))
+        @test nnodes(c) > 20  # sanity: enough nodes
+
+        # Call internal surgery functions directly to test the split path
+        idx = ContourDynamics.build_spatial_index(contours, delta)
+        close_pairs = ContourDynamics.find_close_segments(contours, idx, delta)
+        @test !isempty(close_pairs)
+
+        # All close pairs should be self-pairs (ci == cj) since there's one contour
+        @test all(p -> p[1] == p[3], close_pairs)
+
+        ContourDynamics.reconnect!(contours, close_pairs)
+
+        # The dumbbell should split into two contours at the neck
+        @test length(contours) >= 2
+
+        # Each daughter should have valid (non-degenerate) node count
+        for ci in contours
+            @test nnodes(ci) >= 3
+        end
+
+        # Total area of daughters should approximate the original
+        area_after = sum(abs(vortex_area(ci)) for ci in contours)
+        @test area_after ≈ area_before rtol=0.3
+    end
+
     @testset "Orientation Preserved After Surgery" begin
         c = circular_patch(1.0, 64, 1.0)
         pv_before = c.pv
