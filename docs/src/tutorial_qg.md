@@ -154,13 +154,11 @@ using LinearAlgebra
 
 # Deformation radius at the interface between layers
 Ld = SVector(1.5)
-# Equal layer depths
-H = SVector(1.0, 1.0)
-# Coupling matrix (must be symmetric)
+# Coupling matrix (must be symmetric, should incorporate layer thicknesses)
 F = 1.0 / Ld[1]^2
 coupling = SMatrix{2,2}(1.0 + F, -F, -F, 1.0 + F)
 
-kernel = MultiLayerQGKernel(Ld, coupling, H)
+kernel = MultiLayerQGKernel(Ld, coupling)
 println("Number of layers: $(nlayers(kernel))")
 ```
 
