@@ -10,14 +10,18 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
-    # Include frame 0 (initial state) followed by evolution frames
+    # Include frame 0 (initial state), intermediate frames, and always the final state
     frame_indices = vcat([0], collect(frameskip:frameskip:nsteps))
+    if frame_indices[end] != nsteps
+        push!(frame_indices, nsteps)
+    end
+    evolved = Ref(0)
 
     Makie.record(fig, filename, frame_indices; framerate=30) do frame
         # Evolve only for frames after the initial state
         if frame > 0
-            prev_frame = frame - frameskip
-            steps_to_take = min(frameskip, nsteps - max(prev_frame, 0))
+            steps_to_take = frame - evolved[]
+            evolved[] = frame
             if steps_to_take > 0
                 if callbacks !== nothing
                     evolve!(prob, stepper, params; nsteps=steps_to_take, callbacks=callbacks)
@@ -50,11 +54,15 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
     frame_indices = vcat([0], collect(frameskip:frameskip:nsteps))
+    if frame_indices[end] != nsteps
+        push!(frame_indices, nsteps)
+    end
+    evolved = Ref(0)
 
     Makie.record(fig, filename, frame_indices; framerate=30) do frame
         if frame > 0
-            prev_frame = frame - frameskip
-            steps_to_take = min(frameskip, nsteps - max(prev_frame, 0))
+            steps_to_take = frame - evolved[]
+            evolved[] = frame
             if steps_to_take > 0
                 if callbacks !== nothing
                     evolve!(prob, stepper, params; nsteps=steps_to_take, callbacks=callbacks)
