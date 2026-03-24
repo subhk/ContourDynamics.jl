@@ -48,14 +48,8 @@ The velocity direction is along `ds = b - a`, not rotated.
     val = u * log(r2) - 2 * u
     if abs(h) > eps(T)
         val += 2 * h * atan(u, h)
-    else
-        # h = 0: atan(u/h) = ±π/2 for u ≠ 0
-        if u > zero(T)
-            val += h * T(π)
-        elseif u < zero(T)
-            val -= h * T(π)
-        end
     end
+    # When h ≈ 0 the atan term vanishes: lim_{h→0} 2h·atan(u/h) = 0.
     return val
 end
 
@@ -107,19 +101,22 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
     ewald = _prefetch_ewald(domain, kernel)
 
-    # Build cumulative offset array for O(1) flat-index → contour lookup.
-    # offsets[ci] = total nodes in contours 1..ci-1, so flat index i belongs
-    # to contour ci where offsets[ci] < i <= offsets[ci+1].
-    offsets = Vector{Int}(undef, n_contours + 1)
-    offsets[1] = 0
+    # Build flat lookup for O(1) flat-index → (contour, local index).
+    node_ci = Vector{Int}(undef, N)
+    node_li = Vector{Int}(undef, N)
+    idx = 0
     for ci in 1:n_contours
-        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+        for li in 1:nnodes(contours[ci])
+            idx += 1
+            node_ci[idx] = ci
+            node_li[idx] = li
+        end
     end
 
     # Thread over target nodes — each node accumulates its velocity independently
     @inbounds Threads.@threads for i in 1:N
-        ci = searchsortedlast(offsets, i - 1)
-        local_i = i - offsets[ci]
+        ci = node_ci[i]
+        local_i = node_li[i]
         xi = contours[ci].nodes[local_i]
 
         v = zero(SVector{2,T})
@@ -362,10 +359,11 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     ewald = _prefetch_ewald(domain, EulerKernel())
 
     # Pre-allocate scratch buffers sized to the largest layer.
-    # NOTE: these are reused across the sequential mode/target_layer loops below.
-    # The @threads parallelism is only over target nodes (innermost loop), so
-    # there is no race.  Do NOT parallelize the outer mode or layer loops without
-    # giving each thread its own copy of these buffers.
+    # SAFETY INVARIANT: these buffers are shared across the sequential mode and
+    # target_layer loops below.  Only the innermost @threads loop (over target
+    # nodes) runs in parallel, and each thread writes to a distinct index.
+    # Parallelizing the outer `for mode` or `for target_layer` loops would
+    # require per-thread copies of target_nodes and mode_vel.
     max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
     target_nodes = Vector{SVector{2,T}}(undef, max_nodes)
     mode_vel = Vector{SVector{2,T}}(undef, max_nodes)
