@@ -250,7 +250,12 @@ function ContourDynamics.jld2_recorder(filename::String;
     interval = if save_every !== nothing
         save_every
     else
-        max(1, round(Int, save_dt / dt))
+        ratio = save_dt / dt
+        rounded = round(Int, ratio)
+        if abs(ratio - rounded) / max(ratio, 1) > 0.01
+            @warn "jld2_recorder: save_dt/dt = $ratio is not near-integer; rounding to $rounded (effective save_dt = $(rounded * dt))"
+        end
+        max(1, rounded)
     end
 
     step_dt = dt  # capture for closure
