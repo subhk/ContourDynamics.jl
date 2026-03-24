@@ -211,6 +211,8 @@ _check_kernel_type(k::QGKernel{Tk}, ::Type{T}) where {Tk, T} =
     Tk !== T && @warn "ContourProblem: QGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
 _check_kernel_type(k::SQGKernel{Tk}, ::Type{T}) where {Tk, T} =
     Tk !== T && @warn "ContourProblem: SQGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
+_check_kernel_type(k::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
+    Tk !== T && @warn "MultiLayerContourProblem: MultiLayerQGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
 
 """
     MultiLayerContourProblem{N,K,D,T}(kernel, domain, layers)
@@ -222,6 +224,10 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
     kernel::K
     domain::D
     layers::NTuple{N, Vector{PVContour{T}}}
+    function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}}) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat}
+        _check_kernel_type(kernel, T)
+        new{N, K, D, T}(kernel, domain, layers)
+    end
 end
 
 nlayers(::MultiLayerContourProblem{N}) where {N} = N
@@ -262,6 +268,15 @@ Parameters controlling contour surgery.
 - `Delta_max`: maximum segment length after remeshing.
 - `area_min`: minimum enclosed area; contours smaller than this are removed.
 - `n_surgery`: number of time-steps between surgery passes.
+
+!!! note "Leapfrog stepper interaction"
+    Surgery may change the number of nodes (via reconnection, filament removal,
+    and remeshing), which invalidates the previous-step history required by
+    [`LeapfrogStepper`](@ref).  After each surgery pass the leapfrog method
+    re-bootstraps with a forward-Euler half-step, temporarily reducing to
+    first-order accuracy.  If high-order accuracy is important, prefer
+    [`RK4Stepper`](@ref) or increase `n_surgery` to reduce the frequency of
+    re-bootstrapping.
 """
 struct SurgeryParams{T<:AbstractFloat}
     delta::T
