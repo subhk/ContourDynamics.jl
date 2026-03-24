@@ -29,7 +29,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         @test abs(E1 - E0) / abs(E0) < energy_tol
         @test A1 ≈ A0 rtol=1e-6
         @test G1 ≈ G0 rtol=1e-6
-        @test sqrt(c1[1]^2 + c1[2]^2) < 1e-6
+        @test sqrt((c1[1] - c0[1])^2 + (c1[2] - c0[2])^2) < 1e-6
     end
 
     @testset "Circular Patch Steady State (QG)" begin
