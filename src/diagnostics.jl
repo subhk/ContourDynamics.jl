@@ -1,3 +1,26 @@
+# Minimum segment count to enable threading in energy pair loops.
+# Below this threshold, thread spawn overhead dominates the computation.
+const _THREADING_THRESHOLD = 64
+
+"""
+    @_maybe_threads cond for-loop
+
+Apply `Threads.@threads` to `for-loop` only when `cond` is true at runtime.
+Falls back to a plain serial loop otherwise, avoiding thread-spawn overhead.
+"""
+macro _maybe_threads(cond, loop)
+    @assert loop.head === :for
+    threaded = esc(:(Threads.@threads $loop))
+    serial = esc(loop)
+    quote
+        if $(esc(cond))
+            $threaded
+        else
+            $serial
+        end
+    end
+end
+
 """
     vortex_area(c::PVContour)
 
@@ -188,7 +211,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     self_seg_const = 4 * log(T(2)) - T(6)  # precompute constant part
     # Thread over outer segments, each thread accumulates a partial sum
     partial = zeros(T, nci)
-    @inbounds Threads.@threads for i in 1:nci
+    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -262,7 +285,7 @@ function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) 
     g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     partial = zeros(T, nci)
-    @inbounds Threads.@threads for i in 1:nci
+    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -323,7 +346,7 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     # Smooth limit of K₀(r/Ld) + log(r) as r→0
     k0_smooth_at_zero = log(2 * Ld) - T(Base.MathConstants.eulergamma)
     partial = zeros(T, nci)
-    @inbounds Threads.@threads for i in 1:nci
+    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -474,7 +497,7 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     end
 
     partial = zeros(T, nci)
-    @inbounds Threads.@threads for i in 1:nci
+    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -584,7 +607,7 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
     g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
     g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
     partial = zeros(T, nci)
-    @inbounds Threads.@threads for i in 1:nci
+    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
