@@ -330,6 +330,8 @@ include("test_utils.jl")
 
     include("test_periodic_qg_sqg.jl")
 
+    include("test_show.jl")
+
     @testset "Multi-Layer QG" begin
         Ld = SVector(1.0)
         F = 1.0 / (2 * Ld[1]^2)
