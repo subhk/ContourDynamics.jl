@@ -131,3 +131,30 @@ function _show_kernel_details(io::IO, k::MultiLayerQGKernel{N, M, T}, pad::Strin
     println(io, pad, "├── coupling: $(N)×$(N) SMatrix{$T}")
     println(io, pad, "└── eigenvalues: ", k.eigenvalues)
 end
+
+# ── Time Steppers ───────────────────────────────────────
+
+function Base.show(io::IO, s::RK4Stepper{T}) where {T}
+    print(io, "RK4Stepper{$T}: dt = ", s.dt)
+end
+Base.show(io::IO, ::MIME"text/plain", s::RK4Stepper) = show(io, s)
+
+function Base.show(io::IO, s::LeapfrogStepper{T}) where {T}
+    print(io, "LeapfrogStepper{$T}: dt = ", s.dt, ", Robert-Asselin coeff = ", s.ra_coeff)
+end
+Base.show(io::IO, ::MIME"text/plain", s::LeapfrogStepper) = show(io, s)
+
+# ── SurgeryParams ───────────────────────────────────────
+
+function Base.show(io::IO, p::SurgeryParams{T}) where {T}
+    print(io, "SurgeryParams{$T}")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", p::SurgeryParams{T}) where {T}
+    println(io, "SurgeryParams{$T}")
+    println(io, "├── δ (proximity): ", p.delta)
+    println(io, "├── μ (min segment): ", p.mu)
+    println(io, "├── Δ_max (max segment): ", p.Delta_max)
+    println(io, "├── area_min: ", p.area_min)
+    print(io,   "└── n_surgery: ", p.n_surgery, " steps")
+end
