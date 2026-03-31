@@ -95,11 +95,12 @@ end
     segment_velocity(k, d, x, a, b)
 
 """
-    velocity!(vel, prob::ContourProblem)
+    _direct_velocity!(vel, prob::ContourProblem)
 
-Compute velocity at every contour node of `prob`, storing results in `vel`.
+Direct O(N²) velocity computation at every contour node of `prob`, storing
+results in `vel`. This is the brute-force reference implementation.
 """
-function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     kernel = prob.kernel
     domain = prob.domain
     contours = prob.contours
@@ -138,6 +139,25 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
             end
         end
         vel[i] = v
+    end
+
+    return vel
+end
+
+"""
+    velocity!(vel, prob::ContourProblem)
+
+Compute velocity at every contour node of `prob`, storing results in `vel`.
+Automatically selects FMM acceleration when the problem is large enough.
+"""
+function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+    N = total_nodes(prob)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+
+    if N >= _FMM_THRESHOLD
+        _fmm_velocity!(vel, prob)
+    else
+        _direct_velocity!(vel, prob)
     end
 
     return vel
@@ -343,12 +363,13 @@ function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
 end
 
 """
-    velocity!(vel, prob::MultiLayerContourProblem)
+    _direct_velocity!(vel, prob::MultiLayerContourProblem)
 
-Compute velocity at all nodes across all layers using modal decomposition.
+Direct O(N^2) velocity computation at every contour node across all layers of
+`prob`, storing results in `vel`. Uses modal decomposition with direct summation.
 """
-function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
-                   prob::MultiLayerContourProblem{N}) where {N, T}
+function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
+                           prob::MultiLayerContourProblem{N}) where {N, T}
     kernel = prob.kernel
     domain = prob.domain
 
@@ -388,5 +409,26 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
         end
     end
 
+    return vel
+end
+
+"""
+    velocity!(vel, prob::MultiLayerContourProblem)
+
+Compute velocity at all nodes across all layers using modal decomposition.
+Automatically selects FMM acceleration when the problem is large enough.
+"""
+function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
+                   prob::MultiLayerContourProblem{N}) where {N, T}
+    for i in 1:N
+        n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
+        length(vel[i]) >= n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must be >= layer $i nodes ($n_layer)"))
+    end
+    Ntot = total_nodes(prob)
+    if Ntot >= _FMM_THRESHOLD
+        _fmm_velocity!(vel, prob)
+    else
+        _direct_velocity!(vel, prob)
+    end
     return vel
 end
