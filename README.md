@@ -109,15 +109,17 @@ end
 using ContourDynamics, StaticArrays, LinearAlgebra
 
 Ld = SVector(1.0)                                  # deformation radius
-coupling = SMatrix{2,2}([-1.0, 1.0, 1.0, -1.0])   # 2-layer coupling matrix
+F = 1.0 / (2 * Ld[1]^2)
+coupling = SMatrix{2,2}(-F, F, F, -F)             # stretching operator
 
 kernel = MultiLayerQGKernel(Ld, coupling)
 
 nodes = [SVector(0.5*cos(2π*k/100), 0.5*sin(2π*k/100)) for k in 0:99]
 
-layer1 = ContourProblem(kernel, UnboundedDomain(), [PVContour(nodes, 2π)])
-layer2 = ContourProblem(kernel, UnboundedDomain(), PVContour{Float64}[])
-prob = MultiLayerContourProblem((layer1, layer2))
+prob = MultiLayerContourProblem(
+    kernel, UnboundedDomain(),
+    ([PVContour(nodes, 2π)], PVContour{Float64}[])
+)
 
 stepper = RK4Stepper(0.01, total_nodes(prob))
 for step in 1:200
