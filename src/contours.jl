@@ -1,10 +1,14 @@
 """
-    remesh(c::PVContour, params::SurgeryParams)
+    remesh(c::PVContour, params::SurgeryParams; _buf=nothing)
 
 Redistribute nodes along contour `c` so that every segment length lies between
 `params.mu` and `params.Delta_max`.  Returns a new [`PVContour`](@ref).
+
+The optional `_buf` keyword accepts a `Vector{SVector{2,T}}` that is reused
+across calls to avoid repeated heap allocation (internal optimisation).
 """
-function remesh(c::PVContour{T}, params::SurgeryParams) where {T}
+function remesh(c::PVContour{T}, params::SurgeryParams;
+                _buf::Union{Nothing, Vector{SVector{2,T}}}=nothing) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return c
@@ -38,7 +42,12 @@ function remesh(c::PVContour{T}, params::SurgeryParams) where {T}
     # The loop now covers nodes 2..n AND the closing point (index n+1),
     # so the closing segment is redistributed by the same logic as interior segments.
     # Pre-size: output typically has similar node count as input
-    new_nodes = SVector{2, T}[]
+    new_nodes = if _buf !== nothing
+        empty!(_buf)
+        _buf
+    else
+        SVector{2, T}[]
+    end
     sizehint!(new_nodes, n + div(n, 4))  # allow for some subdivision
     push!(new_nodes, nodes[1])
     target_s = zero(T)  # arc length of the last emitted node
