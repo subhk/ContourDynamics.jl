@@ -75,6 +75,12 @@ The surgery interval is determined by:
     the RHS at multiple trial points with step rejection, causing rejected-step
     state to overwrite accepted-step state.  Always use `adaptive=false` or a
     fixed-step solver.
+
+!!! warning "Thread safety"
+    The returned `ODEProblem` captures a pre-allocated velocity buffer in its
+    RHS closure.  Do **not** use the same problem with parallel ensemble solvers
+    (`EnsembleThreads()`) — each thread would write to the shared buffer
+    concurrently.  Create a separate `to_ode_problem` call per thread instead.
 """
 function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
                                          surgery_params=nothing,
@@ -105,6 +111,9 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         new_u = ContourDynamics.flatten_nodes(integrator.p)
         if length(new_u) != length(integrator.u)
             resize!(integrator, length(new_u))
+            # Zero-fill before copyto! so that any internal caches the
+            # integrator derives from u start from a clean state.
+            fill!(integrator.u, zero(eltype(integrator.u)))
         end
         copyto!(integrator.u, new_u)
         # Advance past the current time so that large adaptive steps
