@@ -97,3 +97,37 @@ function _show_contour_list(io::IO, contours::Vector{PVContour{T}}, pad::String)
         print(io, pad, "└── … and $(nc - n_show) more")
     end
 end
+
+# ── MultiLayerContourProblem ────────────────────────────
+
+function Base.show(io::IO, prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    print(io, "MultiLayerContourProblem{$N, ", _type_name(D), ", $T}")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    println(io, "MultiLayerContourProblem{$N, ", _type_name(D), ", $T}")
+    # Kernel with nested sub-tree
+    println(io, "├── kernel: ", prob.kernel)
+    _show_kernel_details(io, prob.kernel, "│   ")
+    # Domain
+    println(io, "├── domain: ", prob.domain)
+    # Layers
+    print(io, "└── layers: $N layer", N == 1 ? "" : "s")
+    for i in 1:N
+        is_last_layer = i == N
+        layer = prob.layers[i]
+        nlc = length(layer)
+        println(io)
+        layer_pad = "    "
+        print(io, layer_pad, _tree_prefix(is_last_layer),
+              "Layer $i: $nlc contour", nlc == 1 ? "" : "s")
+        contour_pad = layer_pad * _tree_indent(is_last_layer)
+        _show_contour_list(io, layer, contour_pad)
+    end
+end
+
+function _show_kernel_details(io::IO, k::MultiLayerQGKernel{N, M, T}, pad::String) where {N, M, T}
+    println(io, pad, "├── Ld: ", k.Ld)
+    println(io, pad, "├── coupling: $(N)×$(N) SMatrix{$T}")
+    println(io, pad, "└── eigenvalues: ", k.eigenvalues)
+end
