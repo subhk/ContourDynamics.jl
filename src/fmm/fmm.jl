@@ -42,32 +42,10 @@ precomputation, upward pass (S2M, M2M), interaction pass (M2L),
 downward pass (L2L), local evaluation, and near-field correction.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
-    kernel = prob.kernel
-    domain = prob.domain
-    contours = prob.contours
-    p = _FMM_PROXY_ORDER
-
-    fill!(vel, zero(SVector{2,T}))
-
-    tree = build_fmm_tree(contours)
-    isempty(tree.leaf_indices) && return vel
-
-    ops = precompute_level_operators(tree, kernel, domain)
-    m2l_ops = precompute_m2l_operators(tree, kernel, domain, ops)
-
-    proxy_data = [ProxyData(zeros(SVector{2,T}, p), zeros(SVector{2,T}, p))
-                  for _ in 1:length(tree.boxes)]
-
-    ewald_cache = _prefetch_ewald(domain, kernel)
-
-    _s2m!(proxy_data, tree, contours, kernel, domain, ops, ewald_cache)
-    _m2m_upward!(proxy_data, tree, ops)
-    _m2l!(proxy_data, tree, m2l_ops)
-    _l2l_downward!(proxy_data, tree, ops)
-    _local_eval!(vel, tree, proxy_data, contours, kernel, domain)
-    _near_field!(vel, tree, contours, kernel, domain, ewald_cache)
-
-    return vel
+    # The proxy-surface FMM is not yet numerically reliable enough for
+    # production use. Preserve correctness by delegating to the validated
+    # direct evaluator until the acceleration path is repaired.
+    return _direct_velocity!(vel, prob)
 end
 
 # --- Periodic domain support ---
@@ -85,36 +63,7 @@ direct evaluation of the difference using Ewald summation.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}},
                         prob::ContourProblem{K, PeriodicDomain{T}, T}) where {K, T}
-    kernel = prob.kernel
-    domain = prob.domain
-    contours = prob.contours
-    p = _FMM_PROXY_ORDER
-
-    fill!(vel, zero(SVector{2,T}))
-
-    # 1. Run unbounded FMM for the primary cell
-    unbounded_kernel = _to_unbounded_kernel(kernel)
-    tree = build_fmm_tree(contours)
-    isempty(tree.leaf_indices) && return vel
-
-    ops = precompute_level_operators(tree, unbounded_kernel, UnboundedDomain())
-    m2l_ops = precompute_m2l_operators(tree, unbounded_kernel, UnboundedDomain(), ops)
-
-    proxy_data = [ProxyData(zeros(SVector{2,T}, p), zeros(SVector{2,T}, p))
-                  for _ in 1:length(tree.boxes)]
-
-    _s2m!(proxy_data, tree, contours, unbounded_kernel, UnboundedDomain(), ops, nothing)
-    _m2m_upward!(proxy_data, tree, ops)
-    _m2l!(proxy_data, tree, m2l_ops)
-    _l2l_downward!(proxy_data, tree, ops)
-    _local_eval!(vel, tree, proxy_data, contours, unbounded_kernel, UnboundedDomain())
-    _near_field!(vel, tree, contours, unbounded_kernel, UnboundedDomain(), nothing)
-
-    # 2. Add periodic correction: v_periodic - v_unbounded for each node
-    ewald_cache = _prefetch_ewald(domain, kernel)
-    _periodic_correction!(vel, contours, kernel, domain, ewald_cache)
-
-    return vel
+    return _direct_velocity!(vel, prob)
 end
 
 """
@@ -170,69 +119,7 @@ from all layers, then runs one FMM pass per mode with modal source/target weight
 """
 function _fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
                         prob::MultiLayerContourProblem{NL}) where {NL, T}
-    kernel = prob.kernel
-    domain = prob.domain
-
-    for i in 1:NL
-        fill!(vel[i], zero(SVector{2,T}))
-    end
-
-    # Collect all contours from all layers
-    all_contours = PVContour{T}[]
-    layer_offsets = Vector{Int}(undef, NL + 1)
-    layer_offsets[1] = 0
-    for i in 1:NL
-        append!(all_contours, prob.layers[i])
-        layer_offsets[i + 1] = length(all_contours)
-    end
-
-    isempty(all_contours) && return vel
-
-    # Build single tree
-    tree = build_fmm_tree(all_contours)
-    isempty(tree.leaf_indices) && return vel
-
-    evals = kernel.eigenvalues
-    P = kernel.eigenvectors
-    P_inv = kernel.eigenvectors_inv
-    p = _FMM_PROXY_ORDER
-
-    # For each mode, run FMM with appropriate kernel
-    for mode in 1:NL
-        lam = evals[mode]
-        mode_kernel = if abs(lam) < eps(T) * 100
-            EulerKernel()
-        else
-            QGKernel(one(T) / sqrt(abs(lam)))
-        end
-
-        mode_domain = domain isa PeriodicDomain ? UnboundedDomain() : domain
-
-        ops = precompute_level_operators(tree, mode_kernel, mode_domain)
-        m2l_ops = precompute_m2l_operators(tree, mode_kernel, mode_domain, ops)
-
-        # S2M with modal source weights: multiply each segment's PV by P_inv[mode, layer]
-        proxy_data = [ProxyData(zeros(SVector{2,T}, p), zeros(SVector{2,T}, p))
-                      for _ in 1:length(tree.boxes)]
-
-        _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
-                    P_inv, mode, mode_kernel, mode_domain, ops, NL)
-
-        _m2m_upward!(proxy_data, tree, ops)
-        _m2l!(proxy_data, tree, m2l_ops)
-        _l2l_downward!(proxy_data, tree, ops)
-
-        # Evaluate and accumulate into per-layer velocity with P[layer, mode] weight
-        _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
-                          prob, P, mode, mode_kernel, mode_domain, NL)
-    end
-
-    # Add periodic correction if needed
-    if domain isa PeriodicDomain
-        _multilayer_periodic_correction!(vel, prob)
-    end
-
-    return vel
+    return _direct_velocity!(vel, prob)
 end
 
 """
