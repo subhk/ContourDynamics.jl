@@ -62,3 +62,38 @@ function Base.show(io::IO, c::PVContour{T}) where {T}
 end
 
 Base.show(io::IO, ::MIME"text/plain", c::PVContour) = show(io, c)
+
+# ── ContourProblem ──────────────────────────────────────
+
+function Base.show(io::IO, prob::ContourProblem{K, D, T}) where {K, D, T}
+    print(io, "ContourProblem{", _type_name(K), ", ", _type_name(D), ", $T}")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem{K, D, T}) where {K, D, T}
+    println(io, "ContourProblem{", _type_name(K), ", ", _type_name(D), ", $T}")
+    println(io, "├── kernel: ", prob.kernel)
+    println(io, "├── domain: ", prob.domain)
+    nc = length(prob.contours)
+    print(io, "└── contours: $nc PVContour{$T}")
+    _show_contour_list(io, prob.contours, "    ")
+end
+
+"""Print a short type name without parameters for readability."""
+_type_name(::Type{T}) where {T} = string(nameof(T))
+
+function _show_contour_list(io::IO, contours::Vector{PVContour{T}}, pad::String) where {T}
+    nc = length(contours)
+    nc == 0 && return
+    n_show = min(nc, _MAX_CONTOURS_SHOWN - 1)
+    truncated = nc > _MAX_CONTOURS_SHOWN - 1
+    for i in 1:n_show
+        is_last = !truncated && i == nc
+        println(io)
+        print(io, pad, _tree_prefix(is_last))
+        _contour_summary(io, contours[i])
+    end
+    if truncated
+        println(io)
+        print(io, pad, "└── … and $(nc - n_show) more")
+    end
+end
