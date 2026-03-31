@@ -355,10 +355,11 @@ end
 
 function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) where {N}
     domain = prob.domain
+    _remesh_buf = SVector{2, typeof(params.delta)}[]
     for i in 1:N
         contours = prob.layers[i]
         for j in eachindex(contours)
-            contours[j] = remesh(contours[j], params)
+            contours[j] = remesh(contours[j], params; _buf=_remesh_buf)
         end
         reconnected = false
         max_reconnect_iter = 100
@@ -387,7 +388,7 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
         end
         if reconnected
             for j in eachindex(contours)
-                contours[j] = remesh(contours[j], params)
+                contours[j] = remesh(contours[j], params; _buf=_remesh_buf)
             end
         end
         remove_filaments!(contours, params.area_min)
