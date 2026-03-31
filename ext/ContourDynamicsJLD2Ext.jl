@@ -174,8 +174,11 @@ function _load_contours(g, nc::Int)
         y = cg["y"]
         pv = T(cg["pv"])
         nodes = [SVector{2,T}(x[i], y[i]) for i in eachindex(x)]
-        wrap = if haskey(cg, "wrap_x")
+        has_wx, has_wy = haskey(cg, "wrap_x"), haskey(cg, "wrap_y")
+        wrap = if has_wx && has_wy
             SVector{2,T}(T(cg["wrap_x"]), T(cg["wrap_y"]))
+        elseif has_wx || has_wy
+            error("Corrupted snapshot: contour $ci has wrap_x without wrap_y (or vice versa)")
         else
             zero(SVector{2,T})
         end
