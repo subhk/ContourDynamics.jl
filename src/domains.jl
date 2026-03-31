@@ -11,7 +11,8 @@ PeriodicDomain(L::T) where {T<:AbstractFloat} = PeriodicDomain(L, L)
 
 Wrap point `p` into the fundamental domain `[-Lx, Lx) × [-Ly, Ly)`.
 """
-@inline function wrap_node(p::SVector{2,T}, domain::PeriodicDomain{T}) where {T}
+@inline function wrap_node(p::SVector{2,Tp}, domain::PeriodicDomain{Td}) where {Tp, Td}
+    T = promote_type(Tp, Td)
     Lx2, Ly2 = 2 * domain.Lx, 2 * domain.Ly
     x = p[1] - Lx2 * floor((p[1] + domain.Lx) / Lx2)
     y = p[2] - Ly2 * floor((p[2] + domain.Ly) / Ly2)
@@ -25,7 +26,7 @@ Return the uniform lattice translation that moves a non-spanning contour's
 centroid into the fundamental domain. Applying one shift to the whole contour
 preserves its geometry across periodic seams; wrapping nodes independently does not.
 """
-@inline function contour_periodic_shift(c::PVContour{T}, domain::PeriodicDomain{T}) where {T}
+@inline function contour_periodic_shift(c::PVContour, domain::PeriodicDomain)
     ref = centroid(c)
     return wrap_node(ref, domain) - ref
 end
