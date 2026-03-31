@@ -302,16 +302,43 @@ include("test_utils.jl")
         end
     end
 
+    @testset "Periodic contour wrapping preserves geometry" begin
+        domain = PeriodicDomain(1.0, 1.0)
+        R, N = 0.3, 64
+        cx = 0.85
+        nodes = [SVector(cx + R * cos(2π * k / N), R * sin(2π * k / N)) for k in 0:(N - 1)]
+        c = PVContour(nodes, 1.0)
+        prob = ContourProblem(EulerKernel(), domain, [c])
+
+        A0 = vortex_area(c)
+        ctr0 = centroid(c)
+        rel0 = [node - ctr0 for node in c.nodes]
+
+        wrap_nodes!(prob)
+
+        wrapped = prob.contours[1]
+        A1 = vortex_area(wrapped)
+        ctr1 = centroid(wrapped)
+        rel1 = [node - ctr1 for node in wrapped.nodes]
+
+        @test A1 ≈ A0 rtol=1e-12 atol=1e-12
+        @test ctr1 ≈ ContourDynamics.wrap_node(ctr0, domain) rtol=1e-12 atol=1e-12
+        @test all(rel1[i] ≈ rel0[i] for i in eachindex(rel0))
+    end
+
     include("test_merger.jl")
 
     include("test_periodic_qg_sqg.jl")
 
     @testset "Multi-Layer QG" begin
         Ld = SVector(1.0)
-        coupling = SMatrix{2,2}(-1.0, 1.0, 1.0, -1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
 
         kernel = MultiLayerQGKernel(Ld, coupling)
         @test nlayers(kernel) == 2
+
+        @test_throws ArgumentError MultiLayerQGKernel(SVector(3.0), coupling)
 
         c1 = circular_patch(1.0, 64, 1.0)
         c2 = circular_patch(0.5, 64, -1.0)
@@ -327,6 +354,16 @@ include("test_utils.jl")
         @test all(v -> all(isfinite, v), vel[1])
         @test all(v -> all(isfinite, v), vel[2])
         @test any(v -> sqrt(v[1]^2 + v[2]^2) > 1e-10, vel[1])
+
+        # Changing the deformation radius through a consistent coupling matrix
+        # should change the multilayer velocity field.
+        Ld2 = SVector(2.0)
+        F2 = 1.0 / (2 * Ld2[1]^2)
+        kernel2 = MultiLayerQGKernel(Ld2, SMatrix{2,2}(-F2, F2, F2, -F2))
+        prob2 = MultiLayerContourProblem(kernel2, domain, ([c1], [c2]))
+        vel2 = (zeros(SVector{2, Float64}, 64), zeros(SVector{2, Float64}, 64))
+        velocity!(vel2, prob2)
+        @test maximum(sqrt((vel[1][i][1] - vel2[1][i][1])^2 + (vel[1][i][2] - vel2[1][i][2])^2) for i in 1:64) > 1e-6
     end
 
     @testset "Spanning Contours & Beta Staircase" begin
