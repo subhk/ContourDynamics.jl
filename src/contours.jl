@@ -81,8 +81,8 @@ function remesh(c::PVContour{T}, params::SurgeryParams) where {T}
         end
     end
 
-    # Final check: if the closing segment (new last node → new_nodes[1] + wrap)
-    # is still too short after redistribution, remove the last node.
+    # Final check: ensure the closing segment (new last node → new_nodes[1] + wrap)
+    # satisfies both mu and Delta_max bounds.
     # Guard: never drop below 3 nodes (minimum for a valid contour).
     if length(new_nodes) > 3
         close_target = new_nodes[1] + c.wrap
@@ -90,19 +90,21 @@ function remesh(c::PVContour{T}, params::SurgeryParams) where {T}
         final_len = sqrt(d_final[1]^2 + d_final[2]^2)
         if final_len < mu
             pop!(new_nodes)
-            # After popping, if the new closing segment exceeds Delta_max,
-            # subdivide it evenly to keep sub-segments within [~mu, Delta_max].
-            if length(new_nodes) >= 3
-                d_new = close_target - new_nodes[end]
-                new_len = sqrt(d_new[1]^2 + d_new[2]^2)
-                if new_len > Delta_max
-                    n_sub = ceil(Int, new_len / Delta_max)
-                    base = new_nodes[end]
-                    seg = close_target - base
-                    for k in 1:(n_sub - 1)
-                        push!(new_nodes, base + seg * T(k) / T(n_sub))
-                    end
-                end
+            # After popping, recompute and fall through to the Delta_max check below.
+        end
+    end
+    # Subdivide the closing segment if it exceeds Delta_max (can happen after
+    # skipping short nodes near the end, or after popping a too-close node above).
+    if length(new_nodes) >= 3
+        close_target = new_nodes[1] + c.wrap
+        d_new = close_target - new_nodes[end]
+        new_len = sqrt(d_new[1]^2 + d_new[2]^2)
+        if new_len > Delta_max
+            n_sub = ceil(Int, new_len / Delta_max)
+            base = new_nodes[end]
+            seg = close_target - base
+            for k in 1:(n_sub - 1)
+                push!(new_nodes, base + seg * T(k) / T(n_sub))
             end
         end
     end
