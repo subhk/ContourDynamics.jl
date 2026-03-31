@@ -148,14 +148,18 @@ end
     velocity!(vel, prob::ContourProblem)
 
 Compute velocity at every contour node of `prob`, storing results in `vel`.
-Automatically selects FMM acceleration when the problem is large enough.
+Uses the proxy-FMM path only when that experimental accelerator is explicitly
+enabled. Otherwise, large single-layer problems use the production treecode
+path and small problems fall back to the validated direct evaluator.
 """
 function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
 
-    if N >= _FMM_THRESHOLD
+    if _FMM_ACCELERATION_ENABLED && N >= _FMM_THRESHOLD
         _fmm_velocity!(vel, prob)
+    elseif N >= _FMM_THRESHOLD
+        _treecode_velocity!(vel, prob)
     else
         _direct_velocity!(vel, prob)
     end
@@ -416,7 +420,8 @@ end
     velocity!(vel, prob::MultiLayerContourProblem)
 
 Compute velocity at all nodes across all layers using modal decomposition.
-Automatically selects FMM acceleration when the problem is large enough.
+Uses the FMM path only when acceleration is explicitly enabled and the problem
+is large enough; otherwise falls back to the validated direct evaluator.
 """
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                    prob::MultiLayerContourProblem{N}) where {N, T}
@@ -425,7 +430,7 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
         length(vel[i]) >= n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must be >= layer $i nodes ($n_layer)"))
     end
     Ntot = total_nodes(prob)
-    if Ntot >= _FMM_THRESHOLD
+    if _FMM_ACCELERATION_ENABLED && Ntot >= _FMM_THRESHOLD
         _fmm_velocity!(vel, prob)
     else
         _direct_velocity!(vel, prob)
