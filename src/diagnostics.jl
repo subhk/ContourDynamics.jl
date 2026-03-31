@@ -430,6 +430,13 @@ end
 
 Evaluate the periodic Green's function at separation `r_vec` using Ewald summation.
 Returns `G_per(r)` = real-space Ewald sum + Fourier-space sum.
+
+!!! note
+    The central-image real-space term (E₁(α²r²)) diverges at `r = 0`.
+    This function silently skips that term when `r² < eps(T)`, so the
+    returned value is *not* valid at zero separation.  Callers that need
+    the self-interaction limit must handle `r = 0` separately (see
+    `_energy_contour_pair_euler_periodic` for an example).
 """
 function _eval_ewald_greens(r_vec::SVector{2,T}, cache::EwaldCache{T},
                             domain::PeriodicDomain{T}) where {T}
