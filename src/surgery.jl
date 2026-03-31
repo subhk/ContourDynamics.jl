@@ -252,12 +252,14 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                     a_j = contours[cj].nodes[j]
                     b_j = next_node(contours[cj], j)
 
-                    # Shift segment j to closest periodic image of segment i
-                    # Use wrapped mid_q (not raw mid_i) so the minimum-image
-                    # computation selects the correct periodic replica.
+                    # Shift both segments to be near the wrapped midpoint of
+                    # segment i, so the distance test uses consistent images.
+                    # Without this, a_i drifted outside [-Lx,Lx) would be
+                    # compared against a_j_img near the wrapped midpoint.
+                    a_i_img, b_i_img = _shift_segment_to_image(a_i, b_i, mid_q, domain)
                     a_j_img, b_j_img = _shift_segment_to_image(a_j, b_j, mid_q, domain)
 
-                    if _segment_min_dist2(a_i, b_i, a_j_img, b_j_img) < delta2
+                    if _segment_min_dist2(a_i_img, b_i_img, a_j_img, b_j_img) < delta2
                         push!(seen, pair)
                         push!(close_pairs, pair)
                     end
