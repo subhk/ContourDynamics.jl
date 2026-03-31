@@ -19,6 +19,18 @@ Wrap point `p` into the fundamental domain `[-Lx, Lx) × [-Ly, Ly)`.
 end
 
 """
+    contour_periodic_shift(c, domain::PeriodicDomain)
+
+Return the uniform lattice translation that moves a non-spanning contour's
+centroid into the fundamental domain. Applying one shift to the whole contour
+preserves its geometry across periodic seams; wrapping nodes independently does not.
+"""
+@inline function contour_periodic_shift(c::PVContour{T}, domain::PeriodicDomain{T}) where {T}
+    ref = centroid(c)
+    return wrap_node(ref, domain) - ref
+end
+
+"""
     wrap_nodes!(prob::ContourProblem{K, PeriodicDomain{T}})
 
 Wrap all non-spanning contour nodes into the fundamental domain.
@@ -29,8 +41,10 @@ function wrap_nodes!(prob::ContourProblem{K, PeriodicDomain{T}}) where {K, T}
     domain = prob.domain
     for c in prob.contours
         is_spanning(c) && continue
+        shift = contour_periodic_shift(c, domain)
+        iszero(shift) && continue
         @inbounds for i in eachindex(c.nodes)
-            c.nodes[i] = wrap_node(c.nodes[i], domain)
+            c.nodes[i] += shift
         end
     end
     return prob
@@ -41,8 +55,10 @@ function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}}) wh
     for layer in prob.layers
         for c in layer
             is_spanning(c) && continue
+            shift = contour_periodic_shift(c, domain)
+            iszero(shift) && continue
             @inbounds for i in eachindex(c.nodes)
-                c.nodes[i] = wrap_node(c.nodes[i], domain)
+                c.nodes[i] += shift
             end
         end
     end
