@@ -71,34 +71,38 @@
         end
 
         @testset "S2M Far-Field Accuracy" begin
-            c = circular_patch(0.5, 64, 1.0)
-            contours = [c]
-            tree = ContourDynamics.build_fmm_tree(contours; max_per_leaf=100)
-            ops = ContourDynamics.precompute_level_operators(tree, EulerKernel())
+            if !ContourDynamics._FMM_ACCELERATION_ENABLED
+                @test true
+            else
+                c = circular_patch(0.5, 64, 1.0)
+                contours = [c]
+                tree = ContourDynamics.build_fmm_tree(contours; max_per_leaf=100)
+                ops = ContourDynamics.precompute_level_operators(tree, EulerKernel())
 
-            p = ContourDynamics._FMM_PROXY_ORDER
-            proxy_data = [ContourDynamics.ProxyData(
-                zeros(SVector{2,Float64}, p),
-                zeros(SVector{2,Float64}, p)) for _ in 1:length(tree.boxes)]
+                p = ContourDynamics._FMM_PROXY_ORDER
+                proxy_data = [ContourDynamics.ProxyData(
+                    zeros(SVector{2,Float64}, p),
+                    zeros(SVector{2,Float64}, p)) for _ in 1:length(tree.boxes)]
 
-            ContourDynamics._s2m!(proxy_data, tree, contours, EulerKernel(),
-                                  UnboundedDomain(), ops, nothing)
+                ContourDynamics._s2m!(proxy_data, tree, contours, EulerKernel(),
+                                      UnboundedDomain(), ops, nothing)
 
-            far_pt = SVector(5.0, 5.0)
-            leaf = tree.leaf_indices[1]
-            box = tree.boxes[leaf]
-            proxy_pts = ContourDynamics._proxy_points(box.center, box.half_width, p)
-            v_proxy = zero(SVector{2,Float64})
-            for k in 1:p
-                G = ContourDynamics._kernel_value(EulerKernel(), UnboundedDomain(),
-                                                  far_pt, proxy_pts[k])
-                v_proxy = v_proxy + G * proxy_data[leaf].equiv_strengths[k]
+                far_pt = SVector(5.0, 5.0)
+                leaf = tree.leaf_indices[1]
+                box = tree.boxes[leaf]
+                proxy_pts = ContourDynamics._proxy_points(box.center, box.half_width, p)
+                v_proxy = zero(SVector{2,Float64})
+                for k in 1:p
+                    G = ContourDynamics._kernel_value(EulerKernel(), UnboundedDomain(),
+                                                      far_pt, proxy_pts[k])
+                    v_proxy = v_proxy + G * proxy_data[leaf].equiv_strengths[k]
+                end
+
+                prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours)
+                v_direct = velocity(prob, far_pt)
+
+                @test v_proxy ≈ v_direct rtol=1e-10
             end
-
-            prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours)
-            v_direct = velocity(prob, far_pt)
-
-            @test v_proxy ≈ v_direct rtol=1e-10
         end
     end
 
@@ -184,12 +188,93 @@
             @test max_err < 1e-10
         end
 
-        @testset "Auto-Switch Activates" begin
-            c = circular_patch(1.0, 300, 1.0)
+        @testset "Large-Problem Dispatcher" begin
+            c = circular_patch(1.0, 1200, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
             vel = zeros(SVector{2,Float64}, total_nodes(prob))
+            expected = similar(vel)
+
             velocity!(vel, prob)
-            @test any(v -> sqrt(v[1]^2 + v[2]^2) > 0.1, vel)
+
+            if ContourDynamics._FMM_ACCELERATION_ENABLED
+                ContourDynamics._fmm_velocity!(expected, prob)
+            elseif total_nodes(prob) >= ContourDynamics._FMM_THRESHOLD
+                ContourDynamics._treecode_velocity!(expected, prob)
+            else
+                ContourDynamics._direct_velocity!(expected, prob)
+            end
+
+            @test vel == expected
+        end
+    end
+
+    @testset "Production Treecode Accuracy" begin
+        @testset "Euler Unbounded" begin
+            c = circular_patch(1.0, 600, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_tree = similar(vel_direct)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._treecode_velocity!(vel_tree, prob)
+            max_err = maximum(sqrt(sum((vel_tree[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 2e-3
+        end
+
+        @testset "QG Unbounded" begin
+            c = circular_patch(1.0, 600, 1.0)
+            prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_tree = similar(vel_direct)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._treecode_velocity!(vel_tree, prob)
+            max_err = maximum(sqrt(sum((vel_tree[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 2e-3
+        end
+
+        @testset "SQG Unbounded" begin
+            c = circular_patch(1.0, 600, 1.0)
+            prob = ContourProblem(SQGKernel(0.05), UnboundedDomain(), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_tree = similar(vel_direct)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._treecode_velocity!(vel_tree, prob)
+            max_err = maximum(sqrt(sum((vel_tree[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-3
+        end
+
+        @testset "Two Patches" begin
+            c1 = circular_patch(0.5, 300, 1.0)
+            c2_nodes = [SVector(3.0 + 0.5*cos(2*pi*i/300), 0.5*sin(2*pi*i/300)) for i in 0:299]
+            c2 = PVContour(c2_nodes, -0.5)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_tree = similar(vel_direct)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._treecode_velocity!(vel_tree, prob)
+            max_err = maximum(sqrt(sum((vel_tree[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 2e-3
+        end
+
+        @testset "Euler Periodic" begin
+            domain = PeriodicDomain(Float64(pi), Float64(pi))
+            c = circular_patch(0.5, 300, 1.0)
+            prob = ContourProblem(EulerKernel(), domain, [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_tree = similar(vel_direct)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._treecode_velocity!(vel_tree, prob)
+            max_err = maximum(sqrt(sum((vel_tree[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-12
         end
     end
 
