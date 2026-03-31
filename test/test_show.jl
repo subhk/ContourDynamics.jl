@@ -31,4 +31,34 @@ using StaticArrays
         @test occursin("├── coupling: 2×2 SMatrix{Float64}", s_rich)
         @test occursin("└── eigenvalues:", s_rich)
     end
+
+    @testset "Domain show" begin
+        @test repr("text/plain", UnboundedDomain()) == "UnboundedDomain"
+
+        pd = PeriodicDomain(1.0, 2.0)
+        s = repr("text/plain", pd)
+        @test s == "PeriodicDomain{Float64}: x ∈ [-1.0, 1.0) × y ∈ [-2.0, 2.0)"
+    end
+
+    @testset "PVContour show" begin
+        nodes = [SVector{2,Float64}(cos(2π*k/32), sin(2π*k/32)) for k in 0:31]
+        c = PVContour(nodes, 1.5)
+        s = repr("text/plain", c)
+        @test occursin("32 nodes", s)
+        @test occursin("Δq = 1.5", s)
+        @test occursin("closed", s)
+        @test occursin("centered at (", s)
+
+        # Spanning contour
+        span_nodes = [SVector{2,Float64}(Float64(k), 0.0) for k in 0:3]
+        cs = PVContour(span_nodes, 2.0, SVector(4.0, 0.0))
+        s_span = repr("text/plain", cs)
+        @test occursin("spanning", s_span)
+        @test !occursin("centered at", s_span)
+
+        # Empty contour (0 nodes)
+        c0 = PVContour(SVector{2,Float64}[], 1.0)
+        s0 = repr("text/plain", c0)
+        @test occursin("0 nodes", s0)
+    end
 end
