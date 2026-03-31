@@ -152,11 +152,11 @@ For ``N``-layer QG dynamics, the layers are coupled through interface deformatio
 ```julia
 using LinearAlgebra
 
-# Deformation radius at the interface between layers
+# Deformation radius of the baroclinic mode
 Ld = SVector(1.5)
-# Coupling matrix (must be symmetric, should incorporate layer thicknesses)
-F = 1.0 / Ld[1]^2
-coupling = SMatrix{2,2}(1.0 + F, -F, -F, 1.0 + F)
+# Stretching operator with one barotropic (λ = 0) and one baroclinic mode
+F = 1.0 / (2 * Ld[1]^2)
+coupling = SMatrix{2,2}(-F, F, F, -F)
 
 kernel = MultiLayerQGKernel(Ld, coupling)
 println("Number of layers: $(nlayers(kernel))")
