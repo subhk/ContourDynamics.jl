@@ -119,4 +119,31 @@ using StaticArrays
         sc = repr(prob)
         @test occursin("MultiLayerContourProblem", sc)
     end
+
+    @testset "TimeStepper show" begin
+        rk = RK4Stepper(0.01, 64)
+        s = repr("text/plain", rk)
+        @test s == "RK4Stepper{Float64}: dt = 0.01"
+
+        lf = LeapfrogStepper(0.005, 32; ra_coeff=0.001)
+        s = repr("text/plain", lf)
+        @test s == "LeapfrogStepper{Float64}: dt = 0.005, Robert-Asselin coeff = 0.001"
+    end
+
+    @testset "SurgeryParams show" begin
+        sp = SurgeryParams(0.001, 0.005, 0.1, 1e-6, 10)
+
+        # Compact
+        sc = repr(sp)
+        @test sc == "SurgeryParams{Float64}"
+
+        # Rich
+        s = repr("text/plain", sp)
+        @test occursin("SurgeryParams{Float64}", s)
+        @test occursin("├── δ (proximity): 0.001", s)
+        @test occursin("├── μ (min segment): 0.005", s)
+        @test occursin("├── Δ_max (max segment): 0.1", s)
+        @test occursin("├── area_min: 1.0e-6", s)
+        @test occursin("└── n_surgery: 10 steps", s)
+    end
 end
