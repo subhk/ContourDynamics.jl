@@ -2,8 +2,11 @@
 
 # ── Constants ───────────────────────────────────────────────
 
-"""Threshold on total segment count below which direct summation is used."""
-const _FMM_THRESHOLD = 256
+"""Threshold on total segment count above which a large-problem accelerator may be used."""
+const _FMM_THRESHOLD = 1024
+
+"""Whether the proxy-surface FMM acceleration path is enabled for runtime use."""
+const _FMM_ACCELERATION_ENABLED = false
 
 """Maximum number of segments in a leaf box before subdivision."""
 const _FMM_MAX_PER_LEAF = 40
