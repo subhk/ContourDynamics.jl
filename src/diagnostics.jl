@@ -214,8 +214,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes  # detect self-interaction
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     # Analytical self-segment integral:
     # ∫₋₁¹∫₋₁¹ log(|s-t| * |half_ds|) ds dt = 4*log(2) - 6 + 4*log|half_ds|
     self_seg_const = 4 * log(T(2)) - T(6)  # precompute constant part
@@ -292,8 +291,7 @@ function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) 
     ncj = nnodes(cj)
     delta_sq = delta^2
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     partial = zeros(T, nci)
     @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
@@ -348,8 +346,7 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes  # detect self-interaction
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     # Analytical self-segment integral for the log(r²)/2 singularity
     # (same formula as Euler self-segment)
     self_seg_const = 4 * log(T(2)) - T(6)
@@ -473,8 +470,7 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     # Analytical self-segment integral for the log(r²)/2 singularity
     self_seg_const = 4 * log(T(2)) - T(6)
 
@@ -614,8 +610,7 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
     nci = nnodes(ci)
     ncj = nnodes(cj)
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     partial = zeros(T, nci)
     @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
@@ -656,6 +651,14 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
         partial[i] = local_s
     end
     return sum(partial)
+end
+
+# SQG on PeriodicDomain: velocity is supported but energy is not yet implemented.
+function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where {T}
+    throw(ArgumentError(
+        "energy is not yet implemented for SQGKernel on PeriodicDomain. " *
+        "SQG periodic velocity works, but the energy diagnostic requires Ewald-split " *
+        "double contour integrals of 1/r that are not yet available."))
 end
 
 # Fallback for unsupported kernel/domain combinations
