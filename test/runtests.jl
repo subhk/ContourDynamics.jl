@@ -368,6 +368,8 @@ include("test_utils.jl")
         @test maximum(sqrt((vel[1][i][1] - vel2[1][i][1])^2 + (vel[1][i][2] - vel2[1][i][2])^2) for i in 1:64) > 1e-6
     end
 
+    include("test_fmm.jl")
+
     @testset "Spanning Contours & Beta Staircase" begin
         T = Float64
         domain = PeriodicDomain(T(3.0))
