@@ -19,7 +19,7 @@ Precompute Fourier-space coefficients for Ewald summation.
 function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
                            n_fourier::Int=8, n_images::Int=2) where {T}
     Lx, Ly = domain.Lx, domain.Ly
-    alpha = sqrt(T(π)) / min(Lx, Ly)
+    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
 
     kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
     ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
@@ -52,7 +52,7 @@ fractional Laplacian's half-order (`1/|k|` vs Euler's `1/k²`).
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
     Lx, Ly = domain.Lx, domain.Ly
-    alpha = sqrt(T(π)) / min(Lx, Ly)
+    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
 
     kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
     ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
@@ -83,7 +83,7 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
     Lx, Ly = domain.Lx, domain.Ly
     Ld = kernel.Ld
-    alpha = sqrt(T(π)) / min(Lx, Ly)
+    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
 
     kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
     ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
