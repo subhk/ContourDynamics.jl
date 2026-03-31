@@ -119,7 +119,12 @@ function remesh(c::PVContour{T}, params::SurgeryParams;
     end
 
     length(new_nodes) < 3 && return c
-    return PVContour(new_nodes, c.pv, c.wrap)
+
+    # `_buf` is scratch storage owned by the caller. Never hand it back as the
+    # contour's live node vector, or later remesh calls will mutate existing
+    # contours in place through shared storage.
+    out_nodes = _buf === nothing ? new_nodes : copy(new_nodes)
+    return PVContour(out_nodes, c.pv, c.wrap)
 end
 
 """
