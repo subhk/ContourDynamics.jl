@@ -353,9 +353,9 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     return prob
 end
 
-function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) where {N}
+function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:AbstractDomain, T}, params::SurgeryParams) where {N, T}
     domain = prob.domain
-    _remesh_buf = SVector{2, typeof(params.delta)}[]
+    _remesh_buf = SVector{2, T}[]
     for i in 1:N
         contours = prob.layers[i]
         for j in eachindex(contours)
@@ -364,7 +364,9 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
         reconnected = false
         max_reconnect_iter = 100
         prev_n_pairs = typemax(Int)
+        min_n_pairs = typemax(Int)
         stall_count = 0
+        no_improve_count = 0
         for iter in 1:max_reconnect_iter
             idx = build_spatial_index(contours, params.delta, domain)
             close_pairs = find_close_segments(contours, idx, params.delta, domain)
@@ -372,12 +374,18 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
             n_pairs = length(close_pairs)
             if n_pairs > prev_n_pairs
                 stall_count += 1
-                if stall_count >= 3
-                    @warn "surgery!: layer $i reconnection stalled (close pairs increasing: $n_pairs) — stopping early"
-                    break
-                end
             else
                 stall_count = 0
+            end
+            if n_pairs < min_n_pairs
+                min_n_pairs = n_pairs
+                no_improve_count = 0
+            else
+                no_improve_count += 1
+            end
+            if stall_count >= 3 || no_improve_count >= 6
+                @warn "surgery!: layer $i reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
+                break
             end
             prev_n_pairs = n_pairs
             reconnect!(contours, close_pairs, domain)
