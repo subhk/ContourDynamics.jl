@@ -171,10 +171,10 @@ using LinearAlgebra
 R, pv = 0.5, 2π
 N = 100
 
-# Two-layer coupling
-Ld = SVector(1.0)                               # interface deformation radius
-F = 1.0 / Ld[1]^2
-coupling = SMatrix{2,2}(1.0+F, -F, -F, 1.0+F)  # symmetric coupling matrix
+# Two-layer stretching operator
+Ld = SVector(1.0)                               # baroclinic deformation radius
+F = 1.0 / (2 * Ld[1]^2)
+coupling = SMatrix{2,2}(-F, F, F, -F)          # symmetric with one zero mode
 
 kernel = MultiLayerQGKernel(Ld, coupling)
 
