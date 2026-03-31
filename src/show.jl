@@ -1,3 +1,5 @@
+using Printf
+
 # ── Tree-drawing helpers ────────────────────────────────
 
 _tree_prefix(is_last::Bool) = is_last ? "└── " : "├── "
@@ -27,3 +29,36 @@ function Base.show(io::IO, ::MIME"text/plain", k::MultiLayerQGKernel{N, M, T}) w
     println(io, "├── coupling: $(N)×$(N) SMatrix{$T}")
     print(io,   "└── eigenvalues: ", k.eigenvalues)
 end
+
+# ── Domains ─────────────────────────────────────────────
+
+Base.show(io::IO, ::UnboundedDomain) = print(io, "UnboundedDomain")
+Base.show(io::IO, ::MIME"text/plain", d::UnboundedDomain) = show(io, d)
+
+function Base.show(io::IO, d::PeriodicDomain{T}) where {T}
+    print(io, "PeriodicDomain{$T}: x ∈ [-", d.Lx, ", ", d.Lx, ") × y ∈ [-", d.Ly, ", ", d.Ly, ")")
+end
+Base.show(io::IO, ::MIME"text/plain", d::PeriodicDomain) = show(io, d)
+
+# ── PVContour ───────────────────────────────────────────
+
+function _contour_summary(io::IO, c::PVContour{T}) where {T}
+    n = nnodes(c)
+    print(io, n, " node", n == 1 ? "" : "s", ", Δq = ", c.pv, ", ")
+    if is_spanning(c)
+        print(io, "spanning")
+    else
+        print(io, "closed")
+        if n >= 3
+            ctr = centroid(c)
+            print(io, @sprintf(", centered at (%.2f, %.2f)", ctr[1], ctr[2]))
+        end
+    end
+end
+
+function Base.show(io::IO, c::PVContour{T}) where {T}
+    print(io, "PVContour{$T}: ")
+    _contour_summary(io, c)
+end
+
+Base.show(io::IO, ::MIME"text/plain", c::PVContour) = show(io, c)
