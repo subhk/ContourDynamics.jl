@@ -369,10 +369,10 @@ function surgery!(prob::MultiLayerContourProblem{N}, params::SurgeryParams) wher
             close_pairs = find_close_segments(contours, idx, params.delta, domain)
             isempty(close_pairs) && break
             n_pairs = length(close_pairs)
-            if n_pairs >= prev_n_pairs
+            if n_pairs > prev_n_pairs
                 stall_count += 1
                 if stall_count >= 3
-                    @warn "surgery!: layer $i reconnection stalled (close pairs not decreasing: $n_pairs) — stopping early"
+                    @warn "surgery!: layer $i reconnection stalled (close pairs increasing: $n_pairs) — stopping early"
                     break
                 end
             else
