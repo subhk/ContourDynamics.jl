@@ -63,9 +63,9 @@ full stretching operator, not raw interface stretching coefficients).
 
 !!! note
     The evolution and energy diagnostics derive modal deformation radii from the
-    coupling matrix eigenvalues (`Ld_mode = 1/√|λ|`), **not** from the provided `Ld`.
-    `Ld` is stored for user reference and introspection but does not affect dynamics.
-    Ensure that the coupling matrix is consistent with your intended deformation radii.
+    coupling matrix eigenvalues (`Ld_mode = 1/√|λ|`). The constructor therefore
+    validates that the provided `Ld` values match the nonzero modal radii implied
+    by `coupling`, preventing silent simulation of a different physical model.
 """
 struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     Ld::SVector{M, T}
@@ -95,20 +95,25 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
             end
         end
 
-        # Warn if Ld appears inconsistent with the modal radii the evolution
-        # will actually use, so silent mis-specification is caught early.
-        modal_radii = T[one(T) / sqrt(abs(λ)) for λ in eigenvalues if abs(λ) > eps(T) * T(100)]
-        if length(modal_radii) == M
-            sorted_modal = sort(modal_radii)
-            sorted_Ld = sort(Vector(Ld))
-            max_ratio = maximum(max(sorted_modal[m] / sorted_Ld[m],
-                                    sorted_Ld[m] / sorted_modal[m]) for m in 1:M)
-            if max_ratio > T(10)
-                @warn "MultiLayerQGKernel: provided Ld = $(Vector(Ld)) differs substantially " *
-                      "(ratio > 10) from modal radii derived from coupling eigenvalues: " *
-                      "$(round.(modal_radii; digits=4)). Note: the evolution uses modal radii " *
-                      "from eigenvalues; provided Ld is stored but not used in dynamics." maxlog=1
-            end
+        # Enforce consistency between the user-facing deformation radii and the
+        # coupling matrix that actually sets the modal Helmholtz scales.
+        λscale = maximum(abs.(eigenvalues))
+        λtol = max(one(T), λscale) * sqrt(eps(T)) * T(100)
+        modal_radii = T[one(T) / sqrt(abs(λ)) for λ in eigenvalues if abs(λ) > λtol]
+        length(modal_radii) == M || throw(ArgumentError(
+            "Coupling matrix implies $(length(modal_radii)) significant baroclinic mode(s), " *
+            "but $(M) deformation radius value(s) were provided. " *
+            "Expected one zero barotropic eigenvalue and $(M) nonzero modal eigenvalues."
+        ))
+
+        sorted_modal = sort(modal_radii)
+        sorted_Ld = sort(Vector(Ld))
+        for m in 1:M
+            isapprox(sorted_modal[m], sorted_Ld[m];
+                     rtol=sqrt(eps(T)) * T(100), atol=zero(T)) || throw(ArgumentError(
+                "Provided deformation radii $(Vector(Ld)) are inconsistent with the coupling matrix. " *
+                "The coupling-implied modal radii are $(modal_radii)."
+            ))
         end
 
         new{N, M, T}(Ld, coupling, eigenvalues, eigenvectors, eigenvectors_inv)
