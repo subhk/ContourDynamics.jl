@@ -3,10 +3,10 @@
 # ── Constants ───────────────────────────────────────────────
 
 """Number of proxy (equivalent) points on the proxy surface."""
-const _FMM_PROXY_ORDER = 64
+const _FMM_PROXY_ORDER = 36
 
 """Number of check points on the check surface."""
-const _FMM_CHECK_ORDER = 128
+const _FMM_CHECK_ORDER = 72
 
 """Ratio of proxy surface radius to box half-width."""
 const _FMM_PROXY_RADIUS = 1.5
