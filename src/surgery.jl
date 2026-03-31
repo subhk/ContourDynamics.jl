@@ -495,8 +495,9 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
     domain = prob.domain
 
     # 1. Remesh all contours
+    _remesh_buf = SVector{2, typeof(params.delta)}[]
     for i in eachindex(contours)
-        contours[i] = remesh(contours[i], params)
+        contours[i] = remesh(contours[i], params; _buf=_remesh_buf)
     end
 
     # 2. Reconnection — iterate until no more close pairs remain.
@@ -534,7 +535,7 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
     #    created at stitch junctions during merge or split.
     if reconnected
         for i in eachindex(contours)
-            contours[i] = remesh(contours[i], params)
+            contours[i] = remesh(contours[i], params; _buf=_remesh_buf)
         end
     end
 
