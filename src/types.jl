@@ -219,14 +219,14 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat}
     end
 end
 
-# Warn if kernel's floating-point type doesn't match contour type
+# Error if kernel's floating-point type doesn't match contour type
 _check_kernel_type(::AbstractKernel, ::Type) = nothing  # no-op for unparameterized kernels
-_check_kernel_type(k::QGKernel{Tk}, ::Type{T}) where {Tk, T} =
-    Tk !== T && @warn "ContourProblem: QGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
-_check_kernel_type(k::SQGKernel{Tk}, ::Type{T}) where {Tk, T} =
-    Tk !== T && @warn "ContourProblem: SQGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
-_check_kernel_type(k::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
-    Tk !== T && @warn "MultiLayerContourProblem: MultiLayerQGKernel uses $Tk but contours use $T — this may cause type instability" maxlog=1
+_check_kernel_type(::QGKernel{Tk}, ::Type{T}) where {Tk, T} =
+    Tk !== T && throw(ArgumentError("QGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
+_check_kernel_type(::SQGKernel{Tk}, ::Type{T}) where {Tk, T} =
+    Tk !== T && throw(ArgumentError("SQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
+_check_kernel_type(::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
+    Tk !== T && throw(ArgumentError("MultiLayerQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
 
 """
     MultiLayerContourProblem{N,K,D,T}(kernel, domain, layers)
