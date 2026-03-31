@@ -90,10 +90,14 @@ function _insert_bin!(bins::Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}},
 
     # Ghost entries near periodic boundaries so that the 3×3 neighbour query
     # in find_close_segments discovers segments close across the seam.
-    near_xhi = x_w > Lx - delta
-    near_xlo = x_w < -Lx + delta
-    near_yhi = y_w > Ly - delta
-    near_ylo = y_w < -Ly + delta
+    # Use 2*delta threshold: the query extends ±1 bin, so a segment up to
+    # 2*delta from the seam can have its periodic image within delta of a
+    # query on the opposite side.
+    two_delta = 2 * delta
+    near_xhi = x_w > Lx - two_delta
+    near_xlo = x_w < -Lx + two_delta
+    near_yhi = y_w > Ly - two_delta
+    near_ylo = y_w < -Ly + two_delta
 
     # Edge ghosts
     near_xhi && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / delta), by), ci, ni)
@@ -356,6 +360,10 @@ end
 
 function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int) where {T}
     c = contours[ci]
+    if is_spanning(c)
+        @warn "_reconnect_split!: called on spanning contour $ci — skipped" maxlog=5
+        return
+    end
     i, j = _best_stitch_nodes(c, i, c, j)
     nc = nnodes(c)
     lo, hi = minmax(i, j)
@@ -389,7 +397,7 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     # (well above numerical noise from the shoelace formula).
     a1 = vortex_area(c1)
     a2 = vortex_area(c2)
-    reversed = sign(a1) != sign(a2) && abs(a2) > eps(T) * T(1000)
+    reversed = abs(a1) > eps(T) * T(1000) && abs(a2) > eps(T) * T(1000) && sign(a1) != sign(a2)
     c2_nodes = reversed ? reverse(c2.nodes) : c2.nodes
     j_eff = reversed ? (n2 - j + 1) : j
 
@@ -490,25 +498,26 @@ end
 Full Dritschel surgery suite: remesh → reconnect → remove filaments.
 Mutates `prob.contours` in place.
 """
-function surgery!(prob::ContourProblem, params::SurgeryParams)
+function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, params::SurgeryParams) where {T}
     contours = prob.contours
     domain = prob.domain
 
     # 1. Remesh all contours
-    _remesh_buf = SVector{2, typeof(params.delta)}[]
+    _remesh_buf = SVector{2, T}[]
     for i in eachindex(contours)
         contours[i] = remesh(contours[i], params; _buf=_remesh_buf)
     end
 
     # 2. Reconnection — iterate until no more close pairs remain.
-    #    Stall detection: if close-pair count increases for 3 consecutive
-    #    iterations, stop early to avoid infinite cycling.  A stable count
-    #    (equal) is allowed because topological changes (splits) can maintain
-    #    the same pair count while making genuine progress.
+    #    Stall detection: stop early if close-pair count is not making progress.
+    #    We track both consecutive increases and failure to improve the minimum,
+    #    catching both monotone growth and oscillation (e.g. 10→12→10→12).
     reconnected = false
     max_reconnect_iter = 100
     prev_n_pairs = typemax(Int)
+    min_n_pairs = typemax(Int)
     stall_count = 0
+    no_improve_count = 0
     for iter in 1:max_reconnect_iter
         idx = build_spatial_index(contours, params.delta, domain)
         close_pairs = find_close_segments(contours, idx, params.delta, domain)
@@ -516,12 +525,18 @@ function surgery!(prob::ContourProblem, params::SurgeryParams)
         n_pairs = length(close_pairs)
         if n_pairs > prev_n_pairs
             stall_count += 1
-            if stall_count >= 3
-                @warn "surgery!: reconnection stalled (close pairs increasing: $n_pairs) — stopping early"
-                break
-            end
         else
             stall_count = 0
+        end
+        if n_pairs < min_n_pairs
+            min_n_pairs = n_pairs
+            no_improve_count = 0
+        else
+            no_improve_count += 1
+        end
+        if stall_count >= 3 || no_improve_count >= 6
+            @warn "surgery!: reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
+            break
         end
         prev_n_pairs = n_pairs
         reconnect!(contours, close_pairs, domain)
