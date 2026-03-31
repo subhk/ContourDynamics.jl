@@ -50,6 +50,10 @@ function wrap_nodes!(prob::ContourProblem{K, PeriodicDomain{T}}) where {K, T}
     return prob
 end
 
+"""No-op for unbounded domains — nodes don't need wrapping."""
+wrap_nodes!(prob::ContourProblem{<:AbstractKernel, UnboundedDomain}) = prob
+wrap_nodes!(prob::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain}) = prob
+
 function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}}) where {N, K, T}
     domain = prob.domain
     for layer in prob.layers
