@@ -10,6 +10,14 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
+    # Fix colorrange from initial PV values so colors are consistent across frames.
+    pv_vals = [c.pv for c in prob.contours]
+    pv_lo, pv_hi = isempty(pv_vals) ? (-1.0, 1.0) : (minimum(pv_vals), maximum(pv_vals))
+    if pv_lo == pv_hi
+        pv_lo -= one(pv_lo)
+        pv_hi += one(pv_hi)
+    end
+
     # Include frame 0 (initial state), intermediate frames, and always the final state
     frame_indices = vcat([0], collect(frameskip:frameskip:nsteps))
     if frame_indices[end] != nsteps
@@ -39,7 +47,8 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
             push!(xs, close_node[1])
             ys = [nodes[i][2] for i in 1:n]
             push!(ys, close_node[2])
-            Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu)
+            Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
+                         colorrange=(pv_lo, pv_hi))
         end
     end
 
@@ -52,6 +61,14 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                                           callbacks=nothing) where {N}
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
+
+    # Fix colorrange from initial PV values across all layers.
+    pv_vals = [c.pv for layer in prob.layers for c in layer]
+    pv_lo, pv_hi = isempty(pv_vals) ? (-1.0, 1.0) : (minimum(pv_vals), maximum(pv_vals))
+    if pv_lo == pv_hi
+        pv_lo -= one(pv_lo)
+        pv_hi += one(pv_hi)
+    end
 
     frame_indices = vcat([0], collect(frameskip:frameskip:nsteps))
     if frame_indices[end] != nsteps
@@ -82,6 +99,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                 ys = [nodes[i][2] for i in 1:n]
                 push!(ys, close_node[2])
                 Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
+                             colorrange=(pv_lo, pv_hi),
                              linestyle=li == 1 ? :solid : :dash)
             end
         end
