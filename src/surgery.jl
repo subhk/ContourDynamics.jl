@@ -397,10 +397,12 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
         c2_nodes = [n + shift for n in c2_nodes]
     end
 
+    # Note: c1.nodes[i] and c2_nodes[j_eff] are near-duplicate stitch nodes.
+    # The post-reconnection remesh in surgery! removes the resulting short segment.
     new_nodes = vcat(
         c1.nodes[1:i],
         c2_nodes[j_eff:n2],
-        c2_nodes[1:j_eff-1],  # exclude j_eff to avoid duplicate at stitch point
+        c2_nodes[1:j_eff-1],
         c1.nodes[(i+1):n1]
     )
     contours[ci] = PVContour(new_nodes, c1.pv)
