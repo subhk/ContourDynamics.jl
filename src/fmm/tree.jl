@@ -1,0 +1,375 @@
+# Adaptive quadtree construction for the kernel-independent FMM.
+
+# ── Constants ───────────────────────────────────────────────
+
+"""Threshold on total segment count below which direct summation is used."""
+const _FMM_THRESHOLD = 256
+
+"""Maximum number of segments in a leaf box before subdivision."""
+const _FMM_MAX_PER_LEAF = 40
+
+"""Maximum depth of the quadtree."""
+const _FMM_MAX_DEPTH = 20
+
+# ── Types ───────────────────────────────────────────────────
+
+struct FMMBox{T<:AbstractFloat}
+    center::SVector{2,T}
+    half_width::T
+    level::Int
+    parent::Int                   # index into boxes array; 0 = root
+    children::SVector{4,Int}      # 0 = no child; order: SW, SE, NW, NE
+    segment_range::UnitRange{Int} # range into sorted_segments
+    is_leaf::Bool
+end
+
+struct FMMTree{T<:AbstractFloat}
+    boxes::Vector{FMMBox{T}}
+    sorted_segments::Vector{Tuple{Int,Int}}    # (contour_idx, node_idx)
+    segment_midpoints::Vector{SVector{2,T}}    # midpoints parallel to sorted_segments
+    leaf_indices::Vector{Int}                   # indices of leaf boxes
+    interaction_lists::Vector{Vector{Int}}      # per-box M2L targets
+    near_lists::Vector{Vector{Int}}             # per-box direct neighbors
+    max_level::Int
+end
+
+# ── Helper functions ────────────────────────────────────────
+
+"""
+    _compute_bounding_box(contours) -> (center, half_width)
+
+Compute a square bounding box that encloses all segment midpoints with 1% padding.
+"""
+function _compute_bounding_box(contours::AbstractVector{PVContour{T}}) where {T}
+    xmin = typemax(T)
+    xmax = typemin(T)
+    ymin = typemax(T)
+    ymax = typemin(T)
+    for c in contours
+        n = nnodes(c)
+        for j in 1:n
+            nj = next_node(c, j)
+            mx = (c.nodes[j][1] + nj[1]) / 2
+            my = (c.nodes[j][2] + nj[2]) / 2
+            xmin = min(xmin, mx)
+            xmax = max(xmax, mx)
+            ymin = min(ymin, my)
+            ymax = max(ymax, my)
+        end
+    end
+    cx = (xmin + xmax) / 2
+    cy = (ymin + ymax) / 2
+    hw = max(xmax - xmin, ymax - ymin) / 2
+    hw *= T(1.01)  # 1% padding
+    # Ensure nonzero half_width
+    if hw < eps(T)
+        hw = one(T)
+    end
+    return SVector{2,T}(cx, cy), hw
+end
+
+"""
+    _collect_segment_midpoints(contours) -> (midpoints, seg_ids)
+
+Collect all segment midpoints and corresponding (contour_idx, node_idx) identifiers.
+"""
+function _collect_segment_midpoints(contours::AbstractVector{PVContour{T}}) where {T}
+    total = sum(nnodes(c) for c in contours)
+    midpoints = Vector{SVector{2,T}}(undef, total)
+    seg_ids = Vector{Tuple{Int,Int}}(undef, total)
+    k = 0
+    for (ci, c) in enumerate(contours)
+        n = nnodes(c)
+        for j in 1:n
+            k += 1
+            nj = next_node(c, j)
+            midpoints[k] = (c.nodes[j] + nj) / 2
+            seg_ids[k] = (ci, j)
+        end
+    end
+    return midpoints, seg_ids
+end
+
+"""
+    _quadrant(pt, center) -> Int
+
+Return the quadrant index: 1=SW, 2=SE, 3=NW, 4=NE.
+"""
+@inline function _quadrant(pt::SVector{2,T}, center::SVector{2,T}) where {T}
+    east = pt[1] >= center[1]
+    north = pt[2] >= center[2]
+    if north
+        return east ? 4 : 3
+    else
+        return east ? 2 : 1
+    end
+end
+
+"""
+    _child_center(parent_center, parent_hw, quad) -> SVector{2,T}
+
+Compute the center of a child box for the given quadrant.
+"""
+@inline function _child_center(parent_center::SVector{2,T}, parent_hw::T, quad::Int) where {T}
+    offset = parent_hw / 2
+    if quad == 1      # SW
+        return SVector{2,T}(parent_center[1] - offset, parent_center[2] - offset)
+    elseif quad == 2  # SE
+        return SVector{2,T}(parent_center[1] + offset, parent_center[2] - offset)
+    elseif quad == 3  # NW
+        return SVector{2,T}(parent_center[1] - offset, parent_center[2] + offset)
+    else              # NE
+        return SVector{2,T}(parent_center[1] + offset, parent_center[2] + offset)
+    end
+end
+
+"""
+    _partition_segments!(midpoints, seg_ids, lo, hi, center) -> NTuple{4,UnitRange{Int}}
+
+In-place 4-way partition of segments in `lo:hi` into quadrants around `center`.
+Returns four UnitRanges (SW, SE, NW, NE) into the arrays.
+"""
+function _partition_segments!(
+    midpoints::Vector{SVector{2,T}},
+    seg_ids::Vector{Tuple{Int,Int}},
+    lo::Int, hi::Int,
+    center::SVector{2,T}
+) where {T}
+    n = hi - lo + 1
+    if n == 0
+        empty = lo:(lo-1)
+        return (empty, empty, empty, empty)
+    end
+
+    # Count elements per quadrant
+    counts = MVector{4,Int}(0, 0, 0, 0)
+    for i in lo:hi
+        q = _quadrant(midpoints[i], center)
+        counts[q] += 1
+    end
+
+    # Compute start positions for each quadrant
+    starts = MVector{4,Int}(0, 0, 0, 0)
+    starts[1] = lo
+    starts[2] = starts[1] + counts[1]
+    starts[3] = starts[2] + counts[2]
+    starts[4] = starts[3] + counts[3]
+
+    # Build ranges
+    ranges = (
+        starts[1]:(starts[2] - 1),
+        starts[2]:(starts[3] - 1),
+        starts[3]:(starts[4] - 1),
+        starts[4]:(starts[4] + counts[4] - 1),
+    )
+
+    # Copy to temporary arrays, then write back in sorted order
+    tmp_mid = midpoints[lo:hi]
+    tmp_ids = seg_ids[lo:hi]
+
+    pos = MVector{4,Int}(starts[1], starts[2], starts[3], starts[4])
+    for i in 1:n
+        q = _quadrant(tmp_mid[i], center)
+        idx = pos[q]
+        midpoints[idx] = tmp_mid[i]
+        seg_ids[idx] = tmp_ids[i]
+        pos[q] += 1
+    end
+
+    return ranges
+end
+
+"""
+    _empty_tree(T) -> FMMTree{T}
+
+Return an empty FMMTree for zero segments.
+"""
+function _empty_tree(::Type{T}) where {T<:AbstractFloat}
+    FMMTree{T}(
+        FMMBox{T}[],
+        Tuple{Int,Int}[],
+        SVector{2,T}[],
+        Int[],
+        Vector{Int}[],
+        Vector{Int}[],
+        0,
+    )
+end
+
+"""
+    _are_adjacent_or_self(a, b) -> Bool
+
+Two boxes are adjacent (or identical) if their centers are within
+`(a.half_width + b.half_width) * 1.01` in each dimension.
+"""
+@inline function _are_adjacent_or_self(a::FMMBox{T}, b::FMMBox{T}) where {T}
+    threshold = (a.half_width + b.half_width) * T(1.01)
+    return abs(a.center[1] - b.center[1]) <= threshold &&
+           abs(a.center[2] - b.center[2]) <= threshold
+end
+
+# ── Tree building ───────────────────────────────────────────
+
+"""
+    build_fmm_tree(contours; max_per_leaf=_FMM_MAX_PER_LEAF, max_depth=_FMM_MAX_DEPTH) -> FMMTree
+
+Build an adaptive quadtree over the segment midpoints of the given contours.
+Uses an iterative stack to avoid deep recursion.
+"""
+function build_fmm_tree(
+    contours::AbstractVector{PVContour{T}};
+    max_per_leaf::Int = _FMM_MAX_PER_LEAF,
+    max_depth::Int = _FMM_MAX_DEPTH,
+) where {T}
+    # Collect all segment midpoints
+    total_segs = sum(nnodes(c) for c in contours; init=0)
+    total_segs == 0 && return _empty_tree(T)
+
+    midpoints, seg_ids = _collect_segment_midpoints(contours)
+    center, hw = _compute_bounding_box(contours)
+
+    # Preallocate boxes
+    boxes = FMMBox{T}[]
+    sizehint!(boxes, max(64, total_segs ÷ max_per_leaf * 2))
+    leaf_indices = Int[]
+
+    # Stack entries: (parent_idx, lo, hi, center, half_width, level)
+    stack = Tuple{Int, Int, Int, SVector{2,T}, T, Int}[]
+
+    # Create root box (placeholder; will be updated)
+    root = FMMBox{T}(center, hw, 0, 0, SVector{4,Int}(0,0,0,0), 1:total_segs, true)
+    push!(boxes, root)
+    push!(stack, (1, 1, total_segs, center, hw, 0))
+
+    while !isempty(stack)
+        box_idx, lo, hi, box_center, box_hw, level = pop!(stack)
+        n_seg = hi - lo + 1
+
+        if n_seg <= max_per_leaf || level >= max_depth
+            # This is a leaf
+            boxes[box_idx] = FMMBox{T}(
+                box_center, box_hw, level,
+                boxes[box_idx].parent,
+                SVector{4,Int}(0,0,0,0),
+                lo:hi,
+                true,
+            )
+            push!(leaf_indices, box_idx)
+        else
+            # Subdivide
+            ranges = _partition_segments!(midpoints, seg_ids, lo, hi, box_center)
+            child_hw = box_hw / 2
+            children = MVector{4,Int}(0, 0, 0, 0)
+
+            for q in 1:4
+                r = ranges[q]
+                if !isempty(r)
+                    cc = _child_center(box_center, box_hw, q)
+                    child_box = FMMBox{T}(
+                        cc, child_hw, level + 1,
+                        box_idx,
+                        SVector{4,Int}(0,0,0,0),
+                        r,
+                        true,  # placeholder, may be updated
+                    )
+                    push!(boxes, child_box)
+                    child_idx = length(boxes)
+                    children[q] = child_idx
+                    push!(stack, (child_idx, first(r), last(r), cc, child_hw, level + 1))
+                end
+            end
+
+            # Update parent to be internal node
+            boxes[box_idx] = FMMBox{T}(
+                box_center, box_hw, level,
+                boxes[box_idx].parent,
+                SVector{4,Int}(children),
+                lo:hi,
+                false,
+            )
+        end
+    end
+
+    max_level = maximum(b.level for b in boxes)
+
+    # Build interaction and near lists
+    interaction_lists, near_lists = _build_lists(boxes, max_level)
+
+    return FMMTree{T}(
+        boxes,
+        seg_ids,
+        midpoints,
+        leaf_indices,
+        interaction_lists,
+        near_lists,
+        max_level,
+    )
+end
+
+# ── List building ───────────────────────────────────────────
+
+"""
+    _build_lists(boxes, max_level) -> (interaction_lists, near_lists)
+
+Build interaction lists (M2L) and near lists for all boxes.
+
+Interaction list rule: For box B with parent P (which itself has a parent),
+look at all children of P's same-level neighbors. Those children that are
+NOT adjacent to B form B's interaction list.
+
+Near list rule (leaves only): self + all same-level leaf boxes that are adjacent.
+"""
+function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
+    nboxes = length(boxes)
+    interaction_lists = [Int[] for _ in 1:nboxes]
+    near_lists = [Int[] for _ in 1:nboxes]
+
+    # Build level-wise index for efficient neighbor lookups
+    level_boxes = [Int[] for _ in 0:max_level]
+    for i in 1:nboxes
+        push!(level_boxes[boxes[i].level + 1], i)  # +1 because Julia is 1-indexed
+    end
+
+    # Near lists: for each leaf box, find all same-level boxes that are adjacent
+    for i in 1:nboxes
+        if boxes[i].is_leaf
+            lvl = boxes[i].level
+            for j in level_boxes[lvl + 1]
+                if boxes[j].is_leaf && _are_adjacent_or_self(boxes[i], boxes[j])
+                    push!(near_lists[i], j)
+                end
+            end
+        end
+    end
+
+    # Interaction lists: for box B with parent P (P must also have a parent),
+    # find P's neighbors at P's level, then check their children.
+    # Children of P's neighbors that are NOT adjacent to B go into B's interaction list.
+    for b_idx in 1:nboxes
+        p_idx = boxes[b_idx].parent
+        p_idx == 0 && continue  # root has no parent
+        boxes[p_idx].parent == 0 && continue  # parent is root, skip
+
+        p_level = boxes[p_idx].level
+        # Find P's same-level neighbors (including P itself)
+        p_neighbors = Int[]
+        for candidate in level_boxes[p_level + 1]
+            if _are_adjacent_or_self(boxes[p_idx], boxes[candidate])
+                push!(p_neighbors, candidate)
+            end
+        end
+
+        # For each of P's neighbors, check their children
+        for pn_idx in p_neighbors
+            for q in 1:4
+                child_idx = boxes[pn_idx].children[q]
+                child_idx == 0 && continue
+                if !_are_adjacent_or_self(boxes[b_idx], boxes[child_idx])
+                    push!(interaction_lists[b_idx], child_idx)
+                end
+            end
+        end
+    end
+
+    return interaction_lists, near_lists
+end
