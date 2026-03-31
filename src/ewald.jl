@@ -329,8 +329,7 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
     # Smooth periodic correction: G_per(r) - G_∞(r)
     # G_∞(r) = -(1/(4π)) log(r²), so we subtract it from the central Ewald image.
     # All terms in the correction are bounded at r=0 → GL quadrature is accurate.
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     mid = (a + b) / 2
     half_ds = ds / 2
 
@@ -424,8 +423,7 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     kappa2 = one(T) / kernel.Ld^2
     area = 4 * domain.Lx * domain.Ly
 
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     mid = (a + b) / 2
     half_ds = ds / 2
 
@@ -489,8 +487,7 @@ function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
     # Smooth periodic correction: G_per_SQG(r) - G_∞_SQG_reg(r)
     # G_∞_SQG_reg(r) = -(1/(2π))/√(r²+δ²) is the regularized unbounded Green's function.
     # All correction terms are finite at GL quadrature points (r > 0).
-    g_nodes = SVector{3,T}(-sqrt(T(3)/T(5)), zero(T), sqrt(T(3)/T(5)))
-    g_weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    g_nodes, g_weights = _gl3_nodes_weights(T)
     mid = (a + b) / 2
     half_ds = ds / 2
 
