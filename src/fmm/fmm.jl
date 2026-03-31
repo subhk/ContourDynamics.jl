@@ -1,5 +1,133 @@
 # Top-level FMM driver: upward pass, downward pass, local evaluation.
 
+"""Opening-angle parameter for the production treecode path."""
+const _TREECODE_THETA = 0.15
+
+@inline function _treecode_accepts(target_box::FMMBox{T}, source_box::FMMBox{T},
+                                   theta::T = T(_TREECODE_THETA)) where {T}
+    dx = source_box.center[1] - target_box.center[1]
+    dy = source_box.center[2] - target_box.center[2]
+    dist = sqrt(dx * dx + dy * dy)
+    dist <= eps(T) && return false
+    return (target_box.half_width + source_box.half_width) / dist <= theta
+end
+
+function _box_direct_velocity(tree::FMMTree{T},
+                              contours::AbstractVector{PVContour{T}},
+                              box::FMMBox{T},
+                              kernel::AbstractKernel,
+                              domain::AbstractDomain,
+                              x::SVector{2,T},
+                              ewald_cache) where {T}
+    v = zero(SVector{2,T})
+    for seg_idx in box.segment_range
+        ci, ni = tree.sorted_segments[seg_idx]
+        c = contours[ci]
+        a = c.nodes[ni]
+        b = next_node(c, ni)
+        v = v + c.pv * segment_velocity(kernel, domain, x, a, b, ewald_cache)
+    end
+    return v
+end
+
+function _treecode_box_to_leaf!(vel::Vector{SVector{2,T}},
+                                tree::FMMTree{T},
+                                target_leaf_idx::Int,
+                                source_box_idx::Int,
+                                contours::AbstractVector{PVContour{T}},
+                                flat_indices::Vector{Int},
+                                kernel::AbstractKernel,
+                                domain::AbstractDomain,
+                                ewald_cache) where {T}
+    target_box = tree.boxes[target_leaf_idx]
+    source_box = tree.boxes[source_box_idx]
+    center = target_box.center
+
+    if source_box_idx in tree.near_lists[target_leaf_idx] || !_treecode_accepts(target_box, source_box)
+        for target_seg_idx in target_box.segment_range
+            flat_idx = flat_indices[target_seg_idx]
+            ci_t, ni_t = tree.sorted_segments[target_seg_idx]
+            x = contours[ci_t].nodes[ni_t]
+            vel[flat_idx] = vel[flat_idx] + _box_direct_velocity(
+                tree, contours, source_box, kernel, domain, x, ewald_cache)
+        end
+        return nothing
+    end
+
+    h = max(target_box.half_width / 2, sqrt(eps(T)))
+    ex = SVector{2,T}(h, zero(T))
+    ey = SVector{2,T}(zero(T), h)
+
+    v0 = _box_direct_velocity(tree, contours, source_box, kernel, domain, center, ewald_cache)
+    vxp = _box_direct_velocity(tree, contours, source_box, kernel, domain, center + ex, ewald_cache)
+    vxm = _box_direct_velocity(tree, contours, source_box, kernel, domain, center - ex, ewald_cache)
+    vyp = _box_direct_velocity(tree, contours, source_box, kernel, domain, center + ey, ewald_cache)
+    vym = _box_direct_velocity(tree, contours, source_box, kernel, domain, center - ey, ewald_cache)
+
+    j11 = (vxp[1] - vxm[1]) / (2h)
+    j21 = (vxp[2] - vxm[2]) / (2h)
+    j12 = (vyp[1] - vym[1]) / (2h)
+    j22 = (vyp[2] - vym[2]) / (2h)
+
+    for target_seg_idx in target_box.segment_range
+        flat_idx = flat_indices[target_seg_idx]
+        ci_t, ni_t = tree.sorted_segments[target_seg_idx]
+        x = contours[ci_t].nodes[ni_t]
+        dx = x - center
+        vel[flat_idx] = vel[flat_idx] + SVector{2,T}(
+            v0[1] + j11 * dx[1] + j12 * dx[2],
+            v0[2] + j21 * dx[1] + j22 * dx[2],
+        )
+    end
+
+    return nothing
+end
+
+function _treecode_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+    contours = prob.contours
+    N = total_nodes(prob)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    fill!(vel, zero(SVector{2,T}))
+    isempty(contours) && return vel
+
+    tree = build_fmm_tree(contours)
+    kernel = prob.kernel
+    domain = prob.domain
+    ewald = _prefetch_ewald(domain, kernel)
+
+    offsets = Vector{Int}(undef, length(contours) + 1)
+    offsets[1] = 0
+    for ci in eachindex(contours)
+        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+    end
+
+    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
+    for seg_idx in eachindex(tree.sorted_segments)
+        ci, ni = tree.sorted_segments[seg_idx]
+        flat_indices[seg_idx] = offsets[ci] + ni
+    end
+
+    Threads.@threads for li_idx in eachindex(tree.leaf_indices)
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        stack = Int[1]
+        while !isempty(stack)
+            source_box_idx = pop!(stack)
+            source_box = tree.boxes[source_box_idx]
+            if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
+               _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
+                _treecode_box_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                       contours, flat_indices, kernel, domain, ewald)
+            else
+                for child_idx in source_box.children
+                    child_idx == 0 || push!(stack, child_idx)
+                end
+            end
+        end
+    end
+
+    return vel
+end
+
 """
     _near_field!(vel, tree, contours, kernel, domain, ewald_cache)
 
