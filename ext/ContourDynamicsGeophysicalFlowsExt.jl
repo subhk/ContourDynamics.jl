@@ -283,6 +283,9 @@ function ContourDynamics.gridfield_from_contours(prob::ContourProblem{K,D,T},
     return field
 end
 
+# Ray-casting point-in-polygon test.  Division by (nodes[j][2] - nodes[i][2])
+# is safe: the short-circuit `&&` ensures the denominator is nonzero because
+# the first condition requires the two y-values to straddle p[2].
 function _point_in_polygon(p::SVector{2,T}, nodes::Vector{SVector{2,T}}) where {T}
     n = length(nodes)
     inside = false
