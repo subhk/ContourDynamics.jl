@@ -61,4 +61,35 @@ using StaticArrays
         s0 = repr("text/plain", c0)
         @test occursin("0 nodes", s0)
     end
+
+    @testset "ContourProblem show" begin
+        nodes = [SVector{2,Float64}(cos(2π*k/32), sin(2π*k/32)) for k in 0:31]
+        c = PVContour(nodes, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        s = repr("text/plain", prob)
+        @test occursin("ContourProblem", s)
+        @test occursin("kernel: EulerKernel", s)
+        @test occursin("domain: UnboundedDomain", s)
+        @test occursin("contours: 1 PVContour{Float64}", s)
+        @test occursin("└──", s)
+        @test occursin("32 nodes", s)
+
+        # Compact form
+        sc = repr(prob)
+        @test sc == "ContourProblem{EulerKernel, UnboundedDomain, Float64}"
+
+        # Empty contours
+        prob0 = ContourProblem(EulerKernel(), UnboundedDomain(), PVContour{Float64}[])
+        s0 = repr("text/plain", prob0)
+        @test occursin("contours: 0 PVContour{Float64}", s0)
+        @test !occursin("└── ", split(s0, "contours")[end])  # no sub-tree for empty
+
+        # Many contours (test truncation)
+        cs = [PVContour([SVector{2,Float64}(cos(2π*k/8), sin(2π*k/8)) for k in 0:7], Float64(i))
+              for i in 1:7]
+        prob_many = ContourProblem(EulerKernel(), UnboundedDomain(), cs)
+        s_many = repr("text/plain", prob_many)
+        @test occursin("contours: 7 PVContour{Float64}", s_many)
+        @test occursin("… and 3 more", s_many)
+    end
 end
