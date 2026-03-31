@@ -31,8 +31,8 @@ prob = ContourProblem(EulerKernel(), UnboundedDomain(), [contour])
 
 # Evolve with RK4 time stepping and contour surgery
 stepper = RK4Stepper(0.01, total_nodes(prob))
-params = SurgeryParams{Float64}()
-evolve!(prob, stepper, params; nsteps=1000, surgery_interval=10)
+params = SurgeryParams(0.002, 0.01, 0.2, 1e-6, 10)
+evolve!(prob, stepper, params; nsteps=1000)
 
 # Diagnostics — computed analytically from contour geometry
 energy(prob)            # kinetic energy
@@ -52,7 +52,7 @@ angular_momentum(prob)  # angular momentum
 | `SQGKernel(δ)` | G(r) = -1/(2π√(r²+δ²)) | Surface QG (fractional Laplacian) |
 | `MultiLayerQGKernel(Ld, C)` | Eigenmode decomposition | N-layer QG with coupling matrix C |
 
-The Euler kernel uses an exact antiderivative for the segment integral (no quadrature). The QG kernel uses singular subtraction: the log singularity is handled analytically (same as Euler), and the smooth remainder K₀(r/Ld) + log(r/Ld) is integrated via 5-point Gauss-Legendre quadrature.
+The Euler kernel uses an exact antiderivative for the segment integral (no quadrature). The QG kernel uses singular subtraction: the log singularity is handled analytically (same as Euler), and the smooth remainder `K₀(r/Ld) + log(r)` is integrated via 5-point Gauss-Legendre quadrature.
 
 ### Contour Surgery
 
@@ -77,7 +77,7 @@ All diagnostics are computed from contour geometry using Green's theorem — no 
 | `centroid(c)` | Centroid of a contour |
 | `ellipse_moments(c)` | Aspect ratio and orientation angle |
 | `circulation(prob)` | Total circulation Γ = Σ qᵢ Aᵢ |
-| `enstrophy(prob)` | Enstrophy Z = Σ qᵢ² Aᵢ |
+| `enstrophy(prob)` | Enstrophy diagnostic from contour geometry |
 | `energy(prob)` | Kinetic energy via double boundary integral |
 | `angular_momentum(prob)` | Angular momentum |
 
@@ -139,7 +139,7 @@ c2 = PVContour([SVector(R*cos(θ) + sep/2, R*sin(θ)) for θ in range(0, 2π, 12
 
 prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
 stepper = RK4Stepper(0.01, total_nodes(prob))
-params = SurgeryParams{Float64}()
+params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 5)
 
 for step in 1:500
     timestep!(prob, stepper)
