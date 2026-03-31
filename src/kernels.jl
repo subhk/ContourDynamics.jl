@@ -26,6 +26,14 @@
     return (nodes, weights)
 end
 
+# 3-point Gauss-Legendre nodes and weights on [-1,1].
+@inline function _gl3_nodes_weights(::Type{T}) where {T<:AbstractFloat}
+    n1 = sqrt(T(3)/T(5))
+    nodes = SVector{3,T}(-n1, zero(T), n1)
+    weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
+    return (nodes, weights)
+end
+
 """
     segment_velocity(::EulerKernel, ::UnboundedDomain, x, a, b)
 
@@ -101,17 +109,19 @@ function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
     ewald = _prefetch_ewald(domain, kernel)
 
+    # Prefix-sum array for O(log n) flat-index → (contour, local) mapping.
+    offsets = Vector{Int}(undef, n_contours + 1)
+    offsets[1] = 0
+    for ci in 1:n_contours
+        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+    end
+
     # Thread over target nodes — each node accumulates its velocity independently.
-    # We find the contour index via a linear scan (allocation-free, fast for
-    # typical contour counts which are much smaller than the total node count).
     @inbounds Threads.@threads for i in 1:N
-        # Linear scan to map flat index i → (contour index, local index)
-        ci = 1
-        local_i = i
-        while ci < n_contours && local_i > nnodes(contours[ci])
-            local_i -= nnodes(contours[ci])
-            ci += 1
-        end
+        # Binary search to map flat index i → (contour index, local index)
+        ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
+        ci = clamp(ci, 1, n_contours)
+        local_i = i - offsets[ci]
         xi = contours[ci].nodes[local_i]
 
         v = zero(SVector{2,T})
