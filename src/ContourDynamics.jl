@@ -12,6 +12,7 @@ include("kernels.jl")
 include("ewald.jl")
 include("diagnostics.jl")
 include("timesteppers.jl")
+include("show.jl")
 
 export AbstractKernel, EulerKernel, QGKernel, SQGKernel, MultiLayerQGKernel
 export PVContour, nnodes, is_spanning, next_node, beta_staircase
