@@ -10,8 +10,10 @@ Falls back to a plain serial loop otherwise, avoiding thread-spawn overhead.
 """
 macro _maybe_threads(cond, loop)
     @assert loop.head === :for
-    threaded = esc(:(Threads.@threads $loop))
-    serial = esc(loop)
+    # Wrap loop body in @inbounds so it propagates into threaded tasks
+    inbounds_loop = Expr(:for, loop.args[1], Expr(:macrocall, Symbol("@inbounds"), nothing, loop.args[2]))
+    threaded = esc(:(Threads.@threads $inbounds_loop))
+    serial = esc(inbounds_loop)
     quote
         if $(esc(cond))
             $threaded
@@ -204,10 +206,10 @@ function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     inv4pi = one(T) / (4 * T(π))
     for ci in contours
         nci = nnodes(ci)
-        nci < 2 && continue
+        nci < 3 && continue
         for cj in contours
             ncj = nnodes(cj)
-            ncj < 2 && continue
+            ncj < 3 && continue
             E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj)
         end
     end
@@ -226,7 +228,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     self_seg_const = 4 * log(T(2)) - T(6)  # precompute constant part
     # Thread over outer segments, each thread accumulates a partial sum
     partial = zeros(T, nci)
-    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
+    @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -253,7 +255,11 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
                     quad = zero(T)
                 end
             else
-                # 3×3 Gauss-Legendre quadrature over both segments
+                # 3×3 Gauss-Legendre quadrature over both segments.
+                # Use max(r2, eps(T)) instead of skipping near-zero r2:
+                # adjacent segments share a node where log(r²) diverges,
+                # but the integral is finite (integrable singularity).
+                # Clamping avoids log(0) while preserving the contribution.
                 quad = zero(T)
                 for qi in 1:3
                     pi_pt = midi + g_nodes[qi] * half_dsi
@@ -261,8 +267,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
                         pj_pt = midj + g_nodes[qj] * half_dsj
                         dx = pi_pt[1] - pj_pt[1]
                         dy = pi_pt[2] - pj_pt[2]
-                        r2 = dx^2 + dy^2
-                        r2 < eps(T) && continue
+                        r2 = max(dx^2 + dy^2, eps(T))
                         quad += g_weights[qi] * g_weights[qj] * log(r2) / 2
                     end
                 end
@@ -280,9 +285,9 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     delta = prob.kernel.delta
     E = zero(T)
     for ci in contours
-        nnodes(ci) < 2 && continue
+        nnodes(ci) < 3 && continue
         for cj in contours
-            nnodes(cj) < 2 && continue
+            nnodes(cj) < 3 && continue
             E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta)
         end
     end
@@ -299,7 +304,7 @@ function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) 
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
     partial = zeros(T, nci)
-    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
+    @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -338,9 +343,9 @@ function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     E = zero(T)
     inv4pi = one(T) / (4 * T(π))
     for ci in contours
-        nnodes(ci) < 2 && continue
+        nnodes(ci) < 3 && continue
         for cj in contours
-            nnodes(cj) < 2 && continue
+            nnodes(cj) < 3 && continue
             E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld)
         end
     end
@@ -359,7 +364,7 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     # Smooth limit of K₀(r/Ld) + log(r) as r→0
     k0_smooth_at_zero = log(2 * Ld) - T(Base.MathConstants.eulergamma)
     partial = zeros(T, nci)
-    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
+    @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -516,7 +521,7 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     end
 
     partial = zeros(T, nci)
-    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
+    @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -585,9 +590,9 @@ function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {
     E = zero(T)
     inv4pi = one(T) / (4 * T(π))
     for ci in contours
-        nnodes(ci) < 2 && continue
+        nnodes(ci) < 3 && continue
         for cj in contours
-            nnodes(cj) < 2 && continue
+            nnodes(cj) < 3 && continue
             E += ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain)
         end
     end
@@ -605,9 +610,9 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     kappa2 = one(T) / Ld^2
     area = 4 * prob.domain.Lx * prob.domain.Ly
     for ci in contours
-        nnodes(ci) < 2 && continue
+        nnodes(ci) < 3 && continue
         for cj in contours
-            nnodes(cj) < 2 && continue
+            nnodes(cj) < 3 && continue
             pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain)
             pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area)
             E += ci.pv * cj.pv * pair_E
@@ -625,7 +630,7 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
     partial = zeros(T, nci)
-    @inbounds @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
+    @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
         dsi = bi - ai
@@ -727,10 +732,10 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
                 abs(wj) < eps(T) && continue
                 for ci in prob.layers[li]
                     nci = nnodes(ci)
-                    nci < 2 && continue
+                    nci < 3 && continue
                     for cj in prob.layers[lj]
                         ncj = nnodes(cj)
-                        ncj < 2 && continue
+                        ncj < 3 && continue
                         if abs(lam) < eps(T) * 100
                             pair_E = _energy_contour_pair_euler(ci, cj)
                         else
@@ -768,10 +773,10 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
                 abs(wj) < eps(T) && continue
                 for ci in prob.layers[li]
                     nci = nnodes(ci)
-                    nci < 2 && continue
+                    nci < 3 && continue
                     for cj in prob.layers[lj]
                         ncj = nnodes(cj)
-                        ncj < 2 && continue
+                        ncj < 3 && continue
                         if abs(lam) < eps(T) * 100
                             pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain)
                         else
