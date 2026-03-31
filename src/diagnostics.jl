@@ -146,6 +146,12 @@ Enstrophy `½ ∑ qᵢ² Aᵢ` of a [`ContourProblem`](@ref) or
 Uses signed area `Aᵢ` from the shoelace formula (positive for CCW, negative
 for CW contours), so contributions from inner boundaries are subtracted.
 Spanning contours are excluded (see [`circulation`](@ref)).
+
+!!! warning
+    This diagnostic is exact when contours encode disjoint PV regions through
+    their signed areas, but it does not reconstruct the fully squared piecewise
+    PV field for arbitrary nested multi-jump contour sets. In those cases the
+    missing cross-terms make the result only approximate.
 """
 function enstrophy(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
