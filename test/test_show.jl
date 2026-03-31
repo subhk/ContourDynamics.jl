@@ -92,4 +92,31 @@ using StaticArrays
         @test occursin("contours: 7 PVContour{Float64}", s_many)
         @test occursin("… and 3 more", s_many)
     end
+
+    @testset "MultiLayerContourProblem show" begin
+        Ld = SVector(1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
+        kernel = MultiLayerQGKernel(Ld, coupling)
+
+        c1 = PVContour([SVector{2,Float64}(cos(2π*k/32), sin(2π*k/32)) for k in 0:31], 1.0)
+        c2 = PVContour([SVector{2,Float64}(0.5cos(2π*k/16), 0.5sin(2π*k/16)) for k in 0:15], -1.0)
+        prob = MultiLayerContourProblem(kernel, UnboundedDomain(), ([c1], [c2]))
+
+        s = repr("text/plain", prob)
+        @test occursin("MultiLayerContourProblem", s)
+        @test occursin("kernel: MultiLayerQGKernel{2, Float64}", s)
+        @test occursin("│   ├── Ld:", s)
+        @test occursin("│   └── eigenvalues:", s)
+        @test occursin("domain: UnboundedDomain", s)
+        @test occursin("layers: 2 layers", s)
+        @test occursin("Layer 1: 1 contour", s)
+        @test occursin("Layer 2: 1 contour", s)
+        @test occursin("32 nodes", s)
+        @test occursin("16 nodes", s)
+
+        # Compact form
+        sc = repr(prob)
+        @test occursin("MultiLayerContourProblem", sc)
+    end
 end
