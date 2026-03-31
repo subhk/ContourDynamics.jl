@@ -3,10 +3,10 @@
 # ── Constants ───────────────────────────────────────────────
 
 """Number of proxy (equivalent) points on the proxy surface."""
-const _FMM_PROXY_ORDER = 36
+const _FMM_PROXY_ORDER = 64
 
 """Number of check points on the check surface."""
-const _FMM_CHECK_ORDER = 72
+const _FMM_CHECK_ORDER = 128
 
 """Ratio of proxy surface radius to box half-width."""
 const _FMM_PROXY_RADIUS = 1.5
@@ -97,6 +97,10 @@ function _kernel_value(::EulerKernel, ::UnboundedDomain,
     return -log(r2) / (4 * T(pi))
 end
 
+@inline _kernel_value(kernel::EulerKernel, ::PeriodicDomain{T},
+                      x::SVector{2,T}, y::SVector{2,T}) where {T} =
+    _kernel_value(kernel, UnboundedDomain(), x, y)
+
 function _kernel_value(kernel::QGKernel{T}, ::UnboundedDomain,
                        x::SVector{2,T}, y::SVector{2,T}) where {T}
     dx = x[1] - y[1]
@@ -107,6 +111,10 @@ function _kernel_value(kernel::QGKernel{T}, ::UnboundedDomain,
     return besselk(0, r / kernel.Ld) / (2 * T(pi))
 end
 
+@inline _kernel_value(kernel::QGKernel{T}, ::PeriodicDomain{T},
+                      x::SVector{2,T}, y::SVector{2,T}) where {T} =
+    _kernel_value(kernel, UnboundedDomain(), x, y)
+
 function _kernel_value(kernel::SQGKernel{T}, ::UnboundedDomain,
                        x::SVector{2,T}, y::SVector{2,T}) where {T}
     dx = x[1] - y[1]
@@ -114,6 +122,10 @@ function _kernel_value(kernel::SQGKernel{T}, ::UnboundedDomain,
     r2 = dx * dx + dy * dy
     return -one(T) / (2 * T(pi) * sqrt(r2 + kernel.delta^2))
 end
+
+@inline _kernel_value(kernel::SQGKernel{T}, ::PeriodicDomain{T},
+                      x::SVector{2,T}, y::SVector{2,T}) where {T} =
+    _kernel_value(kernel, UnboundedDomain(), x, y)
 
 # ── Kernel matrix construction ─────────────────────────────
 
@@ -240,15 +252,19 @@ function _s2m!(
         box = tree.boxes[leaf]
         level = box.level
 
-        # Check surface points for this leaf
-        check_pts = _check_points(box.center, box.half_width, p_check)
+        # Check surfaces for this leaf. Using two radii constrains the exterior
+        # harmonic continuation much better than a single collocation circle.
+        check_pts_inner = _check_points(box.center, box.half_width, p_check)
+        check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+        check_pts = vcat(check_pts_inner, check_pts_outer)
 
         # Evaluate velocity from all segments in this box at the check points
-        vel_check_x = Vector{T}(undef, p_check)
-        vel_check_y = Vector{T}(undef, p_check)
+        n_check = length(check_pts)
+        vel_check_x = Vector{T}(undef, n_check)
+        vel_check_y = Vector{T}(undef, n_check)
 
         seg_range = box.segment_range
-        @inbounds for ic in 1:p_check
+        @inbounds for ic in 1:n_check
             xc = check_pts[ic]
             vx = zero(T)
             vy = zero(T)
@@ -265,10 +281,22 @@ function _s2m!(
             vel_check_y[ic] = vy
         end
 
-        # Apply pseudoinverse to get equivalent strengths
-        pinv = ops[level + 1].check_to_proxy_pinv
-        strengths_x = pinv * vel_check_x   # length p
-        strengths_y = pinv * vel_check_y   # length p
+        # Fit the equivalent-source strengths directly for this leaf.
+        # The precomputed truncated pseudoinverse proved too fragile for the
+        # current proxy setup and significantly degraded even single-box S2M
+        # accuracy.
+        proxy_pts = _proxy_points(box.center, box.half_width, p)
+        K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+
+        # Each velocity component decays at infinity, so the equivalent
+        # log-kernel source strengths must have zero net charge. Without this
+        # constraint, the least-squares fit can reproduce the check circle while
+        # polluting the far field with an unphysical logarithmic monopole.
+        K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+        rhs_x = vcat(vel_check_x, zero(T))
+        rhs_y = vcat(vel_check_y, zero(T))
+        strengths_x = K_aug \ rhs_x
+        strengths_y = K_aug \ rhs_y
 
         # Store as vector of SVector{2,T}
         equiv = proxy_data[leaf].equiv_strengths
