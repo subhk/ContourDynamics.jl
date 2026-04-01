@@ -42,14 +42,14 @@ vortex = PVContour(nodes, T(pv_vortex))
 # Combine: staircase contours + vortex patch
 all_contours = vcat(staircase, [vortex])
 kernel = QGKernel(T(Ld))
-prob = ContourProblem(kernel, domain, all_contours)
+prob = ContourProblem(kernel, domain, all_contours; dev=CPU())
 
 println("Total contours: $(length(prob.contours)), total nodes: $(total_nodes(prob))")
 
 # --- Time stepping ---
 dt = 0.005
 nsteps = 400
-stepper = RK4Stepper(dt, total_nodes(prob))
+stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
 surgery_params = SurgeryParams(T(0.02), T(0.01), T(0.3), T(1e-6), nsteps + 1)
 
 println("\nRunning $nsteps steps (dt=$dt), saving every t=0.5...")
