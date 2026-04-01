@@ -196,7 +196,7 @@ struct PeriodicDomain{T<:AbstractFloat} <: AbstractDomain
     Lx::T
     Ly::T
     function PeriodicDomain(Lx::T, Ly::T) where {T<:AbstractFloat}
-        Lx > zero(T) && Ly > zero(T) || throw(ArgumentError("Domain half-widths must be positive"))
+        (Lx > zero(T) && Ly > zero(T)) || throw(ArgumentError("Domain half-widths must be positive"))
         new{T}(Lx, Ly)
     end
 end
