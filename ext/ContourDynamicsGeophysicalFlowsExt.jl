@@ -5,9 +5,10 @@ using StaticArrays
 # Note: GeophysicalFlows triggers this extension but no symbols from it are used directly.
 # The extension provides conversion between grid fields and contour representations.
 
-function ContourDynamics.contours_from_gridfield(grid_pv::AbstractMatrix{T},
-                                                  levels::AbstractVector{T};
-                                                  grid=nothing) where {T}
+function ContourDynamics.contours_from_gridfield(grid_pv::AbstractMatrix{T1},
+                                                  levels::AbstractVector{T2};
+                                                  grid=nothing) where {T1<:Real, T2<:Real}
+    T = promote_type(T1, T2)
     nx, ny = size(grid_pv)
     contours = PVContour{T}[]
 
