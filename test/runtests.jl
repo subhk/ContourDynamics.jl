@@ -419,4 +419,16 @@ include("test_utils.jl")
         @test is_spanning(remeshed)
         @test remeshed.wrap == staircase[1].wrap
     end
+
+    # Extension tests (only run when deps are available)
+    if haskey(Base.loaded_modules, Base.PkgId(Base.UUID("033835bb-8acc-5ee8-8aae-3f567f8a3819"), "JLD2"))
+        include("test_jld2.jl")
+    else
+        try
+            using JLD2
+            include("test_jld2.jl")
+        catch e
+            @warn "JLD2 not available — skipping JLD2 extension tests" exception=e
+        end
+    end
 end
