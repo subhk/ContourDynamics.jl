@@ -30,12 +30,12 @@ c2 = PVContour(circular_nodes(+sep / 2, 0.0, R, N), pv)
 
 kernel = EulerKernel()
 domain = UnboundedDomain()
-prob = ContourProblem(kernel, domain, [c1, c2])
+prob = ContourProblem(kernel, domain, [c1, c2]; dev=CPU())
 
 # --- Time integration with surgery + file output ---
 dt = 0.01
 surgery_params = SurgeryParams(0.005, 0.02, 0.2, 1e-6, 5)
-stepper = RK4Stepper(dt, total_nodes(prob))
+stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
 nsteps = 500
 
 println("Vortex merger: 2 patches, $(2N) total nodes")
