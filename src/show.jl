@@ -84,8 +84,8 @@ _type_name(::Type{T}) where {T} = string(nameof(T))
 function _show_contour_list(io::IO, contours::Vector{PVContour{T}}, pad::String) where {T}
     nc = length(contours)
     nc == 0 && return
-    n_show = min(nc, _MAX_CONTOURS_SHOWN - 1)
-    truncated = nc > _MAX_CONTOURS_SHOWN - 1
+    n_show = min(nc, _MAX_CONTOURS_SHOWN)
+    truncated = nc > _MAX_CONTOURS_SHOWN
     for i in 1:n_show
         is_last = !truncated && i == nc
         println(io)
