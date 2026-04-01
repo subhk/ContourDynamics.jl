@@ -4,6 +4,10 @@
 # via contour surgery. This demonstrates the complete contour dynamics
 # + surgery pipeline with JLD2 output.
 
+# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
+#   prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
+#   stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+
 using ContourDynamics
 using StaticArrays
 using JLD2
