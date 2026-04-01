@@ -4,6 +4,7 @@ using StaticArrays
 using LinearAlgebra
 using SpecialFunctions
 
+include("device.jl")
 include("types.jl")
 include("domains.jl")
 include("contours.jl")
@@ -14,10 +15,12 @@ include("fmm/tree.jl")
 include("fmm/proxy.jl")
 include("fmm/translations.jl")
 include("fmm/fmm.jl")
+include("gpu_kernels.jl")
 include("diagnostics.jl")
 include("timesteppers.jl")
 include("show.jl")
 
+export AbstractDevice, CPU, GPU, device_array, device_zeros, to_cpu, to_device
 export AbstractKernel, EulerKernel, QGKernel, SQGKernel, MultiLayerQGKernel
 export PVContour, nnodes, is_spanning, next_node, beta_staircase
 export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
