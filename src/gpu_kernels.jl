@@ -41,10 +41,11 @@ function pack_segments(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {
             idx += 1
         end
     end
+    n_seg = idx - 1
     SegmentData(
-        to_device(dev, ax), to_device(dev, ay),
-        to_device(dev, bx), to_device(dev, by),
-        to_device(dev, pv_vec)
+        to_device(dev, ax[1:n_seg]), to_device(dev, ay[1:n_seg]),
+        to_device(dev, bx[1:n_seg]), to_device(dev, by[1:n_seg]),
+        to_device(dev, pv_vec[1:n_seg])
     )
 end
 
@@ -59,13 +60,16 @@ function pack_targets(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K
     ty = Vector{T}(undef, N)
     idx = 1
     for c in prob.contours
-        for j in 1:nnodes(c)
+        nc = nnodes(c)
+        nc < 2 && continue
+        for j in 1:nc
             tx[idx] = c.nodes[j][1]
             ty[idx] = c.nodes[j][2]
             idx += 1
         end
     end
-    (to_device(dev, tx), to_device(dev, ty))
+    n_targets = idx - 1
+    (to_device(dev, tx[1:n_targets]), to_device(dev, ty[1:n_targets]))
 end
 
 # Inline Euler antiderivative — scalar version for GPU (no SVector).
@@ -86,7 +90,7 @@ end
 @kernel function _euler_velocity_ka!(vel_x, vel_y,
                                       target_x, target_y,
                                       seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
-                                      @Const(n_seg))
+                                      n_seg)
     i = @index(Global)
     T = eltype(vel_x)
     xi = target_x[i]
