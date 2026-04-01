@@ -153,7 +153,7 @@
 
         # Total area of daughters should approximate the original
         area_after = sum(abs(vortex_area(ci)) for ci in contours)
-        @test area_after ≈ area_before rtol=0.3
+        @test area_after ≈ area_before rtol=0.1
     end
 
     @testset "Orientation Preserved After Surgery" begin
