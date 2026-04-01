@@ -47,7 +47,7 @@ Computes the contour dynamics integral analytically:
 The velocity direction is along `ds = b - a`, not rotated.
 """
 # Antiderivative for the Euler segment velocity integral.
-# F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*atan(u, h)
+# F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*arctan(u/h)
 @inline function _euler_antideriv(u::T, h::T, h_sq::T) where {T}
     r2 = u * u + h_sq
     if r2 < eps(T)^2
@@ -55,11 +55,9 @@ The velocity direction is along `ds = b - a`, not rotated.
     end
     val = u * log(r2) - 2 * u
     if abs(h) > eps(T)
-        val += 2 * h * atan(u, h)
+        val += 2 * h * atan(u / h)
     end
     # When h ≈ 0 the atan term vanishes: lim_{h→0} 2h·atan(u/h) = 0.
-    # For very small h (0 < |h| ≤ eps(T)), the product 2h·atan(u,h) may produce
-    # O(eps) noise; this is acceptable for Float64 but could matter at extended precision.
     return val
 end
 
