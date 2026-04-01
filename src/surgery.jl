@@ -371,9 +371,9 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
 
     # Daughter 1: nodes lo → hi (both stitch nodes included)
     nodes1 = c.nodes[lo:hi]
-    # Daughter 2: nodes hi → lo wrapping around (hi included, lo excluded
-    # to avoid duplicating the stitch node that already closes the loop)
-    nodes2 = vcat(c.nodes[hi:nc], c.nodes[1:lo-1])
+    # Daughter 2: nodes hi → lo wrapping around (both stitch nodes included;
+    # the closing segments hi→lo and lo→hi form the reconnection edges)
+    nodes2 = vcat(c.nodes[hi:nc], c.nodes[1:lo])
 
     if length(nodes1) >= 3 && length(nodes2) >= 3
         contours[ci] = PVContour(nodes1, c.pv)
