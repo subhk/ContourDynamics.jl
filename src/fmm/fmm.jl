@@ -304,39 +304,60 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
     Threads.@threads for li_idx in 1:length(leaves)
         leaf = leaves[li_idx]
         box = tree.boxes[leaf]
-        check_pts = _check_points(box.center, box.half_width, p_check)
 
-        vel_check_x = zeros(T, p_check)
-        vel_check_y = zeros(T, p_check)
+        # Dual check surfaces (consistent with _s2m!)
+        check_pts_inner = _check_points(box.center, box.half_width, p_check)
+        check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+        check_pts = vcat(check_pts_inner, check_pts_outer)
+        n_check = length(check_pts)
 
-        for seg_idx in box.segment_range
-            ci, ni = tree.sorted_segments[seg_idx]
-            # Determine which layer this contour belongs to
-            layer = 1
-            for l in 1:NL
-                if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
-                    layer = l
-                    break
+        vel_check_x = Vector{T}(undef, n_check)
+        vel_check_y = Vector{T}(undef, n_check)
+
+        @inbounds for ic in 1:n_check
+            xc = check_pts[ic]
+            vx = zero(T)
+            vy = zero(T)
+            for seg_idx in box.segment_range
+                ci, ni = tree.sorted_segments[seg_idx]
+                # Determine which layer this contour belongs to
+                layer = 1
+                for l in 1:NL
+                    if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
+                        layer = l
+                        break
+                    end
                 end
-            end
-            source_weight = P_inv[mode, layer]
-            abs(source_weight) < eps(T) && continue
+                source_weight = P_inv[mode, layer]
+                abs(source_weight) < eps(T) && continue
 
-            c = all_contours[ci]
-            a = c.nodes[ni]
-            b = next_node(c, ni)
-            weighted_pv = source_weight * c.pv
-
-            for k in 1:p_check
-                v = weighted_pv * segment_velocity(kernel, domain, check_pts[k], a, b, nothing)
-                vel_check_x[k] += v[1]
-                vel_check_y[k] += v[2]
+                c = all_contours[ci]
+                a = c.nodes[ni]
+                b = next_node(c, ni)
+                v = source_weight * c.pv * segment_velocity(kernel, domain, xc, a, b, nothing)
+                vx += v[1]
+                vy += v[2]
             end
+            vel_check_x[ic] = vx
+            vel_check_y[ic] = vy
         end
 
-        pinv = ops[box.level + 1].check_to_proxy_pinv
-        str_x = pinv * vel_check_x
-        str_y = pinv * vel_check_y
+        # Fit equivalent-source strengths (same approach as _s2m!)
+        proxy_pts = _proxy_points(box.center, box.half_width, p)
+        K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+
+        if kernel isa EulerKernel
+            K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+            rhs_x = vcat(vel_check_x, zero(T))
+            rhs_y = vcat(vel_check_y, zero(T))
+        else
+            K_aug = K_cp
+            rhs_x = vel_check_x
+            rhs_y = vel_check_y
+        end
+        str_x = K_aug \ rhs_x
+        str_y = K_aug \ rhs_y
+
         equiv = proxy_data[leaf].equiv_strengths
         for k in 1:p
             equiv[k] = SVector{2,T}(str_x[k], str_y[k])
