@@ -153,6 +153,8 @@ end
     resize_buffers!(stepper::RK4Stepper, prob::ContourProblem)
 
 Resize RK4 work arrays after surgery changes node count.
+Stepper buffers are always CPU Vector (even for GPU problems), since the GPU
+velocity path handles its own device allocation internally.
 """
 function resize_buffers!(stepper::RK4Stepper{T}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
@@ -170,6 +172,7 @@ end
 
 Resize leapfrog work arrays after surgery. Resets initialization flag
 since node correspondence is lost.
+Stepper buffers are always CPU Vector (even for GPU problems).
 """
 function resize_buffers!(stepper::LeapfrogStepper{T}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
