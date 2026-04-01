@@ -2,6 +2,12 @@
 
 Complete runnable scripts demonstrating ContourDynamics.jl capabilities. Full scripts with file output are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory.
 
+!!! tip "GPU Acceleration"
+    All examples below run on CPU by default. To use GPU acceleration, add
+    `using CUDA` and pass `dev=GPU()` to `ContourProblem` and `RK4Stepper`
+    constructors. The velocity computation will run on the GPU while surgery
+    stays on CPU.
+
 ## Vortex Merger
 
 Two co-rotating circular vortex patches placed close enough to merge via contour surgery. When the separation is less than about 3.3 radii, the patches exchange filaments and eventually merge into a single vortex.
