@@ -110,9 +110,8 @@ function _m2m_upward!(
     # (leaves at max_level have their strengths set by S2M;
     #  internal nodes merge their children's strengths)
     for level in (tree.max_level - 1):-1:0
-        for bi in 1:length(boxes)
+        for bi in tree.level_boxes[level + 1]
             box = boxes[bi]
-            box.level == level || continue
             box.is_leaf && continue
 
             # Initialize parent equiv_strengths if empty
@@ -199,6 +198,10 @@ function _m2l!(
             dy = round(Int, (source_box.center[2] - box.center[2]) / box_width)
 
             # Look up precomputed M2L matrix
+            if !haskey(level_m2l.operators, (dx, dy))
+                @warn "M2L: unexpected displacement ($dx,$dy) at level $level for box $bi — skipping" maxlog=5
+                continue
+            end
             m2l_mat = level_m2l.operators[(dx, dy)]
 
             # Extract components
@@ -225,8 +228,8 @@ end
 
 Top-down L2L push: propagate local strengths from parents to children.
 
-Uses the transpose of the M2M `child_to_parent` operator as the L2L operator:
-    `L2L_q = child_to_parent[q]'`
+Uses the precomputed `parent_to_child` L2L operators which correctly map
+parent local strengths to child local strengths in the KIFMM framework.
 """
 function _l2l_downward!(
     proxy_data::Vector{ProxyData{T}},
@@ -262,8 +265,8 @@ function _l2l_downward!(
                     fill!(child_local, zero(SVector{2,T}))
                 end
 
-                # L2L operator is transpose of M2M child_to_parent
-                l2l_mat = ops[level + 2].child_to_parent[q]'
+                # L2L operator: parent local → child local (precomputed independently)
+                l2l_mat = ops[level + 2].parent_to_child[q]
 
                 child_x = l2l_mat * parent_x
                 child_y = l2l_mat * parent_y
@@ -311,7 +314,8 @@ function _local_eval!(
     proxy_data::Vector{ProxyData{T}},
     contours::AbstractVector{PVContour{T}},
     kernel::AbstractKernel,
-    domain::AbstractDomain;
+    domain::AbstractDomain,
+    flat_indices::Vector{Int};
     p::Int = _FMM_PROXY_ORDER,
 ) where {T}
     boxes = tree.boxes
@@ -343,7 +347,7 @@ function _local_eval!(
             end
 
             # Add to velocity at the correct flat index
-            flat_idx = _node_flat_index(contours, ci, ni)
+            flat_idx = flat_indices[si]
             vel[flat_idx] = vel[flat_idx] + SVector{2,T}(vx, vy)
         end
     end
