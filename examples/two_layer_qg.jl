@@ -35,10 +35,10 @@ c_upper = PVContour(nodes, pv)
 domain = UnboundedDomain()
 
 # Layer 1 has the vortex, layer 2 is empty
-prob = MultiLayerContourProblem(kernel, domain, ([c_upper], PVContour{T}[]))
+prob = MultiLayerContourProblem(kernel, domain, ([c_upper], PVContour{T}[]); dev=CPU())
 
 dt = 0.01
-stepper = RK4Stepper(dt, total_nodes(prob))
+stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
 nsteps = 200
 
 println("\nRunning $nsteps steps (dt=$dt), saving every t=0.5...")
