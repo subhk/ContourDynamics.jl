@@ -120,13 +120,12 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
     end
 
     # Thread over target nodes — each node accumulates its velocity independently.
-    @inbounds Threads.@threads for i in 1:N
+    Threads.@threads for i in 1:N
         # Binary search to map flat index i → (contour index, local index)
         ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
         ci = clamp(ci, 1, n_contours)
         local_i = i - offsets[ci]
-        # Skip if mapping lands on a zero-node contour (degenerate case)
-        @boundscheck (1 <= local_i <= nnodes(contours[ci]) || throw(BoundsError(contours[ci].nodes, local_i)))
+        (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
         xi = contours[ci].nodes[local_i]
 
         v = zero(SVector{2,T})
