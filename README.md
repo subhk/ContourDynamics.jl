@@ -34,6 +34,11 @@ stepper = RK4Stepper(0.01, total_nodes(prob))
 params = SurgeryParams(0.002, 0.01, 0.2, 1e-6, 10)
 evolve!(prob, stepper, params; nsteps=1000)
 
+# To run on GPU instead:
+# using CUDA
+# prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
+# stepper = RK4Stepper(0.01, total_nodes(prob); dev=GPU())
+
 # Diagnostics — computed analytically from contour geometry
 energy(prob)            # kinetic energy
 circulation(prob)       # total circulation
@@ -86,6 +91,10 @@ All diagnostics are computed from contour geometry using Green's theorem — no 
 - **`RK4Stepper`** — classical 4th-order Runge-Kutta
 - **`LeapfrogStepper`** — symplectic leapfrog (2nd-order)
 - **`evolve!`** — main time loop with periodic surgery and buffer management
+
+### GPU Acceleration
+
+GPU-accelerated velocity computation via [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl). Pass `dev=GPU()` to `ContourProblem` and `RK4Stepper` to run the O(N²) velocity evaluation on an NVIDIA GPU. Contour surgery remains on CPU. Without CUDA.jl loaded, everything runs on CPU as before.
 
 ## Quasi-Geostrophic Example
 
@@ -183,6 +192,25 @@ u(x) = Σⱼ (qⱼ / 2π) ∮_Cⱼ G(|x - x'|) × dx'
 where G is the appropriate Green's function (log for Euler, K₀ for QG). This approach is exact for piecewise-constant PV distributions and avoids numerical diffusion entirely.
 
 Contour surgery (Dritschel, 1988) extends the method to long-time integrations by automatically handling topological changes — vortex merger, splitting, and filament removal — that would otherwise cause the contour to develop unresolvable complexity.
+
+## GPU Acceleration
+
+ContourDynamics.jl supports GPU-accelerated velocity computation via [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl). Pass `dev=GPU()` when constructing problems and steppers:
+
+```julia
+using ContourDynamics, CUDA
+
+contours = [PVContour(nodes, 1.0)]
+prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
+stepper = RK4Stepper(0.01, total_nodes(prob); dev=GPU())
+params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 20)
+
+evolve!(prob, stepper, params; nsteps=1000)
+```
+
+The O(N²) velocity evaluation runs on the GPU while contour surgery remains on CPU. No code changes are needed — just add `dev=GPU()`. Without CUDA.jl loaded, everything runs on CPU as before.
+
+**Requirements:** NVIDIA GPU with CUDA support, Julia 1.10+, CUDA.jl v5+.
 
 ## References
 
