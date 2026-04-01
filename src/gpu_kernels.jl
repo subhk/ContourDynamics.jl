@@ -73,7 +73,7 @@ function pack_targets(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K
 end
 
 # Inline Euler antiderivative — scalar version for GPU (no SVector).
-# F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*atan(u, h)
+# F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*arctan(u/h)
 @inline function _euler_antideriv_scalar(u::T, h::T, h_sq::T) where {T}
     r2 = u * u + h_sq
     if r2 < eps(T)^2
@@ -81,7 +81,7 @@ end
     end
     val = u * log(r2) - 2 * u
     if abs(h) > eps(T)
-        val += 2 * h * atan(u, h)
+        val += 2 * h * atan(u / h)
     end
     return val
 end
