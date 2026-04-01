@@ -32,7 +32,8 @@ struct FMMTree{T<:AbstractFloat}
     segment_midpoints::Vector{SVector{2,T}}    # midpoints parallel to sorted_segments
     leaf_indices::Vector{Int}                   # indices of leaf boxes
     interaction_lists::Vector{Vector{Int}}      # per-box M2L targets
-    near_lists::Vector{Vector{Int}}             # per-box direct neighbors
+    near_lists::Vector{Set{Int}}               # per-box direct neighbors (Set for O(1) lookup)
+    level_boxes::Vector{Vector{Int}}           # per-level box indices for O(N) iteration
     max_level::Int
 end
 
@@ -194,6 +195,7 @@ function _empty_tree(::Type{T}) where {T<:AbstractFloat}
         SVector{2,T}[],
         Int[],
         Vector{Int}[],
+        Set{Int}[],
         Vector{Int}[],
         0,
     )
@@ -325,7 +327,7 @@ Near list rule (leaves only): self + all same-level leaf boxes that are adjacent
 function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
     nboxes = length(boxes)
     interaction_lists = [Int[] for _ in 1:nboxes]
-    near_lists = [Int[] for _ in 1:nboxes]
+    near_lists = [Set{Int}() for _ in 1:nboxes]
 
     # Build level-wise index for efficient neighbor lookups
     level_boxes = [Int[] for _ in 0:max_level]
@@ -339,7 +341,7 @@ function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
             lvl = boxes[i].level
             for j in level_boxes[lvl + 1]
                 if boxes[j].is_leaf && _are_adjacent_or_self(boxes[i], boxes[j])
-                    push!(near_lists[i], j)
+                    push!(near_lists[i], j)  # Set handles deduplication
                 end
             end
         end
@@ -351,7 +353,6 @@ function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
     for b_idx in 1:nboxes
         p_idx = boxes[b_idx].parent
         p_idx == 0 && continue  # root has no parent
-        boxes[p_idx].parent == 0 && continue  # parent is root, skip
 
         p_level = boxes[p_idx].level
         # Find P's same-level neighbors (including P itself)
