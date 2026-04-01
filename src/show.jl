@@ -1,5 +1,10 @@
 using Printf
 
+# ── Device types ─────────────────────────────────────────
+
+Base.show(io::IO, ::CPU) = print(io, "CPU()")
+Base.show(io::IO, ::GPU) = print(io, "GPU()")
+
 # ── Tree-drawing helpers ────────────────────────────────
 
 _tree_prefix(is_last::Bool) = is_last ? "└── " : "├── "
@@ -73,6 +78,7 @@ function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem{K, D, T}) wh
     println(io, "ContourProblem{", _type_name(K), ", ", _type_name(D), ", $T}")
     println(io, "├── kernel: ", prob.kernel)
     println(io, "├── domain: ", prob.domain)
+    println(io, "├── device: ", prob.dev)
     nc = length(prob.contours)
     print(io, "└── contours: $nc PVContour{$T}")
     _show_contour_list(io, prob.contours, "    ")
@@ -111,6 +117,8 @@ function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem{N,
     _show_kernel_details(io, prob.kernel, "│   ")
     # Domain
     println(io, "├── domain: ", prob.domain)
+    # Device
+    println(io, "├── device: ", prob.dev)
     # Layers
     print(io, "└── layers: $N layer", N == 1 ? "" : "s")
     for i in 1:N
