@@ -59,8 +59,14 @@ end
 
 Wrap a `ContourProblem` as an `ODEProblem` for use with OrdinaryDiffEq solvers.
 
-If `surgery_params::SurgeryParams` is provided, a `PeriodicCallback` is added
-that performs contour surgery at fixed time intervals.
+Returns an `ODEProblem` when no surgery is requested.  When `surgery_params` is
+provided, returns a `NamedTuple` `(ode_prob, callback)` — pass the callback to
+`solve`:
+
+```julia
+result = to_ode_problem(prob, tspan; surgery_params=sp)
+sol = solve(result.ode_prob, RK4(); dt=0.01, adaptive=false, callback=result.callback)
+```
 
 The surgery interval is determined by:
 - `surgery_dt`: explicit time interval between surgery passes.
@@ -107,7 +113,7 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     end
     _adaptive_warned = Ref(false)
     function affect!(integrator)
-        if !_adaptive_warned[] && hasproperty(integrator.opts, :adaptive) && integrator.opts.adaptive
+        if !_adaptive_warned[] && hasfield(typeof(integrator.opts), :adaptive) && integrator.opts.adaptive
             @warn "to_ode_problem: adaptive solver detected — this is unsafe with the mutation-based RHS. Use adaptive=false or a fixed-step solver." maxlog=1
             _adaptive_warned[] = true
         end
@@ -126,7 +132,7 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     end
     cb = DiscreteCallback(condition, affect!)
 
-    return ODEProblem(rhs!, u0, tspan, prob, callback=cb)
+    return (ode_prob=ODEProblem(rhs!, u0, tspan, prob), callback=cb)
 end
 
 end # module
