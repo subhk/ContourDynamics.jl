@@ -100,6 +100,14 @@ clear_ewald_cache!
 wrap_nodes!
 ```
 
+## Device Types
+
+```@docs
+CPU
+GPU
+device_array
+```
+
 ## Internals
 
 ```@docs
