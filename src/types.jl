@@ -355,6 +355,6 @@ end
 
 function LeapfrogStepper(dt::T, n::Int; ra_coeff::Real=0.05) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, ra_coeff,
+    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, T(ra_coeff),
                     Vector{Vector{SVector{2, T}}}())
 end
