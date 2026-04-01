@@ -1,3 +1,5 @@
+using Test, ContourDynamics, StaticArrays
+
 @testset "Surgery" begin
     @testset "Filament Removal" begin
         # Create a tiny contour (area < area_min) and a normal one
