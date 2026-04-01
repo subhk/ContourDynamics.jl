@@ -351,7 +351,8 @@ Evaluate local expansion + near field for one mode and accumulate into per-layer
 velocity arrays with modal projection weights.
 """
 function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
-                            prob, P, mode, kernel, domain, NL;
+                            prob, P, mode, kernel, domain, NL,
+                            node_to_leaf::Dict{Tuple{Int,Int}, Int};
                             p=_FMM_PROXY_ORDER)
     T = eltype(tree.boxes[1].center)
 
@@ -362,9 +363,13 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
         target_contours = prob.layers[target_layer]
         vel_layer = vel[target_layer]
 
+        # Map from layer-local contour index to global (all_contours) contour index
+        ci_offset = layer_offsets[target_layer]
+
         # For each target node in this layer, evaluate both local and near field
         node_idx = 0
-        for tc in target_contours
+        for (tci, tc) in enumerate(target_contours)
+            global_ci = ci_offset + tci
             for ti in 1:nnodes(tc)
                 node_idx += 1
                 xi = tc.nodes[ti]
@@ -372,10 +377,11 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
                 v_local = zero(SVector{2,T})
                 v_near = zero(SVector{2,T})
 
-                # Find the leaf containing this target point
-                for li in tree.leaf_indices
+                # Find the leaf containing this target point via precomputed mapping
+                li = get(node_to_leaf, (global_ci, ti), 0)
+                if li > 0
                     box = tree.boxes[li]
-                    if _point_in_box(xi, box)
+                    if true  # leaf found via mapping
                         # Local expansion evaluation
                         if length(proxy_data[li].local_strengths) > 0
                             proxy_pts = _proxy_points(box.center, box.half_width, p)
