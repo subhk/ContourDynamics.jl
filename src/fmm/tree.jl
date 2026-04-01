@@ -342,14 +342,16 @@ function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
         push!(level_boxes[boxes[i].level + 1], i)  # +1 because Julia is 1-indexed
     end
 
-    # Near lists: for each leaf box, find all same-level boxes that are adjacent
+    # Near lists: for each leaf box, find all leaf boxes (any level) that are adjacent.
+    # In an adaptive tree, adjacent leaves can be at different levels.
+    all_leaves = Int[]
     for i in 1:nboxes
-        if boxes[i].is_leaf
-            lvl = boxes[i].level
-            for j in level_boxes[lvl + 1]
-                if boxes[j].is_leaf && _are_adjacent_or_self(boxes[i], boxes[j])
-                    push!(near_lists[i], j)  # Set handles deduplication
-                end
+        boxes[i].is_leaf && push!(all_leaves, i)
+    end
+    for i in all_leaves
+        for j in all_leaves
+            if _are_adjacent_or_self(boxes[i], boxes[j])
+                push!(near_lists[i], j)  # Set handles deduplication
             end
         end
     end
