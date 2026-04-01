@@ -204,18 +204,21 @@ end
 # ── Problem Structs ──────────────────────────────────────
 
 """
-    ContourProblem{K,D,T}(kernel, domain, contours)
+    ContourProblem{K,D,T,Dev}(kernel, domain, contours; dev=CPU())
 
 A single-layer contour-dynamics problem with a velocity `kernel`, computational
-`domain`, and a vector of [`PVContour`](@ref)s.
+`domain`, a vector of [`PVContour`](@ref)s, and a target `dev`ice
+([`CPU`](@ref) or [`GPU`](@ref)).
 """
-struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat}
+struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
     kernel::K
     domain::D
     contours::Vector{PVContour{T}}
-    function ContourProblem(kernel::K, domain::D, contours::Vector{PVContour{T}}) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat}
+    dev::Dev
+    function ContourProblem(kernel::K, domain::D, contours::Vector{PVContour{T}};
+                            dev::Dev=CPU()) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
-        new{K, D, T}(kernel, domain, contours)
+        new{K, D, T, Dev}(kernel, domain, contours, dev)
     end
 end
 
@@ -229,18 +232,21 @@ _check_kernel_type(::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
     Tk !== T && throw(ArgumentError("MultiLayerQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
 
 """
-    MultiLayerContourProblem{N,K,D,T}(kernel, domain, layers)
+    MultiLayerContourProblem{N,K,D,T,Dev}(kernel, domain, layers; dev=CPU())
 
 An `N`-layer contour-dynamics problem.  Each element of the `layers` tuple
-holds the contours for one layer.
+holds the contours for one layer.  The optional `dev` keyword selects the
+target device ([`CPU`](@ref) or [`GPU`](@ref)) for buffer allocation.
 """
-struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat}
+struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
     kernel::K
     domain::D
     layers::NTuple{N, Vector{PVContour{T}}}
-    function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}}) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat}
+    dev::Dev
+    function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}};
+                                      dev::Dev=CPU()) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
-        new{N, K, D, T}(kernel, domain, layers)
+        new{N, K, D, T, Dev}(kernel, domain, layers, dev)
     end
 end
 
@@ -315,46 +321,51 @@ end
 abstract type AbstractTimeStepper end
 
 """
-    RK4Stepper{T}(dt, n)
+    RK4Stepper{T,A}(dt, n; dev=CPU())
 
 Classical fourth-order Runge–Kutta time stepper with step size `dt`.
-Allocates internal buffers for `n` nodes.
+Allocates internal buffers for `n` nodes on the given `dev`ice.
 """
-struct RK4Stepper{T<:AbstractFloat} <: AbstractTimeStepper
+struct RK4Stepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: AbstractTimeStepper
     dt::T
-    k1::Vector{SVector{2, T}}
-    k2::Vector{SVector{2, T}}
-    k3::Vector{SVector{2, T}}
-    k4::Vector{SVector{2, T}}
-    nodes_buf::Vector{SVector{2, T}}  # pre-allocated buffer for original node positions
-    vel_bufs::Vector{Vector{SVector{2, T}}}  # reusable per-layer velocity buffers (multi-layer)
+    k1::A
+    k2::A
+    k3::A
+    k4::A
+    nodes_buf::A  # pre-allocated buffer for original node positions
+    vel_bufs::Vector{Vector{SVector{2, T}}}  # stays CPU (multi-layer scratch)
 end
 
-function RK4Stepper(dt::T, n::Int) where {T<:AbstractFloat}
+function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    RK4Stepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), fill(z, n),
+    ArrayType = device_array(dev)
+    buf() = fill!(ArrayType{SVector{2,T}}(undef, n), z)
+    RK4Stepper(dt, buf(), buf(), buf(), buf(), buf(),
                Vector{Vector{SVector{2, T}}}())
 end
 
 """
-    LeapfrogStepper{T}(dt, n)
+    LeapfrogStepper{T,A}(dt, n; dev=CPU(), ra_coeff=0.05)
 
 Leapfrog (second-order centred) time stepper with step size `dt`.
 The first step is bootstrapped with an RK2 midpoint half-step.
+Buffers are allocated on the given `dev`ice.
 """
-mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
+mutable struct LeapfrogStepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: AbstractTimeStepper
     dt::T
-    nodes_prev::Vector{SVector{2, T}}
-    vel_buf::Vector{SVector{2, T}}      # pre-allocated velocity buffer
-    nodes_buf::Vector{SVector{2, T}}    # pre-allocated current-nodes buffer
-    vel_mid::Vector{SVector{2, T}}      # pre-allocated bootstrap midpoint velocity buffer
+    nodes_prev::A
+    vel_buf::A      # pre-allocated velocity buffer
+    nodes_buf::A    # pre-allocated current-nodes buffer
+    vel_mid::A      # pre-allocated bootstrap midpoint velocity buffer
     initialized::Bool
     ra_coeff::T  # Robert-Asselin filter coefficient (0 = no filter)
-    vel_bufs::Vector{Vector{SVector{2, T}}}  # reusable per-layer velocity buffers (multi-layer)
+    vel_bufs::Vector{Vector{SVector{2, T}}}  # stays CPU (multi-layer scratch)
 end
 
-function LeapfrogStepper(dt::T, n::Int; ra_coeff::Real=0.05) where {T<:AbstractFloat}
+function LeapfrogStepper(dt::T, n::Int; dev::AbstractDevice=CPU(), ra_coeff::Real=0.05) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
-    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, T(ra_coeff),
+    ArrayType = device_array(dev)
+    buf() = fill!(ArrayType{SVector{2,T}}(undef, n), z)
+    LeapfrogStepper(dt, buf(), buf(), buf(), buf(), false, T(ra_coeff),
                     Vector{Vector{SVector{2, T}}}())
 end
