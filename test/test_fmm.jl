@@ -1,3 +1,5 @@
+using Test, ContourDynamics, StaticArrays
+
 @testset "FMM" begin
     @testset "Quadtree Construction" begin
         c = circular_patch(1.0, 200, 1.0)
