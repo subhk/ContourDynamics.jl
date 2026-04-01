@@ -10,10 +10,12 @@ Falls back to a plain serial loop otherwise, avoiding thread-spawn overhead.
 """
 macro _maybe_threads(cond, loop)
     @assert loop.head === :for
-    # Wrap loop body in @inbounds so it propagates into threaded tasks
+    # Inject @inbounds into the threaded path only — tasks don't inherit
+    # @inbounds from the caller scope. The serial path retains bounds
+    # checking as a safety net for catching regressions.
     inbounds_loop = Expr(:for, loop.args[1], Expr(:macrocall, Symbol("@inbounds"), nothing, loop.args[2]))
     threaded = esc(:(Threads.@threads $inbounds_loop))
-    serial = esc(inbounds_loop)
+    serial = esc(loop)
     quote
         if $(esc(cond))
             $threaded
@@ -207,9 +209,11 @@ function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     for ci in contours
         nci = nnodes(ci)
         nci < 3 && continue
+        is_spanning(ci) && continue
         for cj in contours
             ncj = nnodes(cj)
             ncj < 3 && continue
+            is_spanning(cj) && continue
             E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj)
         end
     end
@@ -286,8 +290,10 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     E = zero(T)
     for ci in contours
         nnodes(ci) < 3 && continue
+        is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
+            is_spanning(cj) && continue
             E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta)
         end
     end
@@ -344,8 +350,10 @@ function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     inv4pi = one(T) / (4 * T(π))
     for ci in contours
         nnodes(ci) < 3 && continue
+        is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
+            is_spanning(cj) && continue
             E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld)
         end
     end
@@ -591,8 +599,10 @@ function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {
     inv4pi = one(T) / (4 * T(π))
     for ci in contours
         nnodes(ci) < 3 && continue
+        is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
+            is_spanning(cj) && continue
             E += ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain)
         end
     end
@@ -611,8 +621,10 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     area = 4 * prob.domain.Lx * prob.domain.Ly
     for ci in contours
         nnodes(ci) < 3 && continue
+        is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
+            is_spanning(cj) && continue
             pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain)
             pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area)
             E += ci.pv * cj.pv * pair_E
@@ -733,9 +745,11 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
                 for ci in prob.layers[li]
                     nci = nnodes(ci)
                     nci < 3 && continue
+                    is_spanning(ci) && continue
                     for cj in prob.layers[lj]
                         ncj = nnodes(cj)
                         ncj < 3 && continue
+                        is_spanning(cj) && continue
                         if abs(lam) < eps(T) * 100
                             pair_E = _energy_contour_pair_euler(ci, cj)
                         else
@@ -774,9 +788,11 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
                 for ci in prob.layers[li]
                     nci = nnodes(ci)
                     nci < 3 && continue
+                    is_spanning(ci) && continue
                     for cj in prob.layers[lj]
                         ncj = nnodes(cj)
                         ncj < 3 && continue
+                        is_spanning(cj) && continue
                         if abs(lam) < eps(T) * 100
                             pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain)
                         else
