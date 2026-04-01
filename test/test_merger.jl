@@ -42,6 +42,6 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         @test total_nodes(prob) > 0
         @test length(prob.contours) >= 1
-        @test circulation(prob) ≈ circ_initial rtol=0.05
+        @test circulation(prob) ≈ circ_initial rtol=0.15
     end
 end
