@@ -105,17 +105,19 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     function condition(u, t, integrator)
         return t >= next_surgery_time[]
     end
+    _adaptive_warned = Ref(false)
     function affect!(integrator)
+        if !_adaptive_warned[] && hasproperty(integrator.opts, :adaptive) && integrator.opts.adaptive
+            @warn "to_ode_problem: adaptive solver detected — this is unsafe with the mutation-based RHS. Use adaptive=false or a fixed-step solver." maxlog=1
+            _adaptive_warned[] = true
+        end
         ContourDynamics.unflatten_nodes!(integrator.p, integrator.u)
         surgery!(integrator.p, surgery_params)
         new_u = ContourDynamics.flatten_nodes(integrator.p)
         if length(new_u) != length(integrator.u)
             resize!(integrator, length(new_u))
-            # Zero-fill before copyto! so that any internal caches the
-            # integrator derives from u start from a clean state.
-            fill!(integrator.u, zero(eltype(integrator.u)))
         end
-        copyto!(integrator.u, new_u)
+        copyto!(integrator.u, new_u)  # overwrites all elements; no zero-fill needed
         # Advance past the current time so that large adaptive steps
         # that skip multiple intervals don't leave the threshold behind.
         while next_surgery_time[] <= integrator.t
