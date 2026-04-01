@@ -28,6 +28,11 @@ preserves its geometry across periodic seams; wrapping nodes independently does 
 """
 @inline function contour_periodic_shift(c::PVContour, domain::PeriodicDomain)
     ref = centroid(c)
+    # centroid returns zero for degenerate (near-zero-area) contours;
+    # fall back to node mean so the contour is still wrapped correctly.
+    if iszero(ref) && !isempty(c.nodes)
+        ref = sum(c.nodes) / length(c.nodes)
+    end
     return wrap_node(ref, domain) - ref
 end
 
