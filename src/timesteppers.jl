@@ -201,18 +201,10 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
         end
     end
     for step in 1:nsteps
-        if total_nodes(prob) == 0
-            # All contours removed by surgery — skip dynamics but still fire
-            # callbacks so that recording callbacks observe every step.
-            if callbacks !== nothing
-                for cb in callbacks
-                    cb(prob, step)
-                end
-            end
-            continue
+        if total_nodes(prob) > 0
+            timestep!(prob, stepper)
+            _maybe_wrap_nodes!(prob)
         end
-        timestep!(prob, stepper)
-        _maybe_wrap_nodes!(prob)
 
         if step % params.n_surgery == 0
             surgery!(prob, params)
@@ -417,20 +409,16 @@ function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
         end
     end
     for step in 1:nsteps
-        if total_nodes(prob) == 0
-            if callbacks !== nothing
-                for cb in callbacks
-                    cb(prob, step)
-                end
-            end
-            continue
+        if total_nodes(prob) > 0
+            timestep!(prob, stepper)
+            _maybe_wrap_nodes!(prob)
         end
-        timestep!(prob, stepper)
-        _maybe_wrap_nodes!(prob)
+
         if step % params.n_surgery == 0
             surgery!(prob, params)
             resize_buffers!(stepper, prob)
         end
+
         if callbacks !== nothing
             for cb in callbacks
                 cb(prob, step)
@@ -466,7 +454,7 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
 
     if !stepper.initialized
         _scatter_shifted!(prob, nodes_current, flat_vel, dt / 2)
-        vel_tuple = _ensure_vel_bufs!(stepper.vel_bufs, prob)
+        # vel_tuple is still valid — _scatter_shifted! only changes positions, not node counts
         velocity!(vel_tuple, prob)
         _collect_velocities!(stepper.vel_mid, vel_tuple)
         @inbounds for i in 1:Ntot
