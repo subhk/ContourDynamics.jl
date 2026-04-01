@@ -39,7 +39,8 @@ Precomputed operators for one level of the quadtree.
 """
 struct LevelOperators{T<:AbstractFloat}
     check_to_proxy_pinv::Matrix{T}
-    child_to_parent::NTuple{4, Matrix{T}}
+    child_to_parent::NTuple{4, Matrix{T}}   # M2M: child proxy → parent proxy
+    parent_to_child::NTuple{4, Matrix{T}}   # L2L: parent local → child local
 end
 
 # ── Point generation ────────────────────────────────────────
@@ -191,31 +192,44 @@ function precompute_level_operators(
 
         # M2M operators: for each child quadrant, build
         #   M2M_q = pinv(K_parent) * K(parent_check, child_proxy)
-        # where parent_check is at the parent level (one level up)
+        # L2L operators: for each child quadrant, build
+        #   L2L_q = pinv(K_child) * K(child_check, parent_proxy)
+        # where parent is at the parent level (one level up)
         parent_hw = hw * T(2)
         parent_check_pts = _check_points(origin, parent_hw, p_check)
+
+        # Compute parent pseudoinverse once (shared by all 4 quadrants)
+        parent_proxy_pts = _proxy_points(origin, parent_hw, p)
+        K_parent_cp = _build_kernel_matrix(kernel, domain, parent_check_pts, parent_proxy_pts)
+        F_parent = svd(K_parent_cp)
+        cutoff_parent = eps(T) * T(100) * F_parent.S[1]
+        S_inv_parent = [s > cutoff_parent ? one(T) / s : zero(T) for s in F_parent.S]
+        pinv_parent = F_parent.Vt' * Diagonal(S_inv_parent) * F_parent.U'
 
         child_to_parent = ntuple(Val(4)) do q
             child_center = _child_center(origin, parent_hw, q)
             child_proxy_pts = _proxy_points(child_center, hw, p)
-
-            # Kernel matrix: parent_check evaluated at child proxy sources
             K_pc = _build_kernel_matrix(kernel, domain, parent_check_pts, child_proxy_pts)
-
-            # For the parent level, we need the parent's pseudoinverse
-            # But since the parent is canonical (centred at origin with parent_hw),
-            # we build it here
-            parent_proxy_pts = _proxy_points(origin, parent_hw, p)
-            K_parent_cp = _build_kernel_matrix(kernel, domain, parent_check_pts, parent_proxy_pts)
-            F_parent = svd(K_parent_cp)
-            cutoff_parent = eps(T) * T(100) * F_parent.S[1]
-            S_inv_parent = [s > cutoff_parent ? one(T) / s : zero(T) for s in F_parent.S]
-            pinv_parent = F_parent.Vt' * Diagonal(S_inv_parent) * F_parent.U'
-
             Matrix{T}(pinv_parent * K_pc)
         end
 
-        ops[level + 1] = LevelOperators{T}(Matrix{T}(pinv_K), child_to_parent)
+        # L2L: for each child quadrant, map parent proxy strengths → child proxy strengths
+        # L2L_q = pinv(K_child_check_child_proxy) * K(child_check, parent_proxy)
+        parent_proxy_pts_for_l2l = _proxy_points(origin, parent_hw, p)
+        parent_to_child = ntuple(Val(4)) do q
+            child_center = _child_center(origin, parent_hw, q)
+            child_check_pts = _check_points(child_center, hw, p_check)
+            child_proxy_pts = _proxy_points(child_center, hw, p)
+            K_child_cp = _build_kernel_matrix(kernel, domain, child_check_pts, child_proxy_pts)
+            F_child = svd(K_child_cp)
+            cutoff_child = eps(T) * T(100) * F_child.S[1]
+            S_inv_child = [s > cutoff_child ? one(T) / s : zero(T) for s in F_child.S]
+            pinv_child = F_child.Vt' * Diagonal(S_inv_child) * F_child.U'
+            K_cp_parent = _build_kernel_matrix(kernel, domain, child_check_pts, parent_proxy_pts_for_l2l)
+            Matrix{T}(pinv_child * K_cp_parent)
+        end
+
+        ops[level + 1] = LevelOperators{T}(Matrix{T}(pinv_K), child_to_parent, parent_to_child)
     end
 
     return ops
