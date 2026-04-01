@@ -4,6 +4,10 @@
 # The inter-layer coupling introduces baroclinic effects through the
 # eigenmode decomposition of the coupling matrix.
 
+# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
+#   prob = MultiLayerContourProblem(kernel, UnboundedDomain(), layers; dev=GPU())
+#   stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+
 using ContourDynamics
 using StaticArrays
 using LinearAlgebra
