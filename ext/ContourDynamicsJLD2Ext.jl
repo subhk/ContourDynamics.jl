@@ -16,7 +16,7 @@ energy, circulation, enstrophy, and angular momentum.
 function ContourDynamics.save_snapshot(filename::String,
                                        prob::ContourProblem{K,D,T},
                                        step::Int;
-                                       dt::Union{Nothing,T}=nothing,
+                                       dt::Union{Nothing,Real}=nothing,
                                        diagnostics::Bool=true) where {K,D,T}
     group = "step_" * lpad(step, 6, '0')
 
@@ -71,7 +71,7 @@ end
 function ContourDynamics.save_snapshot(filename::String,
                                        prob::MultiLayerContourProblem{N,K,D,T},
                                        step::Int;
-                                       dt::Union{Nothing,T}=nothing,
+                                       dt::Union{Nothing,Real}=nothing,
                                        diagnostics::Bool=true) where {N,K,D,T}
     group = "step_" * lpad(step, 6, '0')
 
