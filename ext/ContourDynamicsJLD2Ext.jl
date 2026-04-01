@@ -21,6 +21,9 @@ function ContourDynamics.save_snapshot(filename::String,
     group = "step_" * lpad(step, 6, '0')
 
     jldopen(filename, "a+") do f
+        if haskey(f, group)
+            delete!(f, group)
+        end
         g = JLD2.Group(f, group)
 
         g["step"] = step
@@ -73,6 +76,9 @@ function ContourDynamics.save_snapshot(filename::String,
     group = "step_" * lpad(step, 6, '0')
 
     jldopen(filename, "a+") do f
+        if haskey(f, group)
+            delete!(f, group)
+        end
         g = JLD2.Group(f, group)
 
         g["step"] = step
@@ -142,10 +148,21 @@ function _load_snapshot_from_group(g, step::Int)
     if is_multilayer
         nlyr = g["nlayers"]::Int
         all_layers = Vector{Any}(undef, nlyr)
+        # Infer float type from the first non-empty layer
+        inferred_T = Float64
         for li in 1:nlyr
             lg = g["layer_" * lpad(li, 2, '0')]
             nc = lg["ncontours"]::Int
-            all_layers[li] = _load_contours(lg, nc)
+            if nc > 0
+                cg1 = lg["contour_" * lpad(1, 4, '0')]
+                inferred_T = eltype(cg1["x"])
+                break
+            end
+        end
+        for li in 1:nlyr
+            lg = g["layer_" * lpad(li, 2, '0')]
+            nc = lg["ncontours"]::Int
+            all_layers[li] = _load_contours(lg, nc; T=inferred_T)
         end
         diag = _load_diagnostics(g)
         return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
@@ -159,9 +176,8 @@ end
 
 # ── helpers ──────────────────────────────────────────────────
 
-function _load_contours(g, nc::Int)
-    nc == 0 && return PVContour{Float64}[]
-
+function _load_contours(g, nc::Int; T::Type{<:AbstractFloat}=Float64)
+    nc == 0 && return PVContour{T}[]
 
     # Peek at first contour to determine element type
     cg1 = g["contour_" * lpad(1, 4, '0')]
@@ -267,7 +283,7 @@ function ContourDynamics.jld2_recorder(filename::String;
     step_dt = dt  # capture for closure
 
     return function(prob, step)
-        if step % interval == 0 || step == 0
+        if step % interval == 0
             ContourDynamics.save_snapshot(filename, prob, step;
                                           dt=step_dt, diagnostics=diagnostics)
         end
