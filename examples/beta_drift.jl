@@ -9,6 +9,10 @@
 # Reference: Dritschel (1988), "Contour surgery: A topological reconnection
 # scheme for extended integrations using contour dynamics", JCP 77(1).
 
+# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
+#   prob = ContourProblem(EulerKernel(), domain, contours; dev=GPU())
+#   stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+
 using ContourDynamics
 using StaticArrays
 using JLD2
