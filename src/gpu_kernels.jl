@@ -16,6 +16,57 @@ struct SegmentData{A<:AbstractVector}
     pv::A   # PV jump for this segment
 end
 
+# ── GPU workspace for buffer reuse ──��───────────────────
+# Avoids repeated allocation of CPU packing buffers and device arrays
+# across the 4 velocity evaluations per RK4 step.
+
+mutable struct _GPUWorkspace{T}
+    # CPU packing buffers (filled each call, then copied to device)
+    cpu_ax::Vector{T}; cpu_ay::Vector{T}
+    cpu_bx::Vector{T}; cpu_by::Vector{T}
+    cpu_pv::Vector{T}
+    cpu_tx::Vector{T}; cpu_ty::Vector{T}
+    # Device arrays — typed as Any because the concrete array type
+    # (Array vs CuArray) depends on which extension is loaded.
+    dev_ax::Any; dev_ay::Any
+    dev_bx::Any; dev_by::Any
+    dev_pv::Any
+    dev_tx::Any; dev_ty::Any
+    dev_vel_x::Any; dev_vel_y::Any
+    # CPU copy-back buffers
+    cpu_vx::Vector{T}; cpu_vy::Vector{T}
+    n::Int
+end
+
+function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
+    _GPUWorkspace{T}(
+        Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_ax, cpu_ay
+        Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_bx, cpu_by
+        Vector{T}(undef, N),                        # cpu_pv
+        Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_tx, cpu_ty
+        device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_ax, dev_ay
+        device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_bx, dev_by
+        device_zeros(dev, T, N),                            # dev_pv
+        device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_tx, dev_ty
+        device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_vel_x, dev_vel_y
+        Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_vx, cpu_vy
+        N,
+    )
+end
+
+# Module-level workspace cache (one workspace at a time).
+const _gpu_ws_ref = Ref{Any}(nothing)
+
+function _get_gpu_workspace!(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
+    ws = _gpu_ws_ref[]
+    if ws isa _GPUWorkspace{T} && ws.n == N
+        return ws::_GPUWorkspace{T}
+    end
+    ws = _create_gpu_workspace(dev, T, N)
+    _gpu_ws_ref[] = ws
+    return ws
+end
+
 """
     pack_segments(prob::ContourProblem, dev::AbstractDevice)
 
@@ -28,6 +79,17 @@ function pack_segments(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {
     bx = Vector{T}(undef, N)
     by = Vector{T}(undef, N)
     pv_vec = Vector{T}(undef, N)
+    _fill_segment_bufs!(ax, ay, bx, by, pv_vec, prob)
+    n_seg = N
+    SegmentData(
+        to_device(dev, ax[1:n_seg]), to_device(dev, ay[1:n_seg]),
+        to_device(dev, bx[1:n_seg]), to_device(dev, by[1:n_seg]),
+        to_device(dev, pv_vec[1:n_seg])
+    )
+end
+
+# Shared logic for filling CPU segment buffers.
+function _fill_segment_bufs!(ax, ay, bx, by, pv_vec, prob)
     idx = 1
     for c in prob.contours
         nc = nnodes(c)
@@ -51,12 +113,7 @@ function pack_segments(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {
             end
         end
     end
-    n_seg = idx - 1
-    SegmentData(
-        to_device(dev, ax[1:n_seg]), to_device(dev, ay[1:n_seg]),
-        to_device(dev, bx[1:n_seg]), to_device(dev, by[1:n_seg]),
-        to_device(dev, pv_vec[1:n_seg])
-    )
+    return idx - 1
 end
 
 """
@@ -68,17 +125,22 @@ function pack_targets(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K
     N = total_nodes(prob)
     tx = Vector{T}(undef, N)
     ty = Vector{T}(undef, N)
+    _fill_target_bufs!(tx, ty, prob)
+    n_targets = N
+    (to_device(dev, tx[1:n_targets]), to_device(dev, ty[1:n_targets]))
+end
+
+# Shared logic for filling CPU target buffers.
+function _fill_target_bufs!(tx, ty, prob)
     idx = 1
     for c in prob.contours
-        nc = nnodes(c)
-        for j in 1:nc
+        for j in 1:nnodes(c)
             tx[idx] = c.nodes[j][1]
             ty[idx] = c.nodes[j][2]
             idx += 1
         end
     end
-    n_targets = idx - 1
-    (to_device(dev, tx[1:n_targets]), to_device(dev, ty[1:n_targets]))
+    return idx - 1
 end
 
 # Inline Euler antiderivative — scalar version for GPU (no SVector).
@@ -158,10 +220,45 @@ end
     _gpu_velocity!(vel_x, vel_y, prob::ContourProblem, dev::AbstractDevice)
 
 Full GPU velocity evaluation: pack segments, pack targets, launch kernel.
+Allocates fresh buffers each call (use `_gpu_velocity_ws!` for buffer reuse).
 """
 function _gpu_velocity!(vel_x, vel_y, prob::ContourProblem, dev::AbstractDevice)
     seg = pack_segments(prob, dev)
     target_x, target_y = pack_targets(prob, dev)
     _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, dev)
+    return nothing
+end
+
+"""
+    _gpu_velocity_ws!(ws::_GPUWorkspace, prob::ContourProblem, dev::AbstractDevice)
+
+GPU velocity evaluation using pre-allocated workspace buffers.
+Fills CPU packing buffers, copies to device via `copyto!`, launches kernel,
+and copies results back — all without allocating new arrays.
+"""
+function _gpu_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K,D,T}
+    N = total_nodes(prob)
+
+    # Fill CPU packing buffers (no allocation)
+    _fill_segment_bufs!(ws.cpu_ax, ws.cpu_ay, ws.cpu_bx, ws.cpu_by, ws.cpu_pv, prob)
+    _fill_target_bufs!(ws.cpu_tx, ws.cpu_ty, prob)
+
+    # Transfer to device (copyto! reuses pre-allocated device arrays)
+    copyto!(ws.dev_ax, ws.cpu_ax)
+    copyto!(ws.dev_ay, ws.cpu_ay)
+    copyto!(ws.dev_bx, ws.cpu_bx)
+    copyto!(ws.dev_by, ws.cpu_by)
+    copyto!(ws.dev_pv, ws.cpu_pv)
+    copyto!(ws.dev_tx, ws.cpu_tx)
+    copyto!(ws.dev_ty, ws.cpu_ty)
+
+    # Launch kernel (no allocation)
+    seg = SegmentData(ws.dev_ax, ws.dev_ay, ws.dev_bx, ws.dev_by, ws.dev_pv)
+    _ka_euler_velocity!(ws.dev_vel_x, ws.dev_vel_y, ws.dev_tx, ws.dev_ty, seg, dev)
+
+    # Copy results back to CPU (no allocation)
+    copyto!(ws.cpu_vx, ws.dev_vel_x)
+    copyto!(ws.cpu_vy, ws.dev_vel_y)
+
     return nothing
 end
