@@ -1,3 +1,5 @@
+using Test, ContourDynamics
+
 extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
 @testset "Conservation" begin
