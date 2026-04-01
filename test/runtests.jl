@@ -370,6 +370,8 @@ include("test_utils.jl")
 
     include("test_fmm.jl")
 
+    include("test_device.jl")
+
     @testset "Spanning Contours & Beta Staircase" begin
         T = Float64
         domain = PeriodicDomain(T(3.0))
