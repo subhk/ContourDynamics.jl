@@ -42,11 +42,13 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
         for c in prob.contours
             nodes = c.nodes
             n = length(nodes)
-            close_node = nodes[1] + c.wrap  # wrap = (0,0) for closed contours
             xs = [nodes[i][1] for i in 1:n]
-            push!(xs, close_node[1])
             ys = [nodes[i][2] for i in 1:n]
-            push!(ys, close_node[2])
+            if !ContourDynamics.is_spanning(c)
+                # Close the contour back to the first node
+                push!(xs, nodes[1][1])
+                push!(ys, nodes[1][2])
+            end
             Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
                          colorrange=(pv_lo, pv_hi))
         end
@@ -93,11 +95,12 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
             for c in layer
                 nodes = c.nodes
                 n = length(nodes)
-                close_node = nodes[1] + c.wrap
                 xs = [nodes[i][1] for i in 1:n]
-                push!(xs, close_node[1])
                 ys = [nodes[i][2] for i in 1:n]
-                push!(ys, close_node[2])
+                if !ContourDynamics.is_spanning(c)
+                    push!(xs, nodes[1][1])
+                    push!(ys, nodes[1][2])
+                end
                 Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
                              colorrange=(pv_lo, pv_hi),
                              linestyle=li == 1 ? :solid : :dash)
