@@ -32,6 +32,10 @@ nodes = [SVector(R*cos(2π*i/N), R*sin(2π*i/N)) for i in 0:N-1]
 prob = ContourProblem(QGKernel(Ld), UnboundedDomain(), [PVContour(nodes, pv)])
 ```
 
+!!! tip "GPU Support"
+    To run this tutorial on GPU, add `using CUDA` and pass `dev=GPU()` when
+    constructing the problem and stepper. All other code remains the same.
+
 ### Comparing Euler and QG
 
 When ``L_d \gg R`` (patch radius), QG velocities approach the Euler limit. When ``L_d \lesssim R``, QG velocities are weaker due to rotational screening:
