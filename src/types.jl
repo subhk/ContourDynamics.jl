@@ -353,7 +353,7 @@ mutable struct LeapfrogStepper{T<:AbstractFloat} <: AbstractTimeStepper
     vel_bufs::Vector{Vector{SVector{2, T}}}  # reusable per-layer velocity buffers (multi-layer)
 end
 
-function LeapfrogStepper(dt::T, n::Int; ra_coeff::T=T(0.05)) where {T<:AbstractFloat}
+function LeapfrogStepper(dt::T, n::Int; ra_coeff::Real=0.05) where {T<:AbstractFloat}
     z = zero(SVector{2, T})
     LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, ra_coeff,
                     Vector{Vector{SVector{2, T}}}())
