@@ -41,6 +41,10 @@ Combine a kernel, a domain, and one or more contours into a `ContourProblem`:
 prob = ContourProblem(EulerKernel(), UnboundedDomain(), [contour])
 ```
 
+!!! tip "GPU Support"
+    To run this tutorial on GPU, add `using CUDA` and pass `dev=GPU()` when
+    constructing the problem and stepper. All other code remains the same.
+
 You can check initial diagnostics right away:
 
 ```julia
