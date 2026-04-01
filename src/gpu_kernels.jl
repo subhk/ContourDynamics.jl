@@ -31,14 +31,24 @@ function pack_segments(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {
     idx = 1
     for c in prob.contours
         nc = nnodes(c)
-        nc < 2 && continue
-        for j in 1:nc
-            a = c.nodes[j]
-            b = next_node(c, j)
-            ax[idx] = a[1]; ay[idx] = a[2]
-            bx[idx] = b[1]; by[idx] = b[2]
-            pv_vec[idx] = c.pv
-            idx += 1
+        if nc < 2
+            # Single-node contours produce a degenerate zero-length segment.
+            # Include them to keep segment count aligned with total_nodes.
+            for j in 1:nc
+                ax[idx] = c.nodes[j][1]; ay[idx] = c.nodes[j][2]
+                bx[idx] = c.nodes[j][1]; by[idx] = c.nodes[j][2]
+                pv_vec[idx] = c.pv
+                idx += 1
+            end
+        else
+            for j in 1:nc
+                a = c.nodes[j]
+                b = next_node(c, j)
+                ax[idx] = a[1]; ay[idx] = a[2]
+                bx[idx] = b[1]; by[idx] = b[2]
+                pv_vec[idx] = c.pv
+                idx += 1
+            end
         end
     end
     n_seg = idx - 1
@@ -61,7 +71,6 @@ function pack_targets(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K
     idx = 1
     for c in prob.contours
         nc = nnodes(c)
-        nc < 2 && continue
         for j in 1:nc
             tx[idx] = c.nodes[j][1]
             ty[idx] = c.nodes[j][2]
