@@ -1,3 +1,5 @@
+using Test, ContourDynamics, StaticArrays
+
 extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
 @testset "Vortex Merger" begin
