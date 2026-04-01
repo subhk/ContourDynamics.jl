@@ -461,3 +461,12 @@ function velocity!(vel::Vector{SVector{2,T}},
 
     return vel
 end
+
+# Fallback for unsupported GPU kernel/domain combinations
+function velocity!(vel::Vector{SVector{2,T}},
+                   prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
+    throw(ArgumentError(
+        "GPU velocity is only implemented for EulerKernel on UnboundedDomain. " *
+        "Got $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
+        "Use dev=CPU() for other kernel/domain combinations."))
+end
