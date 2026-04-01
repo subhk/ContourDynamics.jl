@@ -337,7 +337,7 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
     for (ci, i, cj, j) in close_pairs
         ci != cj && continue
         ci in used && continue
-        _reconnect_split!(contours, ci, i, j)
+        _reconnect_split!(contours, ci, i, j, domain)
         push!(used, ci)
     end
 
@@ -358,13 +358,14 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
     end
 end
 
-function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int) where {T}
+function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int,
+                           domain::AbstractDomain=UnboundedDomain()) where {T}
     c = contours[ci]
     if is_spanning(c)
         @warn "_reconnect_split!: called on spanning contour $ci — skipped" maxlog=5
         return
     end
-    i, j = _best_stitch_nodes(c, i, c, j)
+    i, j = _best_stitch_nodes(c, i, c, j, domain)
     nc = nnodes(c)
     lo, hi = minmax(i, j)
 
