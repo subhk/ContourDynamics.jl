@@ -146,7 +146,7 @@ function _trace_contour(field::AbstractMatrix{T}, xs, ys, level::T,
 
         # Detect loop closure: check if we've returned to the starting edge
         # (not via shared visited_edges, which could be marked by a different trace)
-        if i == start_i && j == start_j && entry_side == start_side && length(nodes) > 2
+        if i == start_i && j == start_j && entry_side == start_side && length(nodes) >= 2
             break
         end
         visited_edges[i, j, entry_side] = true
