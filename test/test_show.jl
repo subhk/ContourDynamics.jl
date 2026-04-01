@@ -90,7 +90,7 @@ using StaticArrays
         prob_many = ContourProblem(EulerKernel(), UnboundedDomain(), cs)
         s_many = repr("text/plain", prob_many)
         @test occursin("contours: 7 PVContour{Float64}", s_many)
-        @test occursin("… and 3 more", s_many)
+        @test occursin("… and 2 more", s_many)
     end
 
     @testset "MultiLayerContourProblem show" begin
