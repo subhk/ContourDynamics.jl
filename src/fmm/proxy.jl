@@ -302,13 +302,20 @@ function _s2m!(
         proxy_pts = _proxy_points(box.center, box.half_width, p)
         K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
 
-        # Each velocity component decays at infinity, so the equivalent
-        # log-kernel source strengths must have zero net charge. Without this
-        # constraint, the least-squares fit can reproduce the check circle while
-        # polluting the far field with an unphysical logarithmic monopole.
-        K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-        rhs_x = vcat(vel_check_x, zero(T))
-        rhs_y = vcat(vel_check_y, zero(T))
+        # For Euler kernel (log singularity), the equivalent source strengths
+        # must have zero net charge to avoid polluting the far field with an
+        # unphysical logarithmic monopole. For QG/SQG kernels the Green's function
+        # decays at infinity, so the constraint is unnecessary and would
+        # overconstrain the fit.
+        if kernel isa EulerKernel
+            K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+            rhs_x = vcat(vel_check_x, zero(T))
+            rhs_y = vcat(vel_check_y, zero(T))
+        else
+            K_aug = K_cp
+            rhs_x = vel_check_x
+            rhs_y = vel_check_y
+        end
         strengths_x = K_aug \ rhs_x
         strengths_y = K_aug \ rhs_y
 
