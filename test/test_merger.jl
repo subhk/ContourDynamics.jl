@@ -35,9 +35,11 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         stepper = RK4Stepper(0.05, total_nodes(prob))
         params = SurgeryParams(0.005, 0.02, 0.1, 1e-4, 5)
 
+        circ_initial = circulation(prob)
         evolve!(prob, stepper, params; nsteps=10)
 
         @test total_nodes(prob) > 0
         @test length(prob.contours) >= 1
+        @test circulation(prob) ≈ circ_initial rtol=0.05
     end
 end
