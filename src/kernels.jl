@@ -153,7 +153,7 @@ Uses the proxy-FMM path only when that experimental accelerator is explicitly
 enabled. Otherwise, large single-layer problems use the production treecode
 path and small problems fall back to the validated direct evaluator.
 """
-function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T, CPU}) where {T}
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
 
@@ -425,7 +425,7 @@ Uses the FMM path only when acceleration is explicitly enabled and the problem
 is large enough; otherwise falls back to the validated direct evaluator.
 """
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
-                   prob::MultiLayerContourProblem{N}) where {N, T}
+                   prob::MultiLayerContourProblem{N, <:Any, <:Any, T, CPU}) where {N, T}
     for i in 1:N
         n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
         length(vel[i]) >= n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must be >= layer $i nodes ($n_layer)"))
@@ -436,5 +436,28 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     else
         _direct_velocity!(vel, prob)
     end
+    return vel
+end
+
+# GPU dispatch — velocity computed in SoA layout via KernelAbstractions,
+# then repacked into the CPU vel buffer.
+function velocity!(vel::Vector{SVector{2,T}},
+                   prob::ContourProblem{EulerKernel, UnboundedDomain, T, GPU}) where {T}
+    N = total_nodes(prob)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    N == 0 && return vel
+
+    dev = prob.dev
+    vel_x = device_zeros(dev, T, N)
+    vel_y = device_zeros(dev, T, N)
+    _gpu_velocity!(vel_x, vel_y, prob, dev)
+
+    # Copy back to CPU SVector format
+    vx_cpu = to_cpu(vel_x)
+    vy_cpu = to_cpu(vel_y)
+    @inbounds for i in 1:N
+        vel[i] = SVector{2,T}(vx_cpu[i], vy_cpu[i])
+    end
+
     return vel
 end
