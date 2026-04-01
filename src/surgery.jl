@@ -456,6 +456,7 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta,
     # the wrapped closed-contour nodes.
     spanning_bins = Dict{Tuple{Int,Int}, Vector{SVector{2,T}}}()
     has_spanning = false
+    _push_spanning_bin!(bins, key, sn) = (v = get!(bins, key, SVector{2,T}[]); push!(v, sn))
     for c in contours
         is_spanning(c) || continue
         has_spanning = true
@@ -463,11 +464,25 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, delta,
             sn_w = _wrap_query_pt(sn, domain)
             bx = floor(Int, sn_w[1] / delta)
             by = floor(Int, sn_w[2] / delta)
-            key = (bx, by)
-            if !haskey(spanning_bins, key)
-                spanning_bins[key] = SVector{2,T}[]
+            _push_spanning_bin!(spanning_bins, (bx, by), sn)
+            # Ghost entries near periodic boundaries (same 2*delta threshold
+            # as _insert_bin!) so 3×3 queries find spanning nodes across seams.
+            if domain isa PeriodicDomain
+                Lx, Ly = domain.Lx, domain.Ly
+                two_delta = 2 * delta
+                near_xhi = sn_w[1] > Lx - two_delta
+                near_xlo = sn_w[1] < -Lx + two_delta
+                near_yhi = sn_w[2] > Ly - two_delta
+                near_ylo = sn_w[2] < -Ly + two_delta
+                near_xhi && _push_spanning_bin!(spanning_bins, (floor(Int, (sn_w[1] - 2Lx) / delta), by), sn)
+                near_xlo && _push_spanning_bin!(spanning_bins, (floor(Int, (sn_w[1] + 2Lx) / delta), by), sn)
+                near_yhi && _push_spanning_bin!(spanning_bins, (bx, floor(Int, (sn_w[2] - 2Ly) / delta)), sn)
+                near_ylo && _push_spanning_bin!(spanning_bins, (bx, floor(Int, (sn_w[2] + 2Ly) / delta)), sn)
+                near_xhi && near_yhi && _push_spanning_bin!(spanning_bins, (floor(Int, (sn_w[1] - 2Lx) / delta), floor(Int, (sn_w[2] - 2Ly) / delta)), sn)
+                near_xhi && near_ylo && _push_spanning_bin!(spanning_bins, (floor(Int, (sn_w[1] - 2Lx) / delta), floor(Int, (sn_w[2] + 2Ly) / delta)), sn)
+                near_xlo && near_yhi && _push_spanning_bin!(spanning_bins, (floor(Int, (sn_w[1] + 2Lx) / delta), floor(Int, (sn_w[2] - 2Ly) / delta)), sn)
+                near_xlo && near_ylo && _push_spanning_bin!(spanning_bins, (floor(Int, (sn_w[1] + 2Lx) / delta), floor(Int, (sn_w[2] + 2Ly) / delta)), sn)
             end
-            push!(spanning_bins[key], sn)  # store original (unwrapped) for _min_image
         end
     end
     has_spanning || return
