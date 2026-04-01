@@ -300,6 +300,12 @@ function build_fmm_tree(
     # Build interaction and near lists
     interaction_lists, near_lists = _build_lists(boxes, max_level)
 
+    # Build per-level box index for efficient M2M/L2L iteration
+    level_boxes = [Int[] for _ in 0:max_level]
+    for i in eachindex(boxes)
+        push!(level_boxes[boxes[i].level + 1], i)
+    end
+
     return FMMTree{T}(
         boxes,
         seg_ids,
@@ -307,6 +313,7 @@ function build_fmm_tree(
         leaf_indices,
         interaction_lists,
         near_lists,
+        level_boxes,
         max_level,
     )
 end
