@@ -171,10 +171,49 @@ precomputation, upward pass (S2M, M2M), interaction pass (M2L),
 downward pass (L2L), local evaluation, and near-field correction.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
-    # The proxy-surface FMM is not yet numerically reliable enough for
-    # production use. Preserve correctness by delegating to the validated
-    # direct evaluator until the acceleration path is repaired.
-    return _direct_velocity!(vel, prob)
+    contours = prob.contours
+    N = total_nodes(prob)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    fill!(vel, zero(SVector{2,T}))
+    isempty(contours) && return vel
+
+    tree = build_fmm_tree(contours)
+    kernel = prob.kernel
+    domain = prob.domain
+    ewald = _prefetch_ewald(domain, kernel)
+
+    p = _FMM_PROXY_ORDER
+    p_check = _FMM_CHECK_ORDER
+    nboxes = length(tree.boxes)
+
+    # Allocate proxy data for all boxes
+    proxy_data = [ProxyData(zeros(SVector{2,T}, p), SVector{2,T}[]) for _ in 1:nboxes]
+
+    # Precompute operators
+    ops = precompute_level_operators(tree, kernel, domain; p, p_check)
+    m2l_op = precompute_m2l_operators(tree, kernel, domain, ops; p, p_check)
+
+    # Precompute flat indices for O(1) velocity writes
+    offsets = Vector{Int}(undef, length(contours) + 1)
+    offsets[1] = 0
+    for ci in eachindex(contours)
+        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+    end
+    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
+    for seg_idx in eachindex(tree.sorted_segments)
+        ci, ni = tree.sorted_segments[seg_idx]
+        flat_indices[seg_idx] = offsets[ci] + ni
+    end
+
+    # Full FMM pipeline
+    _s2m!(proxy_data, tree, contours, kernel, domain, ops, ewald; p, p_check)
+    _m2m_upward!(proxy_data, tree, ops; p)
+    _m2l!(proxy_data, tree, m2l_op; p)
+    _l2l_downward!(proxy_data, tree, ops; p)
+    _local_eval!(vel, tree, proxy_data, contours, kernel, domain, flat_indices; p)
+    _near_field!(vel, tree, contours, kernel, domain, ewald, flat_indices)
+
+    return vel
 end
 
 # --- Periodic domain support ---
