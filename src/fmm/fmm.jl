@@ -308,6 +308,11 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
     T = eltype(tree.boxes[1].center)
     leaves = tree.leaf_indices
 
+    # Pin BLAS to one thread to avoid nested threading with Julia's @threads
+    # (the least-squares solves below dispatch to LAPACK).
+    prev_blas_threads = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
+
     Threads.@threads for li_idx in 1:length(leaves)
         leaf = leaves[li_idx]
         box = tree.boxes[leaf]
@@ -370,6 +375,8 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
             equiv[k] = SVector{2,T}(str_x[k], str_y[k])
         end
     end
+
+    BLAS.set_num_threads(prev_blas_threads)
 end
 
 """
