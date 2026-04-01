@@ -439,6 +439,8 @@ end
 
 # GPU dispatch — velocity computed in SoA layout via KernelAbstractions,
 # then repacked into the CPU vel buffer.
+# Uses a cached workspace to avoid repeated GPU/CPU allocations across
+# the 4 velocity evaluations per RK4 step.
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{EulerKernel, UnboundedDomain, T, GPU}) where {T}
     N = total_nodes(prob)
@@ -446,15 +448,14 @@ function velocity!(vel::Vector{SVector{2,T}},
     N == 0 && return vel
 
     dev = prob.dev
-    vel_x = device_zeros(dev, T, N)
-    vel_y = device_zeros(dev, T, N)
-    _gpu_velocity!(vel_x, vel_y, prob, dev)
+    ws = _get_gpu_workspace!(dev, T, N)
+    _gpu_velocity_ws!(ws, prob, dev)
 
-    # Copy back to CPU SVector format
-    vx_cpu = to_cpu(vel_x)
-    vy_cpu = to_cpu(vel_y)
+    # Pack CPU results into SVector format
+    vx = ws.cpu_vx
+    vy = ws.cpu_vy
     @inbounds for i in 1:N
-        vel[i] = SVector{2,T}(vx_cpu[i], vy_cpu[i])
+        vel[i] = SVector{2,T}(vx[i], vy[i])
     end
 
     return vel
