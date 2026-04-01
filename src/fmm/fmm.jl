@@ -381,38 +381,36 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
                 li = get(node_to_leaf, (global_ci, ti), 0)
                 if li > 0
                     box = tree.boxes[li]
-                    if true  # leaf found via mapping
-                        # Local expansion evaluation
-                        if length(proxy_data[li].local_strengths) > 0
-                            proxy_pts = _proxy_points(box.center, box.half_width, p)
-                            for k in 1:p
-                                G = _kernel_value(kernel, domain, xi, proxy_pts[k])
-                                v_local += G * proxy_data[li].local_strengths[k]
-                            end
-                        end
 
-                        # Near field
-                        for near_bi in tree.near_lists[li]
-                            near_box = tree.boxes[near_bi]
-                            for seg_idx in near_box.segment_range
-                                ci_s, ni_s = tree.sorted_segments[seg_idx]
-                                # Weight by P_inv[mode, source_layer]
-                                s_layer = 1
-                                for l in 1:NL
-                                    if ci_s > layer_offsets[l] && ci_s <= layer_offsets[l+1]
-                                        s_layer = l
-                                        break
-                                    end
-                                end
-                                src_w = prob.kernel.eigenvectors_inv[mode, s_layer]
-                                abs(src_w) < eps(T) && continue
-                                c = all_contours[ci_s]
-                                a = c.nodes[ni_s]
-                                b = next_node(c, ni_s)
-                                v_near += src_w * c.pv * segment_velocity(kernel, domain, xi, a, b, nothing)
-                            end
+                    # Local expansion evaluation
+                    if length(proxy_data[li].local_strengths) > 0
+                        proxy_pts = _proxy_points(box.center, box.half_width, p)
+                        for k in 1:p
+                            G = _kernel_value(kernel, domain, xi, proxy_pts[k])
+                            v_local += G * proxy_data[li].local_strengths[k]
                         end
-                        break  # found the leaf
+                    end
+
+                    # Near field
+                    for near_bi in tree.near_lists[li]
+                        near_box = tree.boxes[near_bi]
+                        for seg_idx in near_box.segment_range
+                            ci_s, ni_s = tree.sorted_segments[seg_idx]
+                            # Weight by P_inv[mode, source_layer]
+                            s_layer = 1
+                            for l in 1:NL
+                                if ci_s > layer_offsets[l] && ci_s <= layer_offsets[l+1]
+                                    s_layer = l
+                                    break
+                                end
+                            end
+                            src_w = prob.kernel.eigenvectors_inv[mode, s_layer]
+                            abs(src_w) < eps(T) && continue
+                            c = all_contours[ci_s]
+                            a = c.nodes[ni_s]
+                            b = next_node(c, ni_s)
+                            v_near += src_w * c.pv * segment_velocity(kernel, domain, xi, a, b, nothing)
+                        end
                     end
                 end
 
@@ -420,6 +418,24 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
             end
         end
     end
+end
+
+"""
+    _build_node_to_leaf(tree) -> Dict{Tuple{Int,Int}, Int}
+
+Build a mapping from `(contour_idx, node_idx)` to leaf box index using
+the tree's segment assignment. O(N) construction, O(1) lookup.
+"""
+function _build_node_to_leaf(tree::FMMTree{T}) where {T}
+    mapping = Dict{Tuple{Int,Int}, Int}()
+    for leaf_idx in tree.leaf_indices
+        box = tree.boxes[leaf_idx]
+        for seg_idx in box.segment_range
+            ci, ni = tree.sorted_segments[seg_idx]
+            mapping[(ci, ni)] = leaf_idx
+        end
+    end
+    return mapping
 end
 
 @inline function _point_in_box(pt::SVector{2,T}, box::FMMBox{T}) where {T}
