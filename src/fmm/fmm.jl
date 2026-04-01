@@ -137,14 +137,15 @@ segments in the near-list boxes via `segment_velocity`.
 """
 function _near_field!(vel::Vector{SVector{2,T}}, tree::FMMTree{T},
                       contours::AbstractVector{PVContour{T}}, kernel::AbstractKernel,
-                      domain::AbstractDomain, ewald_cache) where {T}
+                      domain::AbstractDomain, ewald_cache,
+                      flat_indices::Vector{Int}) where {T}
     Threads.@threads for li_idx in 1:length(tree.leaf_indices)
         leaf = tree.leaf_indices[li_idx]
         box = tree.boxes[leaf]
         for seg_idx in box.segment_range
             ci_t, ni_t = tree.sorted_segments[seg_idx]
             xi = contours[ci_t].nodes[ni_t]
-            flat_idx = _node_flat_index(contours, ci_t, ni_t)
+            flat_idx = flat_indices[seg_idx]
             v = zero(SVector{2,T})
             for near_bi in tree.near_lists[leaf]
                 near_box = tree.boxes[near_bi]
