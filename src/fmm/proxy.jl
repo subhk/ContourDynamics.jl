@@ -261,6 +261,13 @@ function _s2m!(
 ) where {T}
     leaves = tree.leaf_indices
 
+    # The least-squares solves below dispatch to LAPACK, which is itself
+    # multithreaded.  Running LAPACK from multiple Julia threads causes
+    # oversubscription (and can deadlock with OpenBLAS).  Pin BLAS to one
+    # thread for the duration of this parallel section.
+    prev_blas_threads = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
+
     Threads.@threads for li_idx in 1:length(leaves)
         leaf = leaves[li_idx]
         box = tree.boxes[leaf]
@@ -326,5 +333,6 @@ function _s2m!(
         end
     end
 
+    BLAS.set_num_threads(prev_blas_threads)
     return nothing
 end
