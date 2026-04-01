@@ -171,6 +171,13 @@ precomputation, upward pass (S2M, M2M), interaction pass (M2L),
 downward pass (L2L), local evaluation, and near-field correction.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+    # The proxy-surface FMM pipeline is structurally complete but not yet
+    # numerically validated to production accuracy. Gate behind the
+    # _FMM_ACCELERATION_ENABLED flag; when disabled, delegate to direct.
+    if !_FMM_ACCELERATION_ENABLED
+        return _direct_velocity!(vel, prob)
+    end
+
     contours = prob.contours
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
