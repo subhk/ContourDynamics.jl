@@ -167,6 +167,7 @@ function _m2l!(
     p::Int = _FMM_PROXY_ORDER,
 ) where {T}
     boxes = tree.boxes
+    n_skipped = 0
 
     for bi in 1:length(boxes)
         ilist = tree.interaction_lists[bi]
@@ -199,7 +200,7 @@ function _m2l!(
 
             # Look up precomputed M2L matrix
             if !haskey(level_m2l.operators, (dx, dy))
-                @warn "M2L: unexpected displacement ($dx,$dy) at level $level for box $bi — skipping" maxlog=5
+                n_skipped += 1
                 continue
             end
             m2l_mat = level_m2l.operators[(dx, dy)]
@@ -216,6 +217,10 @@ function _m2l!(
                 local_s[k] = local_s[k] + SVector{2,T}(local_x[k], local_y[k])
             end
         end
+    end
+
+    if n_skipped > 0
+        @warn "M2L: $n_skipped interaction pair(s) skipped due to unexpected displacement — this may degrade FMM accuracy"
     end
 
     return nothing
@@ -282,20 +287,6 @@ function _l2l_downward!(
 end
 
 # ── Local evaluation ───────────────────────────────────────
-
-"""
-    _node_flat_index(contours, ci, ni)
-
-Map `(contour_idx, node_idx)` to a flat velocity-array index.
-The flat index is the sum of `nnodes` for contours `1..ci-1`, plus `ni`.
-"""
-function _node_flat_index(contours::AbstractVector{PVContour{T}}, ci::Int, ni::Int) where {T}
-    idx = 0
-    for i in 1:(ci - 1)
-        idx += nnodes(contours[i])
-    end
-    return idx + ni
-end
 
 """
     _local_eval!(vel, tree, proxy_data, contours, kernel, domain; p)
