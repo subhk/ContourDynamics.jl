@@ -241,9 +241,8 @@ function _l2l_downward!(
 
     # Process levels top-down: from 0 to max_level-1
     for level in 0:(tree.max_level - 1)
-        for bi in 1:length(boxes)
+        for bi in tree.level_boxes[level + 1]
             box = boxes[bi]
-            box.level == level || continue
             box.is_leaf && continue
 
             parent_local = proxy_data[bi].local_strengths
