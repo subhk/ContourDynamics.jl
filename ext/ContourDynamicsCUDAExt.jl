@@ -17,7 +17,8 @@ ContourDynamics._ka_backend(::ContourDynamics.GPU) = CUDABackend()
 
 # Adapt.jl integration for ContourProblem
 function Adapt.adapt_structure(to, prob::ContourDynamics.ContourProblem)
-    new_dev = to <: CUDA.CuArray ? ContourDynamics.GPU() : ContourDynamics.CPU()
+    new_dev = (to === CuArray || (to isa Type && to <: CuArray)) ?
+        ContourDynamics.GPU() : ContourDynamics.CPU()
     ContourDynamics.ContourProblem(prob.kernel, prob.domain, prob.contours; dev=new_dev)
 end
 
