@@ -337,10 +337,10 @@ struct RK4Stepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: Abstract
 end
 
 function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:AbstractFloat}
+    # Stepper buffers are always CPU Vector — GPU velocity path handles its own
+    # device allocation internally. This ensures resize! works after surgery.
     z = zero(SVector{2, T})
-    ArrayType = device_array(dev)
-    buf() = fill!(ArrayType{SVector{2,T}}(undef, n), z)
-    RK4Stepper(dt, buf(), buf(), buf(), buf(), buf(),
+    RK4Stepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), fill(z, n),
                Vector{Vector{SVector{2, T}}}())
 end
 
@@ -363,9 +363,9 @@ mutable struct LeapfrogStepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}
 end
 
 function LeapfrogStepper(dt::T, n::Int; dev::AbstractDevice=CPU(), ra_coeff::Real=0.05) where {T<:AbstractFloat}
+    # Stepper buffers are always CPU Vector — GPU velocity path handles its own
+    # device allocation internally. This ensures resize! works after surgery.
     z = zero(SVector{2, T})
-    ArrayType = device_array(dev)
-    buf() = fill!(ArrayType{SVector{2,T}}(undef, n), z)
-    LeapfrogStepper(dt, buf(), buf(), buf(), buf(), false, T(ra_coeff),
+    LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, T(ra_coeff),
                     Vector{Vector{SVector{2, T}}}())
 end
