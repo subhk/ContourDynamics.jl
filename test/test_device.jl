@@ -2,7 +2,8 @@ using ContourDynamics
 using StaticArrays
 using Test
 
-include("test_utils.jl")
+# Guard against double-include when run from runtests.jl
+@isdefined(circular_patch) || include("test_utils.jl")
 
 @testset "Device abstraction" begin
     @testset "ContourProblem defaults to CPU" begin
