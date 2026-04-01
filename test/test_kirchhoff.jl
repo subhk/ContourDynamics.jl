@@ -1,3 +1,5 @@
+using Test, ContourDynamics
+
 extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
 @testset "Kirchhoff Ellipse" begin
@@ -30,11 +32,11 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
     @test final_circ ≈ initial_circ rtol=1e-4
 
     # After one full period, nodes should return near initial positions
-    node_tol = extended ? 0.05 : 0.15
+    node_tol = extended ? 0.05 : 0.10
     for i in 1:N_nodes
         @test prob.contours[1].nodes[i] ≈ initial_nodes[i] atol=node_tol
     end
 
     ratio_final, _ = ellipse_moments(prob.contours[1])
-    @test ratio_final ≈ a / b rtol=0.1
+    @test ratio_final ≈ a / b rtol=0.05
 end
