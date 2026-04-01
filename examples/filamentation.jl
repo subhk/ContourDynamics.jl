@@ -24,11 +24,11 @@ contour = PVContour(nodes, pv)
 
 kernel = EulerKernel()
 domain = UnboundedDomain()
-prob = ContourProblem(kernel, domain, [contour])
+prob = ContourProblem(kernel, domain, [contour]; dev=CPU())
 
 dt = 0.005
-surgery_params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 10)
-stepper = RK4Stepper(dt, total_nodes(prob))
+surgery_params = SurgeryParams(0.005, 0.02, 0.2, 1e-6, 10)
+stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
 nsteps = 1000
 
 println("Filamentation: ellipse a=$a, b=$b (ratio=$(a/b))")
