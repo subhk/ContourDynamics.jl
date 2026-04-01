@@ -47,6 +47,11 @@ features:
   - icon: ⚡
     title: High Performance
     details: StaticArrays for node positions, multi-threaded velocity and energy computation, O(log C) spatial indexing for surgery, and zero-allocation time stepping.
+  - icon: 🚀
+    title: GPU Acceleration
+    details: Pass dev=GPU() to offload velocity computations to an NVIDIA GPU via CUDA.jl. Surgery and diagnostics continue on CPU — no code changes required beyond the constructor arguments.
+    link: /gpu
+    linkText: GPU docs
 ---
 ```
 
@@ -70,6 +75,15 @@ evolve!(prob, stepper, params; nsteps=1000)
 println("Energy: ", energy(prob))
 println("Circulation: ", circulation(prob))
 ```
+
+!!! tip "GPU Acceleration"
+    Pass `dev=GPU()` to run velocity computations on an NVIDIA GPU:
+    ```julia
+    using CUDA
+    prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
+    stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+    ```
+    See [GPU Acceleration](@ref) for details.
 
 ## Installation
 
