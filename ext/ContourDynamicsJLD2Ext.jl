@@ -179,7 +179,8 @@ end
 function _load_contours(g, nc::Int; T::Type{<:AbstractFloat}=Float64)
     nc == 0 && return PVContour{T}[]
 
-    # Peek at first contour to determine element type
+    # Peek at first contour to determine element type from file data.
+    # Intentionally overrides the T kwarg (which is only a fallback for nc==0).
     cg1 = g["contour_" * lpad(1, 4, '0')]
     T = eltype(cg1["x"])
 
