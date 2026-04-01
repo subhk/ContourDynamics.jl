@@ -34,7 +34,7 @@ prob = ContourProblem(kernel, domain, [c1, c2])
 
 # --- Time integration with surgery + file output ---
 dt = 0.01
-surgery_params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 5)
+surgery_params = SurgeryParams(0.005, 0.02, 0.2, 1e-6, 5)
 stepper = RK4Stepper(dt, total_nodes(prob))
 nsteps = 500
 
