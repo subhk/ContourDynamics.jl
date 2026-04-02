@@ -206,6 +206,9 @@ function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     contours = prob.contours
     E = zero(T)
     inv4pi = one(T) / (4 * T(π))
+    # Pre-allocate partial-sum buffer sized to the largest contour.
+    max_n = maximum((nnodes(c) for c in contours if nnodes(c) >= 3 && !is_spanning(c)), init=0)
+    _partial = zeros(T, max_n)
     for ci in contours
         nci = nnodes(ci)
         nci < 3 && continue
@@ -214,14 +217,15 @@ function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
             ncj = nnodes(cj)
             ncj < 3 && continue
             is_spanning(cj) && continue
-            E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj)
+            E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj; _partial=_partial)
         end
     end
     # Factor 1/2: the double sum counts both (i,j) and (j,i) for the symmetric integrand.
     return -inv4pi * E / 2
 end
 
-function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T}
+function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T};
+                                    _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes  # detect self-interaction
@@ -231,7 +235,8 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T}) where {T
     # ∫₋₁¹∫₋₁¹ log(|s-t| * |half_ds|) ds dt = 4*log(2) - 6 + 4*log|half_ds|
     self_seg_const = 4 * log(T(2)) - T(6)  # precompute constant part
     # Thread over outer segments, each thread accumulates a partial sum
-    partial = zeros(T, nci)
+    partial = _partial
+    @inbounds for k in 1:nci; partial[k] = zero(T); end
     @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
@@ -288,13 +293,15 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     contours = prob.contours
     delta = prob.kernel.delta
     E = zero(T)
+    max_n = maximum((nnodes(c) for c in contours if nnodes(c) >= 3 && !is_spanning(c)), init=0)
+    _partial = zeros(T, max_n)
     for ci in contours
         nnodes(ci) < 3 && continue
         is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
             is_spanning(cj) && continue
-            E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta)
+            E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta; _partial=_partial)
         end
     end
     # E_SQG = (1/(4π)) × (1/2) × Σ q_i q_j ∮∮ √(r²+δ²) ds·ds'
@@ -303,13 +310,15 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     return inv4pi * E / 2
 end
 
-function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T) where {T}
+function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T;
+                                   _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
     delta_sq = delta^2
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
-    partial = zeros(T, nci)
+    partial = _partial
+    @inbounds for k in 1:nci; partial[k] = zero(T); end
     @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
