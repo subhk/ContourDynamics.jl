@@ -1,14 +1,17 @@
 """
-    remesh(c::PVContour, params::SurgeryParams; _buf=nothing)
+    remesh(c::PVContour, params::SurgeryParams; _buf=nothing, _arc_buf=nothing, _vnodes_buf=nothing)
 
 Redistribute nodes along contour `c` so that every segment length lies between
 `params.mu` and `params.Delta_max`.  Returns a new [`PVContour`](@ref).
 
-The optional `_buf` keyword accepts a `Vector{SVector{2,T}}` that is reused
-across calls to avoid repeated heap allocation (internal optimisation).
+The optional `_buf`, `_arc_buf`, and `_vnodes_buf` keywords accept pre-allocated
+vectors that are reused across calls to avoid repeated heap allocation (internal
+optimisation used by [`surgery!`](@ref)).
 """
 function remesh(c::PVContour{T}, params::SurgeryParams;
-                _buf::Union{Nothing, Vector{SVector{2,T}}}=nothing) where {T}
+                _buf::Union{Nothing, Vector{SVector{2,T}}}=nothing,
+                _arc_buf::Union{Nothing, Vector{T}}=nothing,
+                _vnodes_buf::Union{Nothing, Vector{SVector{2,T}}}=nothing) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return c
@@ -21,7 +24,12 @@ function remesh(c::PVContour{T}, params::SurgeryParams;
     # We store n+1 entries: arc[1..n] for the original nodes, and arc[n+1] for
     # the virtual closing point (= nodes[1] + wrap at the total perimeter length).
     close_pt = nodes[1] + c.wrap  # closing target
-    arc = Vector{T}(undef, n + 1)
+    arc = if _arc_buf !== nothing
+        resize!(_arc_buf, n + 1)
+        _arc_buf
+    else
+        Vector{T}(undef, n + 1)
+    end
     arc[1] = zero(T)
     for i in 2:n
         d = nodes[i] - nodes[i-1]
@@ -33,7 +41,12 @@ function remesh(c::PVContour{T}, params::SurgeryParams;
     # Build a virtual node array that includes the closing point so that
     # interpolation in the subdivision step can reference the closing segment.
     # vnodes[1..n] = nodes[1..n], vnodes[n+1] = close_pt.
-    vnodes = Vector{SVector{2,T}}(undef, n + 1)
+    vnodes = if _vnodes_buf !== nothing
+        resize!(_vnodes_buf, n + 1)
+        _vnodes_buf
+    else
+        Vector{SVector{2,T}}(undef, n + 1)
+    end
     copyto!(vnodes, 1, nodes, 1, n)
     vnodes[n + 1] = close_pt
     nv = n + 1  # number of virtual nodes (= segments count for searchsortedlast)
