@@ -526,9 +526,12 @@ function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, p
     domain = prob.domain
 
     # 1. Remesh all contours
+    # Pre-allocate workspace buffers to avoid per-contour allocations in remesh.
     _remesh_buf = SVector{2, T}[]
+    _arc_buf = T[]
+    _vnodes_buf = SVector{2, T}[]
     for i in eachindex(contours)
-        contours[i] = remesh(contours[i], params; _buf=_remesh_buf)
+        contours[i] = remesh(contours[i], params; _buf=_remesh_buf, _arc_buf=_arc_buf, _vnodes_buf=_vnodes_buf)
     end
 
     # 2. Reconnection — iterate until no more close pairs remain.
@@ -573,7 +576,7 @@ function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, p
     #    created at stitch junctions during merge or split.
     if reconnected
         for i in eachindex(contours)
-            contours[i] = remesh(contours[i], params; _buf=_remesh_buf)
+            contours[i] = remesh(contours[i], params; _buf=_remesh_buf, _arc_buf=_arc_buf, _vnodes_buf=_vnodes_buf)
         end
     end
 
