@@ -13,8 +13,28 @@
 # Each segment contribution is integrated analytically.
 
 # 5-point Gauss-Legendre nodes and weights on [-1,1].
-# Computed in type T arithmetic so precision is preserved for BigFloat etc.
-# For Float64/Float32 the compiler will const-fold these trivial expressions.
+# Precomputed for Float64 and Float32 to avoid repeated sqrt/division in
+# the innermost velocity loop. Generic fallback for BigFloat etc.
+let
+    _n2_64 = sqrt((5.0 - 2.0 * sqrt(10.0/7.0)) / 9.0)
+    _n3_64 = sqrt((5.0 + 2.0 * sqrt(10.0/7.0)) / 9.0)
+    _w1_64 = 128.0 / 225.0
+    _w2_64 = (322.0 + 13.0 * sqrt(70.0)) / 900.0
+    _w3_64 = (322.0 - 13.0 * sqrt(70.0)) / 900.0
+    global const _GL5_NODES_F64 = SVector{5,Float64}(-_n3_64, -_n2_64, 0.0, _n2_64, _n3_64)
+    global const _GL5_WEIGHTS_F64 = SVector{5,Float64}(_w3_64, _w2_64, _w1_64, _w2_64, _w3_64)
+    global const _GL5_NODES_F32 = SVector{5,Float32}(Float32.(_GL5_NODES_F64)...)
+    global const _GL5_WEIGHTS_F32 = SVector{5,Float32}(Float32.(_GL5_WEIGHTS_F64)...)
+
+    _n1_64 = sqrt(3.0/5.0)
+    global const _GL3_NODES_F64 = SVector{3,Float64}(-_n1_64, 0.0, _n1_64)
+    global const _GL3_WEIGHTS_F64 = SVector{3,Float64}(5.0/9.0, 8.0/9.0, 5.0/9.0)
+    global const _GL3_NODES_F32 = SVector{3,Float32}(Float32.(_GL3_NODES_F64)...)
+    global const _GL3_WEIGHTS_F32 = SVector{3,Float32}(Float32.(_GL3_WEIGHTS_F64)...)
+end
+
+@inline _gl5_nodes_weights(::Type{Float64}) = (_GL5_NODES_F64, _GL5_WEIGHTS_F64)
+@inline _gl5_nodes_weights(::Type{Float32}) = (_GL5_NODES_F32, _GL5_WEIGHTS_F32)
 @inline function _gl5_nodes_weights(::Type{T}) where {T<:AbstractFloat}
     n2 = sqrt((T(5) - T(2) * sqrt(T(10)/T(7))) / T(9))
     n3 = sqrt((T(5) + T(2) * sqrt(T(10)/T(7))) / T(9))
@@ -26,7 +46,8 @@
     return (nodes, weights)
 end
 
-# 3-point Gauss-Legendre nodes and weights on [-1,1].
+@inline _gl3_nodes_weights(::Type{Float64}) = (_GL3_NODES_F64, _GL3_WEIGHTS_F64)
+@inline _gl3_nodes_weights(::Type{Float32}) = (_GL3_NODES_F32, _GL3_WEIGHTS_F32)
 @inline function _gl3_nodes_weights(::Type{T}) where {T<:AbstractFloat}
     n1 = sqrt(T(3)/T(5))
     nodes = SVector{3,T}(-n1, zero(T), n1)
@@ -371,6 +392,26 @@ end
 Direct O(N^2) velocity computation at every contour node across all layers of
 `prob`, storing results in `vel`. Uses modal decomposition with direct summation.
 """
+# Module-level scratch buffers for multi-layer velocity to avoid per-call allocation.
+# Resized as needed; only accessed from the sequential velocity! call path.
+const _ml_scratch_lock = ReentrantLock()
+const _ml_target_nodes = Ref{Any}(nothing)
+const _ml_mode_vel = Ref{Any}(nothing)
+
+function _get_ml_scratch(::Type{T}, max_nodes::Int) where {T}
+    tn = _ml_target_nodes[]
+    mv = _ml_mode_vel[]
+    if tn isa Vector{SVector{2,T}} && length(tn) >= max_nodes &&
+       mv isa Vector{SVector{2,T}} && length(mv) >= max_nodes
+        return (tn::Vector{SVector{2,T}}, mv::Vector{SVector{2,T}})
+    end
+    new_tn = Vector{SVector{2,T}}(undef, max_nodes)
+    new_mv = Vector{SVector{2,T}}(undef, max_nodes)
+    _ml_target_nodes[] = new_tn
+    _ml_mode_vel[] = new_mv
+    return (new_tn, new_mv)
+end
+
 function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                            prob::MultiLayerContourProblem{N}) where {N, T}
     kernel = prob.kernel
@@ -389,15 +430,14 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     # Pre-fetch Ewald cache once (all modes use the Euler cache for periodic domains)
     ewald = _prefetch_ewald(domain, EulerKernel())
 
-    # Pre-allocate scratch buffers sized to the largest layer.
+    # Reuse module-level scratch buffers sized to the largest layer.
     # SAFETY INVARIANT: these buffers are shared across the sequential mode and
     # target_layer loops below.  Only the innermost @threads loop (over target
     # nodes) runs in parallel, and each thread writes to a distinct index.
     # Parallelizing the outer `for mode` or `for target_layer` loops would
     # require per-thread copies of target_nodes and mode_vel.
     max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
-    target_nodes = Vector{SVector{2,T}}(undef, max_nodes)
-    mode_vel = Vector{SVector{2,T}}(undef, max_nodes)
+    target_nodes, mode_vel = _get_ml_scratch(T, max_nodes)
 
     for mode in 1:N
         lam = evals[mode]
