@@ -20,31 +20,33 @@ end
 # Avoids repeated allocation of CPU packing buffers and device arrays
 # across the 4 velocity evaluations per RK4 step.
 
-mutable struct _GPUWorkspace{T}
+mutable struct _GPUWorkspace{T, DA<:AbstractVector{T}}
     # CPU packing buffers (filled each call, then copied to device)
     cpu_ax::Vector{T}; cpu_ay::Vector{T}
     cpu_bx::Vector{T}; cpu_by::Vector{T}
     cpu_pv::Vector{T}
     cpu_tx::Vector{T}; cpu_ty::Vector{T}
-    # Device arrays — typed as Any because the concrete array type
-    # (Array vs CuArray) depends on which extension is loaded.
-    dev_ax::Any; dev_ay::Any
-    dev_bx::Any; dev_by::Any
-    dev_pv::Any
-    dev_tx::Any; dev_ty::Any
-    dev_vel_x::Any; dev_vel_y::Any
+    # Device arrays — parameterized so field access is type-stable
+    # (Vector{T} on CPU, CuVector{T} on GPU via the CUDA extension).
+    dev_ax::DA; dev_ay::DA
+    dev_bx::DA; dev_by::DA
+    dev_pv::DA
+    dev_tx::DA; dev_ty::DA
+    dev_vel_x::DA; dev_vel_y::DA
     # CPU copy-back buffers
     cpu_vx::Vector{T}; cpu_vy::Vector{T}
     n::Int
 end
 
 function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
-    _GPUWorkspace{T}(
+    da = device_zeros(dev, T, N)  # probe device array type
+    DA = typeof(da)
+    _GPUWorkspace{T, DA}(
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_ax, cpu_ay
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_bx, cpu_by
         Vector{T}(undef, N),                        # cpu_pv
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_tx, cpu_ty
-        device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_ax, dev_ay
+        da, device_zeros(dev, T, N),                # dev_ax, dev_ay
         device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_bx, dev_by
         device_zeros(dev, T, N),                            # dev_pv
         device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_tx, dev_ty
@@ -59,8 +61,8 @@ const _gpu_ws_ref = Ref{Any}(nothing)
 
 function _get_gpu_workspace!(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
     ws = _gpu_ws_ref[]
-    if ws isa _GPUWorkspace{T} && ws.n == N
-        return ws::_GPUWorkspace{T}
+    if ws isa _GPUWorkspace{T, <:AbstractVector{T}} && ws.n == N
+        return ws
     end
     ws = _create_gpu_workspace(dev, T, N)
     _gpu_ws_ref[] = ws
@@ -80,11 +82,10 @@ function pack_segments(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {
     by = Vector{T}(undef, N)
     pv_vec = Vector{T}(undef, N)
     _fill_segment_bufs!(ax, ay, bx, by, pv_vec, prob)
-    n_seg = N
     SegmentData(
-        to_device(dev, ax[1:n_seg]), to_device(dev, ay[1:n_seg]),
-        to_device(dev, bx[1:n_seg]), to_device(dev, by[1:n_seg]),
-        to_device(dev, pv_vec[1:n_seg])
+        to_device(dev, ax), to_device(dev, ay),
+        to_device(dev, bx), to_device(dev, by),
+        to_device(dev, pv_vec)
     )
 end
 
@@ -126,8 +127,7 @@ function pack_targets(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K
     tx = Vector{T}(undef, N)
     ty = Vector{T}(undef, N)
     _fill_target_bufs!(tx, ty, prob)
-    n_targets = N
-    (to_device(dev, tx[1:n_targets]), to_device(dev, ty[1:n_targets]))
+    (to_device(dev, tx), to_device(dev, ty))
 end
 
 # Shared logic for filling CPU target buffers.
