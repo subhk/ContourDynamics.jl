@@ -1,17 +1,4 @@
 """
-    _collect_all_nodes(prob::ContourProblem)
-
-Collect all nodes from all contours into a flat vector.
-"""
-function _collect_all_nodes(prob::ContourProblem{K,D,T}) where {K,D,T}
-    nodes = SVector{2,T}[]
-    for c in prob.contours
-        append!(nodes, c.nodes)
-    end
-    return nodes
-end
-
-"""
     _collect_all_nodes!(buf, prob::ContourProblem)
 
 Collect all nodes into pre-allocated buffer `buf` (in-place, non-allocating).
@@ -221,16 +208,6 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
         end
     end
     return prob
-end
-
-function _collect_all_nodes(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
-    nodes = SVector{2,T}[]
-    for i in 1:N
-        for c in prob.layers[i]
-            append!(nodes, c.nodes)
-        end
-    end
-    return nodes
 end
 
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourProblem{N}) where {N, T}
