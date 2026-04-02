@@ -374,12 +374,21 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
         # r_vec0 is intentionally NOT minimum-image wrapped: cos(k·r) is
         # periodic with the same periods as the domain, so wrapping has no
         # effect on the phase.
-        for (mi, kxi) in enumerate(cache.kx)
-            for (ni, kyi) in enumerate(cache.ky)
+        # Use cos(kx*rx + ky*ry) = cos(kx*rx)*cos(ky*ry) - sin(kx*rx)*sin(ky*ry)
+        # to reduce trig calls from O(nk²) to O(nk).
+        rx, ry = r_vec0[1], r_vec0[2]
+        nkx = length(cache.kx)
+        nky = length(cache.ky)
+        for mi in 1:nkx
+            kxi = cache.kx[mi]
+            cx = cos(kxi * rx)
+            sx = sin(kxi * rx)
+            for ni in 1:nky
                 coeff = cache.fourier_coeffs[mi, ni]
                 abs(coeff) < eps(T) && continue
-                phase = kxi * r_vec0[1] + kyi * r_vec0[2]
-                G_corr += coeff * cos(phase)
+                kyi = cache.ky[ni]
+                # cos(kx*rx + ky*ry) = cx*cos(ky*ry) - sx*sin(ky*ry)
+                G_corr += coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
             end
         end
 
@@ -434,14 +443,16 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
         r_vec = x - s_pt
+        rx, ry = r_vec[1], r_vec[2]
         G_corr = zero(T)
         for kxi in euler_cache.kx
+            cx = cos(kxi * rx)
+            sx = sin(kxi * rx)
             for kyi in euler_cache.ky
                 k2 = kxi^2 + kyi^2
                 k2 < eps(T) && continue
                 coeff = kappa2 / (k2 * (k2 + kappa2) * area)
-                phase = kxi * r_vec[1] + kyi * r_vec[2]
-                G_corr -= coeff * cos(phase)
+                G_corr -= coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
             end
         end
         corr_integral += g_weights[q] * G_corr
@@ -529,12 +540,19 @@ function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
         end
 
         # Fourier-space sum: -(1/(2π)) Σ fourier_coeffs cos(k·r)
-        for (mi, kxi) in enumerate(cache.kx)
-            for (ni, kyi) in enumerate(cache.ky)
+        # Factored trig: cos(kx*rx + ky*ry) = cos(kx*rx)*cos(ky*ry) - sin(kx*rx)*sin(ky*ry)
+        rx, ry = r_vec0[1], r_vec0[2]
+        nkx = length(cache.kx)
+        nky = length(cache.ky)
+        for mi in 1:nkx
+            kxi = cache.kx[mi]
+            cx = cos(kxi * rx)
+            sx = sin(kxi * rx)
+            for ni in 1:nky
                 coeff = cache.fourier_coeffs[mi, ni]
                 abs(coeff) < eps(T) && continue
-                phase = kxi * r_vec0[1] + kyi * r_vec0[2]
-                G_corr -= inv2pi * coeff * cos(phase)
+                kyi = cache.ky[ni]
+                G_corr -= inv2pi * coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
             end
         end
 
