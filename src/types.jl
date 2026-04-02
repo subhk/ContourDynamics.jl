@@ -258,7 +258,7 @@ nlayers(::MultiLayerContourProblem{N}) where {N} = N
 Total number of nodes across all contours in a [`ContourProblem`](@ref) or
 [`MultiLayerContourProblem`](@ref).
 """
-function total_nodes(prob::ContourProblem)
+@inline function total_nodes(prob::ContourProblem)
     s = 0
     for c in prob.contours
         s += nnodes(c)
@@ -266,7 +266,7 @@ function total_nodes(prob::ContourProblem)
     return s
 end
 
-function total_nodes(prob::MultiLayerContourProblem{N}) where {N}
+@inline function total_nodes(prob::MultiLayerContourProblem{N}) where {N}
     s = 0
     for i in 1:N
         for c in prob.layers[i]
