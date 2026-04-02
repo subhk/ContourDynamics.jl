@@ -390,8 +390,6 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     n1 = nnodes(c1)
     n2 = nnodes(c2)
 
-    i, j = _best_stitch_nodes(c1, i, c2, j, domain)
-
     # Check orientation consistency: both contours should have the same
     # sign of signed area. If they differ, reverse c2's node order so
     # the merged contour has consistent winding.
@@ -401,7 +399,15 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     a2 = vortex_area(c2)
     reversed = abs(a1) > eps(T) * T(1000) && abs(a2) > eps(T) * T(1000) && sign(a1) != sign(a2)
     c2_nodes = reversed ? reverse(c2.nodes) : c2.nodes
-    j_eff = reversed ? (n2 - j + 1) : j
+
+    # Build a temporary PVContour with the (possibly reversed) nodes so that
+    # _best_stitch_nodes operates on the final node ordering.  The initial
+    # segment indices i, j are mapped into the reversed space as starting
+    # candidates — _best_stitch_nodes then refines to the closest node pair.
+    j_cand = reversed ? (n2 - j + 1) : j
+    j_cand = clamp(j_cand, 1, n2)
+    c2_eff = PVContour(c2_nodes, c2.pv, c2.wrap)
+    i, j_eff = _best_stitch_nodes(c1, i, c2_eff, j_cand, domain)
 
     # For periodic domains, shift c2 to closest image of the merge point
     shift = _periodic_merge_shift(c1.nodes[i], c2_nodes[j_eff], domain)
