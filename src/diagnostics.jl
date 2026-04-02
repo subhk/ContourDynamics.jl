@@ -357,19 +357,22 @@ function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     Ld = prob.kernel.Ld
     E = zero(T)
     inv4pi = one(T) / (4 * T(π))
+    max_n = maximum((nnodes(c) for c in contours if nnodes(c) >= 3 && !is_spanning(c)), init=0)
+    _partial = zeros(T, max_n)
     for ci in contours
         nnodes(ci) < 3 && continue
         is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
             is_spanning(cj) && continue
-            E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld)
+            E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld; _partial=_partial)
         end
     end
     return -inv4pi * E / 2
 end
 
-function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) where {T}
+function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T;
+                                  _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes  # detect self-interaction
@@ -380,7 +383,8 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T) wher
     self_seg_const = 4 * log(T(2)) - T(6)
     # Smooth limit of K₀(r/Ld) + log(r) as r→0
     k0_smooth_at_zero = log(2 * Ld) - T(Base.MathConstants.eulergamma)
-    partial = zeros(T, nci)
+    partial = _partial
+    @inbounds for k in 1:nci; partial[k] = zero(T); end
     @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
@@ -500,7 +504,8 @@ end
 
 function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
                                               cache::EwaldCache{T},
-                                              domain::PeriodicDomain{T}) where {T}
+                                              domain::PeriodicDomain{T};
+                                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes
@@ -537,7 +542,8 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
         end
     end
 
-    partial = zeros(T, nci)
+    partial = _partial
+    @inbounds for k in 1:nci; partial[k] = zero(T); end
     @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
@@ -606,13 +612,15 @@ function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     E = zero(T)
     inv4pi = one(T) / (4 * T(π))
+    max_n = maximum((nnodes(c) for c in contours if nnodes(c) >= 3 && !is_spanning(c)), init=0)
+    _partial = zeros(T, max_n)
     for ci in contours
         nnodes(ci) < 3 && continue
         is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
             is_spanning(cj) && continue
-            E += ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain)
+            E += ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=_partial)
         end
     end
     return -inv4pi * E / 2
@@ -628,14 +636,16 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     inv4pi = one(T) / (4 * T(π))
     kappa2 = one(T) / Ld^2
     area = 4 * prob.domain.Lx * prob.domain.Ly
+    max_n = maximum((nnodes(c) for c in contours if nnodes(c) >= 3 && !is_spanning(c)), init=0)
+    _partial = zeros(T, max_n)
     for ci in contours
         nnodes(ci) < 3 && continue
         is_spanning(ci) && continue
         for cj in contours
             nnodes(cj) < 3 && continue
             is_spanning(cj) && continue
-            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain)
-            pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area)
+            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain; _partial=_partial)
+            pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area; _partial=_partial)
             E += ci.pv * cj.pv * pair_E
         end
     end
@@ -645,12 +655,14 @@ end
 """QG-Euler correction for periodic energy: smooth Fourier series with -κ²/(k²(k²+κ²)) coefficients."""
 function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
                                              euler_cache::EwaldCache{T},
-                                             kappa2::T, area::T) where {T}
+                                             kappa2::T, area::T;
+                                             _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
-    partial = zeros(T, nci)
+    partial = _partial
+    @inbounds for k in 1:nci; partial[k] = zero(T); end
     @_maybe_threads nci >= _THREADING_THRESHOLD for i in 1:nci
         ai = ci.nodes[i]
         bi = next_node(ci, i)
@@ -743,6 +755,9 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
     P_inv = kernel.eigenvectors_inv
     E = zero(T)
 
+    max_n = maximum(nnodes(c) for layer in prob.layers for c in layer if nnodes(c) >= 3 && !is_spanning(c); init=0)
+    _partial = zeros(T, max_n)
+
     for mode in 1:N
         lam = evals[mode]
         for li in 1:N
@@ -760,10 +775,10 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
                         ncj < 3 && continue
                         is_spanning(cj) && continue
                         if abs(lam) < eps(T) * 100
-                            pair_E = _energy_contour_pair_euler(ci, cj)
+                            pair_E = _energy_contour_pair_euler(ci, cj; _partial=_partial)
                         else
                             Ld_mode = one(T) / sqrt(abs(lam))
-                            pair_E = _energy_contour_pair_qg(ci, cj, Ld_mode)
+                            pair_E = _energy_contour_pair_qg(ci, cj, Ld_mode; _partial=_partial)
                         end
                         E += wi * wj * ci.pv * cj.pv * pair_E
                     end
@@ -785,6 +800,8 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
 
     euler_cache = _get_ewald_cache(domain, EulerKernel())
     area = 4 * domain.Lx * domain.Ly
+    max_n = maximum(nnodes(c) for layer in prob.layers for c in layer if nnodes(c) >= 3 && !is_spanning(c); init=0)
+    _partial = zeros(T, max_n)
 
     for mode in 1:N
         lam = evals[mode]
@@ -803,11 +820,11 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
                         ncj < 3 && continue
                         is_spanning(cj) && continue
                         if abs(lam) < eps(T) * 100
-                            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain)
+                            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain; _partial=_partial)
                         else
                             kappa2 = abs(lam)
-                            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain)
-                            pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area)
+                            pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, domain; _partial=_partial)
+                            pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area; _partial=_partial)
                         end
                         E += wi * wj * ci.pv * cj.pv * pair_E
                     end
