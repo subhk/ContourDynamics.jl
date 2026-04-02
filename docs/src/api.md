@@ -111,7 +111,7 @@ device_array
 ## Internals
 
 ```@docs
-ContourDynamics._collect_all_nodes
+ContourDynamics._collect_all_nodes!
 ContourDynamics._scatter_nodes!
 ContourDynamics._scatter_shifted!
 ContourDynamics._expint_e1
