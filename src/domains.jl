@@ -29,9 +29,21 @@ preserves its geometry across periodic seams; wrapping nodes independently does 
 @inline function contour_periodic_shift(c::PVContour, domain::PeriodicDomain)
     ref = centroid(c)
     # centroid returns zero for degenerate (near-zero-area) contours;
-    # fall back to node mean so the contour is still wrapped correctly.
+    # fall back to minimum-image mean relative to the first node.
+    # A naive arithmetic mean fails for contours straddling a periodic
+    # boundary (e.g., nodes at x = -L+ε and x = L-ε average to ~0).
     if iszero(ref) && !isempty(c.nodes)
-        ref = sum(c.nodes) / length(c.nodes)
+        p0 = c.nodes[1]
+        Lx2, Ly2 = 2 * domain.Lx, 2 * domain.Ly
+        avg = p0
+        for k in 2:length(c.nodes)
+            d = c.nodes[k] - p0
+            # Minimum-image displacement relative to p0
+            dx = d[1] - Lx2 * round(d[1] / Lx2)
+            dy = d[2] - Ly2 * round(d[2] / Ly2)
+            avg = avg + typeof(p0)(dx, dy)
+        end
+        ref = avg / length(c.nodes)
     end
     return wrap_node(ref, domain) - ref
 end
