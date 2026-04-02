@@ -35,15 +35,16 @@ preserves its geometry across periodic seams; wrapping nodes independently does 
     if iszero(ref) && !isempty(c.nodes)
         p0 = c.nodes[1]
         Lx2, Ly2 = 2 * domain.Lx, 2 * domain.Ly
-        avg = p0
+        # Accumulate minimum-image displacements from p0, then add mean back to p0.
+        sum_dx = zero(eltype(p0))
+        sum_dy = zero(eltype(p0))
         for k in 2:length(c.nodes)
             d = c.nodes[k] - p0
-            # Minimum-image displacement relative to p0
-            dx = d[1] - Lx2 * round(d[1] / Lx2)
-            dy = d[2] - Ly2 * round(d[2] / Ly2)
-            avg = avg + typeof(p0)(dx, dy)
+            sum_dx += d[1] - Lx2 * round(d[1] / Lx2)
+            sum_dy += d[2] - Ly2 * round(d[2] / Ly2)
         end
-        ref = avg / length(c.nodes)
+        n = length(c.nodes)
+        ref = p0 + typeof(p0)(sum_dx / n, sum_dy / n)
     end
     return wrap_node(ref, domain) - ref
 end
