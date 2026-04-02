@@ -393,8 +393,8 @@ Direct O(N^2) velocity computation at every contour node across all layers of
 `prob`, storing results in `vel`. Uses modal decomposition with direct summation.
 """
 # Module-level scratch buffers for multi-layer velocity to avoid per-call allocation.
-# Resized as needed; only accessed from the sequential velocity! call path.
-const _ml_scratch_lock = ReentrantLock()
+# These are only mutated from the sequential outer loop in _direct_velocity!;
+# the inner @threads parallelism operates on separate indices within the buffers.
 const _ml_target_nodes = Ref{Any}(nothing)
 const _ml_mode_vel = Ref{Any}(nothing)
 
