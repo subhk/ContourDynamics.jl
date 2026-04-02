@@ -218,7 +218,36 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
     delta = T(delta)
     close_pairs = Tuple{Int,Int,Int,Int}[]
     delta2 = delta^2
-    seen = Set{Tuple{Int,Int,Int,Int}}()
+    # Compact deduplication: encode each canonical pair as a UInt64 when indices
+    # fit in 16 bits (covers up to 65535 contours × 65535 nodes each).  This
+    # halves the per-entry memory vs Set{Tuple{Int,Int,Int,Int}} and speeds
+    # hashing.  Fall back to the tuple Set for (impractically) large problems.
+    max_idx = 0
+    for c in contours
+        max_idx = max(max_idx, nnodes(c))
+    end
+    use_compact = length(contours) <= typemax(UInt16) && max_idx <= typemax(UInt16)
+    seen_compact = use_compact ? Set{UInt64}() : nothing
+    seen_tuple = use_compact ? nothing : Set{Tuple{Int,Int,Int,Int}}()
+
+    @inline function _pair_seen(ci, i, cj, j)
+        a, b, c_idx, d = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
+        if use_compact
+            key = (UInt64(a) << 48) | (UInt64(b) << 32) | (UInt64(c_idx) << 16) | UInt64(d)
+            return key in seen_compact::Set{UInt64}
+        else
+            return (a, b, c_idx, d) in seen_tuple::Set{Tuple{Int,Int,Int,Int}}
+        end
+    end
+    @inline function _pair_insert!(ci, i, cj, j)
+        a, b, c_idx, d = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
+        if use_compact
+            key = (UInt64(a) << 48) | (UInt64(b) << 32) | (UInt64(c_idx) << 16) | UInt64(d)
+            push!(seen_compact::Set{UInt64}, key)
+        else
+            push!(seen_tuple::Set{Tuple{Int,Int,Int,Int}}, (a, b, c_idx, d))
+        end
+    end
 
     for (ci, c) in enumerate(contours)
         is_spanning(c) && continue
@@ -238,8 +267,8 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                 haskey(idx.bins, key) || continue
                 for (cj, j) in idx.bins[key]
                     # Canonical ordering to avoid duplicates
+                    _pair_seen(ci, i, cj, j) && continue
                     pair = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
-                    pair in seen && continue
                     # Invariant: build_spatial_index (line 40) skips spanning contours, so cj is always non-spanning
                     if ci == cj
                         ncj = nnodes(contours[cj])
@@ -264,7 +293,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                     a_j_img, b_j_img = _shift_segment_to_image(a_j, b_j, mid_q, domain)
 
                     if _segment_min_dist2(a_i_img, b_i_img, a_j_img, b_j_img) < delta2
-                        push!(seen, pair)
+                        _pair_insert!(ci, i, cj, j)
                         push!(close_pairs, pair)
                     end
                 end
