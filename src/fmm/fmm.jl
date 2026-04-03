@@ -129,6 +129,115 @@ function _treecode_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wh
 end
 
 """
+    _treecode_velocity!(vel, prob::MultiLayerContourProblem)
+
+Treecode O(N log N) velocity for multi-layer QG problems using modal
+decomposition.  Builds one tree over all contours from all layers (the
+geometry is shared across modes), then for each mode creates weighted
+contours with effective PV = P_inv[mode, layer] * pv and runs the
+single-layer treecode.  Results are projected back to per-layer velocity
+arrays with the eigenvector weights.
+"""
+function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
+                             prob::MultiLayerContourProblem{NL}) where {NL, T}
+    kernel = prob.kernel
+    domain = prob.domain
+    evals = kernel.eigenvalues
+    P = kernel.eigenvectors
+    P_inv = kernel.eigenvectors_inv
+
+    for i in 1:NL
+        fill!(vel[i], zero(SVector{2,T}))
+    end
+
+    # Collect all contours across layers into a flat list
+    all_contours = PVContour{T}[]
+    contour_layer = Int[]
+    for li in 1:NL
+        for c in prob.layers[li]
+            push!(all_contours, c)
+            push!(contour_layer, li)
+        end
+    end
+    Ntot = sum(nnodes(c) for c in all_contours; init=0)
+    Ntot == 0 && return vel
+
+    # Build tree once — geometry is identical for all modes
+    tree = build_fmm_tree(all_contours)
+
+    # Flat index mapping (shared across modes)
+    offsets = Vector{Int}(undef, length(all_contours) + 1)
+    offsets[1] = 0
+    for ci in eachindex(all_contours)
+        offsets[ci + 1] = offsets[ci] + nnodes(all_contours[ci])
+    end
+    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
+    for seg_idx in eachindex(tree.sorted_segments)
+        ci, ni = tree.sorted_segments[seg_idx]
+        flat_indices[seg_idx] = offsets[ci] + ni
+    end
+
+    # Per-layer flat offsets for scattering results back
+    layer_flat_offset = Vector{Int}(undef, NL)
+    offset = 0
+    for li in 1:NL
+        layer_flat_offset[li] = offset
+        offset += sum(nnodes(c) for c in prob.layers[li]; init=0)
+    end
+
+    mode_vel = Vector{SVector{2,T}}(undef, Ntot)
+
+    for mode in 1:NL
+        lam = evals[mode]
+        mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
+                      QGKernel(one(T) / sqrt(abs(lam)))
+        ewald = _prefetch_ewald(domain, mode_kernel)
+
+        # Create weighted contours: effective PV = P_inv[mode, layer] * pv
+        weighted = Vector{PVContour{T}}(undef, length(all_contours))
+        for ci in eachindex(all_contours)
+            c = all_contours[ci]
+            w = P_inv[mode, contour_layer[ci]]
+            weighted[ci] = PVContour(c.nodes, w * c.pv, c.wrap)
+        end
+
+        # Run treecode on weighted contours using the shared tree
+        fill!(mode_vel, zero(SVector{2,T}))
+
+        Threads.@threads for li_idx in eachindex(tree.leaf_indices)
+            target_leaf_idx = tree.leaf_indices[li_idx]
+            stack = Int[1]
+            while !isempty(stack)
+                source_box_idx = pop!(stack)
+                source_box = tree.boxes[source_box_idx]
+                if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
+                   _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
+                    _treecode_box_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                           weighted, flat_indices, mode_kernel, domain, ewald)
+                else
+                    for child_idx in source_box.children
+                        child_idx == 0 || push!(stack, child_idx)
+                    end
+                end
+            end
+        end
+
+        # Scatter mode velocity to per-layer arrays with projection weights
+        for li in 1:NL
+            pw = P[li, mode]
+            abs(pw) < eps(T) && continue
+            n_layer = sum(nnodes(c) for c in prob.layers[li]; init=0)
+            base = layer_flat_offset[li]
+            @inbounds for k in 1:n_layer
+                vel[li][k] = vel[li][k] + pw * mode_vel[base + k]
+            end
+        end
+    end
+
+    return vel
+end
+
+"""
     _near_field!(vel, tree, contours, kernel, domain, ewald_cache)
 
 Evaluate near-field contributions for all leaf boxes using direct summation.
