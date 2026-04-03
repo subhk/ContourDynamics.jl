@@ -43,7 +43,7 @@ features:
     linkText: View diagnostics API
   - icon: 🔌
     title: Ecosystem Integration
-    details: Package extensions for DifferentialEquations.jl, Makie.jl, GeophysicalFlows.jl, RecordedArrays.jl, and JLD2.jl — plug into the broader Julia ecosystem.
+    details: Package extensions for DifferentialEquations.jl, Makie.jl, RecordedArrays.jl, and JLD2.jl — plug into the broader Julia ecosystem.
   - icon: ⚡
     title: High Performance
     details: StaticArrays for node positions, multi-threaded velocity and energy computation, O(log C) spatial indexing for surgery, and zero-allocation time stepping.
