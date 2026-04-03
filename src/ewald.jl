@@ -264,7 +264,7 @@ function _expint_e1(x::T) where {T<:AbstractFloat}
         max_terms = max(60, ceil(Int, -2 * log(eps(T))))  # scale with precision
         for n in 1:max_terms
             term *= -x / T(n)
-            s += term / T(n)
+            s -= term / T(n)
             abs(term / T(n)) < eps(T) * abs(s) && break
         end
         return s
