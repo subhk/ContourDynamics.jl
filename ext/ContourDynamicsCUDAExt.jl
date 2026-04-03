@@ -15,12 +15,17 @@ ContourDynamics.to_device(::ContourDynamics.GPU, x) = adapt(CuArray, x)
 
 ContourDynamics._ka_backend(::ContourDynamics.GPU) = CUDABackend()
 
-# Adapt.jl integration for ContourProblem.
+# Adapt.jl integration for ContourProblem and MultiLayerContourProblem.
 # Contour nodes stay on CPU (packed to GPU on each velocity evaluation).
 # adapt_structure only switches the device tag for dispatch.
 function Adapt.adapt_structure(to, prob::ContourDynamics.ContourProblem)
     new_dev = _detect_device(to)
     ContourDynamics.ContourProblem(prob.kernel, prob.domain, prob.contours; dev=new_dev)
+end
+
+function Adapt.adapt_structure(to, prob::ContourDynamics.MultiLayerContourProblem)
+    new_dev = _detect_device(to)
+    ContourDynamics.MultiLayerContourProblem(prob.kernel, prob.domain, prob.layers; dev=new_dev)
 end
 
 _detect_device(::CUDA.CuArrayAdaptor) = ContourDynamics.GPU()
