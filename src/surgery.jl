@@ -70,22 +70,23 @@ end
 end
 
 function _insert_bin!(bins::Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}},
-                      pt::SVector{2,T}, ci::Int, ni::Int, delta::T,
-                      ::UnboundedDomain) where {T}
+                    pt::SVector{2,T}, ci::Int, ni::Int, delta::T,
+                    ::UnboundedDomain) where {T}
+
     bx = floor(Int, pt[1] / delta)
     by = floor(Int, pt[2] / delta)
     _push_bin!(bins, (bx, by), ci, ni)
 end
 
 function _insert_bin!(bins::Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}},
-                      pt::SVector{2,T}, ci::Int, ni::Int, delta::T,
+                      pt::SVector{2,T}, ci::Int, ni::Int, δ::T,
                       domain::PeriodicDomain{T}) where {T}
     Lx, Ly = domain.Lx, domain.Ly
     x_w = _wrap_coord(pt[1], Lx)
     y_w = _wrap_coord(pt[2], Ly)
 
-    bx = floor(Int, x_w / delta)
-    by = floor(Int, y_w / delta)
+    bx = floor(Int, x_w / δ)
+    by = floor(Int, y_w / δ)
     _push_bin!(bins, (bx, by), ci, ni)
 
     # Ghost entries near periodic boundaries so that the 3×3 neighbour query
@@ -93,23 +94,22 @@ function _insert_bin!(bins::Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}},
     # Use 2*delta threshold: the query extends ±1 bin, so a segment up to
     # 2*delta from the seam can have its periodic image within delta of a
     # query on the opposite side.
-    two_delta = 2 * delta
-    near_xhi = x_w > Lx - two_delta
-    near_xlo = x_w < -Lx + two_delta
-    near_yhi = y_w > Ly - two_delta
-    near_ylo = y_w < -Ly + two_delta
+    near_xhi = x_w > Lx  - 2δ
+    near_xlo = x_w < -Lx + 2δ
+    near_yhi = y_w > Ly  - 2δ
+    near_ylo = y_w < -Ly + 2δ
 
     # Edge ghosts
-    near_xhi && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / delta), by), ci, ni)
-    near_xlo && _push_bin!(bins, (floor(Int, (x_w + 2Lx) / delta), by), ci, ni)
-    near_yhi && _push_bin!(bins, (bx, floor(Int, (y_w - 2Ly) / delta)), ci, ni)
-    near_ylo && _push_bin!(bins, (bx, floor(Int, (y_w + 2Ly) / delta)), ci, ni)
+    near_xhi && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / δ), by), ci, ni)
+    near_xlo && _push_bin!(bins, (floor(Int, (x_w + 2Lx) / δ), by), ci, ni)
+    near_yhi && _push_bin!(bins, (bx, floor(Int, (y_w - 2Ly) / δ)), ci, ni)
+    near_ylo && _push_bin!(bins, (bx, floor(Int, (y_w + 2Ly) / δ)), ci, ni)
 
     # Corner ghosts
-    near_xhi && near_yhi && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / delta), floor(Int, (y_w - 2Ly) / delta)), ci, ni)
-    near_xhi && near_ylo && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / delta), floor(Int, (y_w + 2Ly) / delta)), ci, ni)
-    near_xlo && near_yhi && _push_bin!(bins, (floor(Int, (x_w + 2Lx) / delta), floor(Int, (y_w - 2Ly) / delta)), ci, ni)
-    near_xlo && near_ylo && _push_bin!(bins, (floor(Int, (x_w + 2Lx) / delta), floor(Int, (y_w + 2Ly) / delta)), ci, ni)
+    near_xhi && near_yhi && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / δ), floor(Int, (y_w - 2Ly) / δ)), ci, ni)
+    near_xhi && near_ylo && _push_bin!(bins, (floor(Int, (x_w - 2Lx) / δ), floor(Int, (y_w + 2Ly) / δ)), ci, ni)
+    near_xlo && near_yhi && _push_bin!(bins, (floor(Int, (x_w + 2Lx) / δ), floor(Int, (y_w - 2Ly) / δ)), ci, ni)
+    near_xlo && near_ylo && _push_bin!(bins, (floor(Int, (x_w + 2Lx) / δ), floor(Int, (y_w + 2Ly) / δ)), ci, ni)
 end
 
 # ── Contour Reconnection ────────────────────────────────
@@ -124,7 +124,7 @@ Detection") to handle all cases: endpoint-to-segment, endpoint-to-endpoint,
 and interior-to-interior closest points.
 """
 function _segment_min_dist2(a1::SVector{2,T}, b1::SVector{2,T},
-                            a2::SVector{2,T}, b2::SVector{2,T}) where {T}
+                        a2::SVector{2,T}, b2::SVector{2,T}) where {T}
     d1 = b1 - a1
     d2 = b2 - a2
     r = a1 - a2
@@ -186,14 +186,16 @@ end
 # ── Periodic helpers for find_close_segments ─────────────
 
 @inline _wrap_query_pt(pt::SVector{2,T}, ::UnboundedDomain) where {T} = pt
+
 @inline function _wrap_query_pt(pt::SVector{2,T}, domain::PeriodicDomain{T}) where {T}
     SVector{2,T}(_wrap_coord(pt[1], domain.Lx), _wrap_coord(pt[2], domain.Ly))
 end
 
 @inline _shift_segment_to_image(a, b, ref, ::UnboundedDomain) = (a, b)
+
 @inline function _shift_segment_to_image(a::SVector{2,T}, b::SVector{2,T},
-                                          ref::SVector{2,T},
-                                          domain::PeriodicDomain{T}) where {T}
+                                    ref::SVector{2,T},
+                                    domain::PeriodicDomain{T}) where {T}
     mid = (a + b) / 2
     raw = ref - mid
     mi = _min_image(raw, domain)
@@ -214,7 +216,7 @@ For `PeriodicDomain`, minimum-image distances are used so that segments
 close across the periodic boundary are correctly detected.
 """
 function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T}, delta,
-                             domain::AbstractDomain=UnboundedDomain()) where {T}
+                            domain::AbstractDomain=UnboundedDomain()) where {T}
     delta = T(delta)
     close_pairs = Tuple{Int,Int,Int,Int}[]
     delta2 = delta^2
@@ -239,6 +241,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
             return (a, b, c_idx, d) in seen_tuple::Set{Tuple{Int,Int,Int,Int}}
         end
     end
+
     @inline function _pair_insert!(ci, i, cj, j)
         a, b, c_idx, d = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
         if use_compact
@@ -314,14 +317,16 @@ Returns `(best_i1, best_i2)` — node indices into `c1.nodes` and `c2.nodes`.
 For `PeriodicDomain`, minimum-image distances are used.
 """
 function _best_stitch_nodes(c1::PVContour{T}, i1::Int, c2::PVContour{T}, i2::Int,
-                            domain::AbstractDomain=UnboundedDomain()) where {T}
+                        domain::AbstractDomain=UnboundedDomain()) where {T}
     nc1 = nnodes(c1)
     nc2 = nnodes(c2)
+    
     # Candidate node indices: start and end of each close segment
     i1_end = mod1(i1 + 1, nc1)
     i2_end = mod1(i2 + 1, nc2)
     best_d2 = typemax(T)
     best = (i1, i2)
+
     for ni in (i1, i1_end)
         p1 = c1.nodes[ni]
         for nj in (i2, i2_end)
@@ -353,8 +358,10 @@ Merged contours are stitched so that traversal orientation is preserved.
     clean up short/long segments.  The top-level [`surgery!`](@ref) does
     this automatically.
 """
-function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                    domain::AbstractDomain=UnboundedDomain()) where {T}
+function reconnect!(contours::Vector{PVContour{T}}, 
+                close_pairs::Vector{Tuple{Int,Int,Int,Int}},
+                domain::AbstractDomain=UnboundedDomain()) where {T}
+
     isempty(close_pairs) && return
 
     # Process all independent pairs per iteration to reduce spatial index rebuilds.
@@ -388,7 +395,7 @@ function reconnect!(contours::Vector{PVContour{T}}, close_pairs::Vector{Tuple{In
 end
 
 function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int,
-                           domain::AbstractDomain=UnboundedDomain()) where {T}
+                        domain::AbstractDomain=UnboundedDomain()) where {T}
     c = contours[ci]
     if is_spanning(c)
         @warn "_reconnect_split!: called on spanning contour $ci — skipped" maxlog=5
