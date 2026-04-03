@@ -31,7 +31,8 @@ pv = 2π
 
 # --- Two-layer parameters ---
 Ld = SVector{1,T}(1.0)                          # single deformation radius (N-1 = 1)
-coupling = SMatrix{2,2,T}([-1.0, 1.0, 1.0, -1.0])  # standard 2-layer coupling
+F = one(T) / (2 * Ld[1]^2)                      # stretching coefficient
+coupling = SMatrix{2,2,T}(-F, F, F, -F)         # standard 2-layer coupling
 
 kernel = MultiLayerQGKernel(Ld, coupling)
 
