@@ -150,29 +150,22 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
-    # Fast path (lock-free read): return immediately if cached.
-    # Dict lookup without mutation is safe when only this code path reads
-    # and all mutations happen under _ewald_cache_lock.
-    cached = get(caches, key, nothing)
-    cached !== nothing && return cached
-    # Slow path: build under lock so that only one thread constructs
-    # a given cache entry. The lock is held during build_ewald_cache,
-    # but this only happens once per unique key (subsequent calls hit
-    # the fast path above).
+    # All Dict access is under the lock to avoid races during hash table
+    # resize.  ReentrantLock is fast when uncontended, and the lock is only
+    # contested during the initial warm-up phase.
     cache = lock(_ewald_cache_lock) do
-        # Re-check: another thread may have inserted while we waited
-        if haskey(caches, key)
-            caches[key]
-        else
-            new_cache = build_ewald_cache(domain, kernel)
-            while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
-                old_key = popfirst!(order)
-                delete!(caches, old_key)
-            end
-            caches[key] = new_cache
-            push!(order, key)
-            new_cache
+        cached = get(caches, key, nothing)
+        if cached !== nothing
+            return cached
         end
+        new_cache = build_ewald_cache(domain, kernel)
+        while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
+            old_key = popfirst!(order)
+            delete!(caches, old_key)
+        end
+        caches[key] = new_cache
+        push!(order, key)
+        new_cache
     end
     return cache
 end
