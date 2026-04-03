@@ -169,7 +169,6 @@ ContourDynamics.jl provides optional integrations via Julia package extensions (
 |-----------|----------------|---------------|
 | `ContourDynamicsDiffEqExt` | OrdinaryDiffEq | `to_ode_problem` — bridge to DifferentialEquations.jl solvers |
 | `ContourDynamicsMakieExt` | Makie | `record_evolution` — animated contour evolution videos |
-| `ContourDynamicsGeophysicalFlowsExt` | GeophysicalFlows | `contours_from_gridfield` / `gridfield_from_contours` — grid-contour conversion |
 | `ContourDynamicsRecordedArraysExt` | RecordedArrays | `recorded_diagnostics` — time-series recording callback |
 
 Load any extension by importing the trigger package alongside ContourDynamics:
