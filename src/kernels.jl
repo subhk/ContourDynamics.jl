@@ -498,3 +498,11 @@ function velocity!(vel::Vector{SVector{2,T}},
         "Got $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
         "Use dev=CPU() for other kernel/domain combinations."))
 end
+
+# GPU fallback for multi-layer problems
+function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
+                   prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU}) where {N, T}
+    throw(ArgumentError(
+        "GPU velocity is not implemented for MultiLayerContourProblem. " *
+        "Use dev=CPU() for multi-layer problems."))
+end
