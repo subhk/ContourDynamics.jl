@@ -3,6 +3,18 @@
 # Two co-rotating circular vortex patches placed close enough to merge
 # via contour surgery. This demonstrates the complete contour dynamics
 # + surgery pipeline with JLD2 output.
+#
+# The critical merger distance (~3.3R for equal patches) and the
+# topological reconnection that enables it are described in:
+#
+#   Dritschel, D.G. (1988). "Contour surgery: a topological reconnection
+#   scheme for extended integrations using contour dynamics."
+#   J. Comput. Phys. 77(1), 240–266. doi:10.1016/0021-9991(88)90165-9
+#
+#   Dritschel, D.G. (1989). "Contour dynamics and contour surgery: numerical
+#   algorithms for extended, high-resolution modelling of vortex dynamics in
+#   two-dimensional, inviscid, incompressible flows."
+#   Comput. Phys. Rep. 10(3), 77–146. doi:10.1016/0167-7977(89)90004-X
 
 # To run on GPU, add `using CUDA` and pass `dev=GPU()`:
 #   prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
