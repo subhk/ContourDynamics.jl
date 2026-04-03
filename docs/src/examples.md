@@ -1,16 +1,27 @@
 # Examples
 
-Complete runnable scripts demonstrating ContourDynamics.jl capabilities. Full scripts with file output are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory.
+Complete runnable scripts demonstrating ContourDynamics.jl capabilities. Full scripts with JLD2 output are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory.
 
-!!! tip "GPU Acceleration"
-    All examples below run on CPU by default. To use GPU acceleration, add
-    `using CUDA` and pass `dev=GPU()` to `ContourProblem` and `RK4Stepper`
-    constructors. The velocity computation will run on the GPU while surgery
-    stays on CPU.
+::: tip GPU Acceleration
+The vortex merger and filamentation examples support GPU acceleration.
+Add `using CUDA` and pass `dev=GPU()` to `ContourProblem` and `RK4Stepper`.
+GPU velocity is currently available for `EulerKernel` on `UnboundedDomain`.
+:::
+
+---
 
 ## Vortex Merger
 
-Two co-rotating circular vortex patches placed close enough to merge via contour surgery. When the separation is less than about 3.3 radii, the patches exchange filaments and eventually merge into a single vortex.
+Two co-rotating circular vortex patches placed close enough to merge via contour surgery. When the separation is less than about 3.3 radii, the patches exchange filaments and eventually merge into a single elliptical vortex.
+
+The critical merger distance and the topological reconnection that enables it are described in [Dritschel (1988)](https://doi.org/10.1016/0021-9991(88)90165-9) and [Dritschel (1989)](https://doi.org/10.1016/0167-7977(89)90004-X).
+
+<!-- TODO: Replace with actual figure after running the example -->
+::: info Figure placeholder
+![Vortex merger evolution](assets/examples/vortex_merger.png)
+
+*Time evolution of two co-rotating vortex patches undergoing merger. Left: initial state with two circular patches separated by 1.8R. Right: merged state after filament exchange and surgery.*
+:::
 
 ```julia
 using ContourDynamics
@@ -44,9 +55,22 @@ println("Final: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes"
 println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
 ```
 
+**References:**
+- Dritschel, D.G. (1988). *Contour surgery: a topological reconnection scheme for extended integrations using contour dynamics.* J. Comput. Phys. **77**(1), 240--266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)
+- Dritschel, D.G. (1989). *Contour dynamics and contour surgery.* Comput. Phys. Rep. **10**(3), 77--146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
+
+---
+
 ## Filamentation
 
-An elliptical vortex patch with high aspect ratio sheds thin filaments that are automatically removed by surgery. This demonstrates the interplay between the Kirchhoff rotation and the surgery algorithm's filament removal.
+An elliptical vortex patch with high aspect ratio sheds thin filaments that are automatically removed by surgery. The Kirchhoff elliptic vortex is an exact rotating solution of the 2D Euler equations; [Love (1893)](https://doi.org/10.1112/plms/s1-25.1.18) showed it becomes unstable for aspect ratios above approximately 3, leading to filamentation.
+
+<!-- TODO: Replace with actual figure after running the example -->
+::: info Figure placeholder
+![Filamentation evolution](assets/examples/filamentation.png)
+
+*Filamentation of an elliptical vortex patch (aspect ratio 3.3). The unstable ellipse sheds thin filaments that are removed by contour surgery, leaving a rounder core vortex.*
+:::
 
 ```julia
 using ContourDynamics
@@ -70,36 +94,22 @@ println("Area of largest contour: $(maximum(c -> abs(vortex_area(c)), prob.conto
 println("Original area: $A0")
 ```
 
-## QG Vortex with Deformation Radius
+**References:**
+- Love, A.E.H. (1893). *On the stability of certain vortex motions.* Proc. London Math. Soc. **25**, 18--42. [doi:10.1112/plms/s1-25.1.18](https://doi.org/10.1112/plms/s1-25.1.18)
+- Dritschel, D.G. (1988). *Contour surgery.* J. Comput. Phys. **77**(1), 240--266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)
 
-A circular vortex patch evolving under quasi-geostrophic dynamics with a finite Rossby deformation radius. The QG dynamics screens the far-field velocity, so the vortex rotates more slowly than its Euler counterpart.
-
-```julia
-using ContourDynamics
-using StaticArrays
-
-R, Ld, pv = 0.5, 1.0, 2π
-N = 128
-
-nodes = [SVector(R * cos(2π * k / N), R * sin(2π * k / N)) for k in 0:(N-1)]
-prob = ContourProblem(QGKernel(Ld), UnboundedDomain(), [PVContour(nodes, pv)])
-
-stepper = RK4Stepper(0.01, total_nodes(prob))
-
-# Track the centroid — a circular patch should remain centered
-c0 = centroid(prob.contours[1])
-for step in 1:500
-    timestep!(prob, stepper)
-end
-
-c1 = centroid(prob.contours[1])
-println("Centroid drift: ($(c1[1] - c0[1]), $(c1[2] - c0[2]))")
-println("Area: $(vortex_area(prob.contours[1]))")
-```
+---
 
 ## Beta-Plane Vortex Drift
 
-A cyclonic vortex on a beta plane (``\beta y`` background PV gradient) drifts north-westward due to the planetary vorticity gradient. The background gradient is represented as a PV staircase of spanning contours on a periodic domain.
+A cyclonic vortex on a beta plane drifts north-westward due to the planetary vorticity gradient. The background gradient ``\beta y`` is represented as a PV staircase of spanning contours on a periodic domain — a technique introduced by [Dritschel (1988)](https://doi.org/10.1016/0021-9991(88)90165-9) that avoids explicit beta terms in the equations.
+
+<!-- TODO: Replace with actual figure after running the example -->
+::: info Figure placeholder
+![Beta drift trajectory](assets/examples/beta_drift.png)
+
+*Trajectory of a cyclonic vortex patch on a beta plane (QG dynamics). The vortex drifts north-westward, consistent with the classical Rossby wave radiation mechanism. Background: PV staircase contours (horizontal lines).*
+:::
 
 ```julia
 using ContourDynamics
@@ -127,7 +137,7 @@ vortex = PVContour(
 prob = ContourProblem(QGKernel(Ld), domain, vcat(staircase, [vortex]))
 
 stepper = RK4Stepper(T(0.005), total_nodes(prob))
-params = SurgeryParams(T(0.02), T(0.01), T(0.3), T(1e-6), 401)  # no surgery during run
+params = SurgeryParams(T(0.02), T(0.01), T(0.3), T(1e-6), 401)  # no surgery
 
 c0 = centroid(vortex)
 evolve!(prob, stepper, params; nsteps=400)
@@ -139,9 +149,24 @@ println("Vortex drift: Δx=$(round(cf[1]-c0[1]; digits=4)), Δy=$(round(cf[2]-c0
 println("(Cyclones drift north-westward on a beta plane)")
 ```
 
+**References:**
+- Dritschel, D.G. (1988). *Contour surgery.* J. Comput. Phys. **77**(1), 240--266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)
+- Dritschel, D.G. (1989). *Contour dynamics and contour surgery.* Comput. Phys. Rep. **10**(3), 77--146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
+
+---
+
 ## SQG Elliptical Vortex
 
-An elliptical surface buoyancy patch evolving under SQG dynamics. The fractional Laplacian Green's function `G(r) = -1/(2πr)` produces sharper fronts and stronger filamentation than the Euler kernel. The regularization parameter `delta` smooths the velocity singularity at the patch boundary.
+An elliptical surface buoyancy patch evolving under SQG dynamics. The fractional Laplacian Green's function ``G(r) = -1/(2\pi r)`` produces sharper fronts and stronger filamentation than the Euler kernel. The regularization parameter `delta` smooths the velocity singularity at the patch boundary.
+
+SQG dynamics and their role in atmospheric front formation are described in [Held et al. (1995)](https://doi.org/10.1017/S0022112095000012) and [Constantin, Majda & Tabak (1994)](https://doi.org/10.1088/0951-7715/7/6/001). Filament cascades in contour SQG are studied by [Scott & Dritschel (2014)](https://doi.org/10.1103/PhysRevLett.112.144505).
+
+<!-- TODO: Replace with actual figure after running the example -->
+::: info Figure placeholder
+![SQG ellipse evolution](assets/examples/sqg_ellipse.png)
+
+*SQG evolution of an elliptical buoyancy patch. The fractional Laplacian produces sharper filaments and stronger fronts than the Euler kernel, with a self-similar cascade of instabilities.*
+:::
 
 ```julia
 using ContourDynamics
@@ -165,9 +190,25 @@ println("Final: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes"
 println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
 ```
 
+**References:**
+- Held, I.M., Pierrehumbert, R.T., Garner, S.T. & Swanson, K.L. (1995). *Surface quasi-geostrophic dynamics.* J. Fluid Mech. **282**, 1--20. [doi:10.1017/S0022112095000012](https://doi.org/10.1017/S0022112095000012)
+- Constantin, P., Majda, A.J. & Tabak, E. (1994). *Formation of strong fronts in the 2-D quasigeostrophic thermal active scalar.* Nonlinearity **7**(6), 1495--1533. [doi:10.1088/0951-7715/7/6/001](https://doi.org/10.1088/0951-7715/7/6/001)
+- Scott, R.K. & Dritschel, D.G. (2014). *Numerical simulation of a self-similar cascade of filament instabilities in the surface quasigeostrophic system.* Phys. Rev. Lett. **112**, 144505. [doi:10.1103/PhysRevLett.112.144505](https://doi.org/10.1103/PhysRevLett.112.144505)
+
+---
+
 ## Two-Layer QG
 
 A vortex patch in the upper layer of a two-layer quasi-geostrophic system with baroclinic coupling. The coupling matrix connects the PV in each layer to the streamfunction, and the solver uses eigenmode decomposition for efficient computation.
+
+Multi-layer contour dynamics and the modal decomposition are described in [Dritschel (1989)](https://doi.org/10.1016/0167-7977(89)90004-X). Two-layer vortex dynamics, including upper-layer V-states and merger, are studied by [Polvani, Zabusky & Flierl (1989)](https://doi.org/10.1017/S0022112089002016).
+
+<!-- TODO: Replace with actual figure after running the example -->
+::: info Figure placeholder
+![Two-layer QG evolution](assets/examples/two_layer_qg.png)
+
+*Evolution of a vortex patch in the upper layer of a two-layer QG system. The baroclinic coupling transfers energy between the barotropic and baroclinic modes, modifying the vortex shape compared to single-layer dynamics.*
+:::
 
 ```julia
 using ContourDynamics
@@ -202,3 +243,7 @@ evolve!(prob, stepper, params; nsteps=200)
 println("Energy: $(energy(prob))  (change: $(abs(energy(prob)-E0)/abs(E0)))")
 println("Circulation: $(circulation(prob))  (change: $(abs(circulation(prob)-Γ0)/abs(Γ0)))")
 ```
+
+**References:**
+- Dritschel, D.G. (1989). *Contour dynamics and contour surgery.* Comput. Phys. Rep. **10**(3), 77--146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
+- Polvani, L.M., Zabusky, N.J. & Flierl, G.R. (1989). *Two-layer geostrophic vortex dynamics. Part 1. Upper-layer V-states and merger.* J. Fluid Mech. **205**, 215--242. [doi:10.1017/S0022112089002016](https://doi.org/10.1017/S0022112089002016)
