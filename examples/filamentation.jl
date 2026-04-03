@@ -3,6 +3,17 @@
 # An elliptical vortex patch with aspect ratio > 1 evolves under the
 # 2D Euler equations. At high aspect ratios, the vortex sheds thin
 # filaments that are removed by contour surgery.
+#
+# The Kirchhoff elliptic vortex is an exact rotating solution; Love (1893)
+# showed it becomes unstable for aspect ratios above ~3, leading to
+# filamentation. Contour surgery cleanly removes the shed filaments:
+#
+#   Love, A.E.H. (1893). "On the stability of certain vortex motions."
+#   Proc. London Math. Soc. 25, 18–42. doi:10.1112/plms/s1-25.1.18
+#
+#   Dritschel, D.G. (1988). "Contour surgery: a topological reconnection
+#   scheme for extended integrations using contour dynamics."
+#   J. Comput. Phys. 77(1), 240–266. doi:10.1016/0021-9991(88)90165-9
 
 # To run on GPU, add `using CUDA` and pass `dev=GPU()`:
 #   prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
