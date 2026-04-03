@@ -16,7 +16,7 @@ struct SegmentData{A<:AbstractVector}
     pv::A   # PV jump for this segment
 end
 
-# ── GPU workspace for buffer reuse ──��───────────────────
+# ── GPU workspace for buffer reuse ───────────────────
 # Avoids repeated allocation of CPU packing buffers and device arrays
 # across the 4 velocity evaluations per RK4 step.
 
