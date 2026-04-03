@@ -286,7 +286,7 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T};
         end
         partial[i] = local_s
     end
-    return sum(partial)
+    return sum(@view partial[1:nci])
 end
 
 function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T}
@@ -349,7 +349,7 @@ function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T;
         end
         partial[i] = local_s
     end
-    return sum(partial)
+    return sum(@view partial[1:nci])
 end
 
 function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
@@ -454,7 +454,7 @@ function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T;
         end
         partial[i] = local_s
     end
-    return sum(partial)
+    return sum(@view partial[1:nci])
 end
 
 """
@@ -604,7 +604,7 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
         end
         partial[i] = local_s
     end
-    return sum(partial)
+    return sum(@view partial[1:nci])
 end
 
 function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {T}
@@ -701,7 +701,7 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
         end
         partial[i] = local_s
     end
-    return sum(partial)
+    return sum(@view partial[1:nci])
 end
 
 # SQG on PeriodicDomain: velocity is supported but energy is not yet implemented.
