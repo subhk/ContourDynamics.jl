@@ -440,7 +440,7 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     # _best_stitch_nodes operates on the final node ordering.  The initial
     # segment indices i, j are mapped into the reversed space as starting
     # candidates — _best_stitch_nodes then refines to the closest node pair.
-    j_cand = reversed ? (n2 - j + 1) : j
+    j_cand = reversed ? (n2 - j) : j
     j_cand = clamp(j_cand, 1, n2)
     c2_eff = PVContour(c2_nodes, c2.pv, c2.wrap)
     i, j_eff = _best_stitch_nodes(c1, i, c2_eff, j_cand, domain)
