@@ -21,33 +21,40 @@ let
     _w1_64 = 128.0 / 225.0
     _w2_64 = (322.0 + 13.0 * sqrt(70.0)) / 900.0
     _w3_64 = (322.0 - 13.0 * sqrt(70.0)) / 900.0
-    global const _GL5_NODES_F64 = SVector{5,Float64}(-_n3_64, -_n2_64, 0.0, _n2_64, _n3_64)
+    global const _GL5_NODES_F64   = SVector{5,Float64}(-_n3_64, -_n2_64, 0.0, _n2_64, _n3_64)
     global const _GL5_WEIGHTS_F64 = SVector{5,Float64}(_w3_64, _w2_64, _w1_64, _w2_64, _w3_64)
-    global const _GL5_NODES_F32 = SVector{5,Float32}(Float32.(_GL5_NODES_F64)...)
+    global const _GL5_NODES_F32   = SVector{5,Float32}(Float32.(_GL5_NODES_F64)...)
     global const _GL5_WEIGHTS_F32 = SVector{5,Float32}(Float32.(_GL5_WEIGHTS_F64)...)
 
     _n1_64 = sqrt(3.0/5.0)
-    global const _GL3_NODES_F64 = SVector{3,Float64}(-_n1_64, 0.0, _n1_64)
+    global const _GL3_NODES_F64   = SVector{3,Float64}(-_n1_64, 0.0, _n1_64)
     global const _GL3_WEIGHTS_F64 = SVector{3,Float64}(5.0/9.0, 8.0/9.0, 5.0/9.0)
-    global const _GL3_NODES_F32 = SVector{3,Float32}(Float32.(_GL3_NODES_F64)...)
+    global const _GL3_NODES_F32   = SVector{3,Float32}(Float32.(_GL3_NODES_F64)...)
     global const _GL3_WEIGHTS_F32 = SVector{3,Float32}(Float32.(_GL3_WEIGHTS_F64)...)
 end
 
 @inline _gl5_nodes_weights(::Type{Float64}) = (_GL5_NODES_F64, _GL5_WEIGHTS_F64)
+
 @inline _gl5_nodes_weights(::Type{Float32}) = (_GL5_NODES_F32, _GL5_WEIGHTS_F32)
+
 @inline function _gl5_nodes_weights(::Type{T}) where {T<:AbstractFloat}
     n2 = sqrt((T(5) - T(2) * sqrt(T(10)/T(7))) / T(9))
     n3 = sqrt((T(5) + T(2) * sqrt(T(10)/T(7))) / T(9))
+
     w1 = T(128) / T(225)
     w2 = (T(322) + T(13) * sqrt(T(70))) / T(900)
     w3 = (T(322) - T(13) * sqrt(T(70))) / T(900)
+    
     nodes = SVector{5,T}(-n3, -n2, zero(T), n2, n3)
     weights = SVector{5,T}(w3, w2, w1, w2, w3)
+    
     return (nodes, weights)
 end
 
 @inline _gl3_nodes_weights(::Type{Float64}) = (_GL3_NODES_F64, _GL3_WEIGHTS_F64)
+
 @inline _gl3_nodes_weights(::Type{Float32}) = (_GL3_NODES_F32, _GL3_WEIGHTS_F32)
+
 @inline function _gl3_nodes_weights(::Type{T}) where {T<:AbstractFloat}
     n1 = sqrt(T(3)/T(5))
     nodes = SVector{3,T}(-n1, zero(T), n1)
