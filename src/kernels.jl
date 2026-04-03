@@ -392,24 +392,13 @@ end
 Direct O(N^2) velocity computation at every contour node across all layers of
 `prob`, storing results in `vel`. Uses modal decomposition with direct summation.
 """
-# Module-level scratch buffers for multi-layer velocity to avoid per-call allocation.
-# These are only mutated from the sequential outer loop in _direct_velocity!;
-# the inner @threads parallelism operates on separate indices within the buffers.
-const _ml_target_nodes = Ref{Any}(nothing)
-const _ml_mode_vel = Ref{Any}(nothing)
-
-function _get_ml_scratch(::Type{T}, max_nodes::Int) where {T}
-    tn = _ml_target_nodes[]
-    mv = _ml_mode_vel[]
-    if tn isa Vector{SVector{2,T}} && length(tn) >= max_nodes &&
-       mv isa Vector{SVector{2,T}} && length(mv) >= max_nodes
-        return (tn::Vector{SVector{2,T}}, mv::Vector{SVector{2,T}})
-    end
-    new_tn = Vector{SVector{2,T}}(undef, max_nodes)
-    new_mv = Vector{SVector{2,T}}(undef, max_nodes)
-    _ml_target_nodes[] = new_tn
-    _ml_mode_vel[] = new_mv
-    return (new_tn, new_mv)
+# Scratch buffers for multi-layer velocity, allocated per-call to avoid
+# thread-safety issues when multiple problems are evaluated concurrently.
+# The allocation cost is negligible relative to the O(N²) velocity computation.
+function _alloc_ml_scratch(::Type{T}, max_nodes::Int) where {T}
+    tn = Vector{SVector{2,T}}(undef, max_nodes)
+    mv = Vector{SVector{2,T}}(undef, max_nodes)
+    return (tn, mv)
 end
 
 function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
@@ -437,7 +426,7 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     # Parallelizing the outer `for mode` or `for target_layer` loops would
     # require per-thread copies of target_nodes and mode_vel.
     max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
-    target_nodes, mode_vel = _get_ml_scratch(T, max_nodes)
+    target_nodes, mode_vel = _alloc_ml_scratch(T, max_nodes)
 
     for mode in 1:N
         lam = evals[mode]
