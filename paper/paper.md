@@ -60,7 +60,7 @@ contour dynamics preserves exactly.
 `ContourDynamics.jl` fills this gap with a performant, extensible
 implementation that integrates with the broader Julia ecosystem through
 optional package extensions for DifferentialEquations.jl, Makie.jl,
-GeophysicalFlows.jl, RecordedArrays.jl, and JLD2.jl.
+RecordedArrays.jl, and JLD2.jl.
 
 # Physics Kernels
 
@@ -135,9 +135,8 @@ Gauss-Legendre quadrature over segment pairs.
 
 Package extensions provide optional integration with DifferentialEquations.jl
 (bridging to any ODE solver), Makie.jl (animated contour evolution),
-GeophysicalFlows.jl (grid-contour conversion), RecordedArrays.jl (time-series
-recording), and JLD2.jl (checkpoint save/load) — without imposing heavy
-dependencies on the core package.
+RecordedArrays.jl (time-series recording), and JLD2.jl (checkpoint
+save/load) — without imposing heavy dependencies on the core package.
 
 # Validation
 
