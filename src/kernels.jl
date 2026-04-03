@@ -455,8 +455,8 @@ end
     velocity!(vel, prob::MultiLayerContourProblem)
 
 Compute velocity at all nodes across all layers using modal decomposition.
-Uses the FMM path only when acceleration is explicitly enabled and the problem
-is large enough; otherwise falls back to the validated direct evaluator.
+Uses the treecode for large problems, the proxy FMM when explicitly enabled,
+and direct O(N²) evaluation for small problems.
 """
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                    prob::MultiLayerContourProblem{N, <:Any, <:Any, T, CPU}) where {N, T}
@@ -467,6 +467,8 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     Ntot = total_nodes(prob)
     if _FMM_ACCELERATION_ENABLED && Ntot >= _FMM_THRESHOLD
         _fmm_velocity!(vel, prob)
+    elseif Ntot >= _FMM_THRESHOLD
+        _treecode_velocity!(vel, prob)
     else
         _direct_velocity!(vel, prob)
     end
