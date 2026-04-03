@@ -6,12 +6,20 @@
 # staircase contours, producing beta drift and Rossby wave radiation
 # without any explicit beta term in the equations.
 #
-# Reference: Dritschel (1988), "Contour surgery: A topological reconnection
-# scheme for extended integrations using contour dynamics", JCP 77(1).
+# The PV staircase technique and its application to beta-plane contour
+# dynamics are described in:
+#
+#   Dritschel, D.G. (1988). "Contour surgery: a topological reconnection
+#   scheme for extended integrations using contour dynamics."
+#   J. Comput. Phys. 77(1), 240–266. doi:10.1016/0021-9991(88)90165-9
+#
+#   Dritschel, D.G. (1989). "Contour dynamics and contour surgery: numerical
+#   algorithms for extended, high-resolution modelling of vortex dynamics in
+#   two-dimensional, inviscid, incompressible flows."
+#   Comput. Phys. Rep. 10(3), 77–146. doi:10.1016/0167-7977(89)90004-X
 
-# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
-#   prob = ContourProblem(EulerKernel(), domain, contours; dev=GPU())
-#   stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+# Note: GPU acceleration is only available for EulerKernel on UnboundedDomain.
+# This example uses QGKernel on PeriodicDomain, so it runs on CPU only.
 
 using ContourDynamics
 using StaticArrays
