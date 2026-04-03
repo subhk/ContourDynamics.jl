@@ -246,6 +246,7 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
     function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}};
                                       dev::Dev=CPU()) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
+        dev isa GPU && @warn "MultiLayerContourProblem does not support GPU velocity — use dev=CPU()" maxlog=1
         new{N, K, D, T, Dev}(kernel, domain, layers, dev)
     end
 end
