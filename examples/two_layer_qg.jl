@@ -3,10 +3,21 @@
 # A circular vortex patch in the upper layer of a two-layer QG system.
 # The inter-layer coupling introduces baroclinic effects through the
 # eigenmode decomposition of the coupling matrix.
+#
+# Multi-layer quasi-geostrophic contour dynamics and the modal
+# decomposition used here are described in:
+#
+#   Dritschel, D.G. (1989). "Contour dynamics and contour surgery: numerical
+#   algorithms for extended, high-resolution modelling of vortex dynamics in
+#   two-dimensional, inviscid, incompressible flows."
+#   Comput. Phys. Rep. 10(3), 77–146. doi:10.1016/0167-7977(89)90004-X
+#
+#   Polvani, L.M., Zabusky, N.J. & Flierl, G.R. (1989). "Two-layer
+#   geostrophic vortex dynamics. Part 1. Upper-layer V-states and merger."
+#   J. Fluid Mech. 205, 215–242. doi:10.1017/S0022112089002016
 
-# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
-#   prob = MultiLayerContourProblem(kernel, UnboundedDomain(), layers; dev=GPU())
-#   stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+# Note: GPU acceleration is not yet available for multi-layer problems.
+# This example runs on CPU only.
 
 using ContourDynamics
 using StaticArrays
