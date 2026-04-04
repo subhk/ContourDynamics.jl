@@ -200,7 +200,7 @@ function _load_snapshot_from_group(g, step::Int)
         for li in 1:nlyr
             lg = g["layer_" * lpad(li, 2, '0')]
             nc = lg["ncontours"]::Int
-            all_layers[li] = _load_contours(lg, nc; T=inferred_T)
+            all_layers[li] = _load_contours(lg, nc; fallback_T=inferred_T)
         end
         diag = _load_diagnostics(g)
         return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
@@ -214,11 +214,10 @@ end
 
 # ── helpers ──────────────────────────────────────────────────
 
-function _load_contours(g, nc::Int; T::Type{<:AbstractFloat}=Float64)
-    nc == 0 && return PVContour{T}[]
+function _load_contours(g, nc::Int; fallback_T::Type{<:AbstractFloat}=Float64)
+    nc == 0 && return PVContour{fallback_T}[]
 
-    # Peek at first contour to determine element type from file data.
-    # Intentionally overrides the T kwarg (which is only a fallback for nc==0).
+    # Infer element type from file data; fallback_T is only used when nc == 0.
     cg1 = g["contour_" * lpad(1, 4, '0')]
     T = eltype(cg1["x"])
 
