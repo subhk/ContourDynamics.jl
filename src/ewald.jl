@@ -150,9 +150,8 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
-    # Fast path: check if cache already exists (lock-free read).
-    # Dict reads are safe when no concurrent writes are happening,
-    # which is the common case after warm-up.
+    # Fast path: quick read under lock to check if cache already exists.
+    # After warm-up, this is the only lock acquisition needed per call.
     cached = lock(_ewald_cache_lock) do
         get(caches, key, nothing)
     end
@@ -376,9 +375,9 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
         end
 
         # Fourier-space sum (smooth).
-        # r_vec0 is intentionally NOT minimum-image wrapped: cos(k·r) is
-        # periodic with the same periods as the domain, so wrapping has no
-        # effect on the phase.
+        # r_vec0 is minimum-image wrapped (for the real-space sum above), but
+        # cos(k·r) is periodic with the same periods as the domain, so the
+        # wrapping has no effect on the Fourier sum.
         # Use cos(kx*rx + ky*ry) = cos(kx*rx)*cos(ky*ry) - sin(kx*rx)*sin(ky*ry)
         # to reduce trig calls from O(nk²) to O(nk).
         rx, ry = r_vec0[1], r_vec0[2]
