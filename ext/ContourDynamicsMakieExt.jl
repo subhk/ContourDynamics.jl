@@ -111,6 +111,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
         Makie.empty!(ax)
         for (li, layer) in enumerate(prob.layers)
             style = layer_styles[mod1(li, length(layer_styles))]
+            first_in_layer = true
             for c in layer
                 nodes = c.nodes
                 n = length(nodes)
@@ -127,7 +128,8 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                 end
                 Makie.lines!(ax, copy(xs_buf), copy(ys_buf); color=c.pv, colormap=:RdBu,
                              colorrange=(pv_lo, pv_hi), linestyle=style,
-                             label=li <= N ? "Layer $li" : nothing)
+                             label=first_in_layer ? "Layer $li" : nothing)
+                first_in_layer = false
             end
         end
     end
