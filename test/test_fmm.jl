@@ -156,23 +156,22 @@ using Test, ContourDynamics, StaticArrays
     end
 
     @testset "Large-Problem Dispatcher" begin
-            c = circular_patch(1.0, 1200, 1.0)
-            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
-            vel = zeros(SVector{2,Float64}, total_nodes(prob))
-            expected = similar(vel)
+        c = circular_patch(1.0, 1200, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        vel = zeros(SVector{2,Float64}, total_nodes(prob))
+        expected = similar(vel)
 
-            velocity!(vel, prob)
+        velocity!(vel, prob)
 
-            if ContourDynamics._FMM_ACCELERATION_ENABLED
-                ContourDynamics._fmm_velocity!(expected, prob)
-            elseif total_nodes(prob) >= ContourDynamics._FMM_THRESHOLD
-                ContourDynamics._treecode_velocity!(expected, prob)
-            else
-                ContourDynamics._direct_velocity!(expected, prob)
-            end
-
-            @test vel == expected
+        if ContourDynamics._FMM_ACCELERATION_ENABLED
+            ContourDynamics._fmm_velocity!(expected, prob)
+        elseif total_nodes(prob) >= ContourDynamics._FMM_THRESHOLD
+            ContourDynamics._treecode_velocity!(expected, prob)
+        else
+            ContourDynamics._direct_velocity!(expected, prob)
         end
+
+        @test vel == expected
     end
 
     @testset "Production Treecode Accuracy" begin
