@@ -206,7 +206,7 @@ This is the recommended integrator for most applications.
 
 ### Leapfrog with Robert-Asselin Filter
 
-The leapfrog scheme is 2nd-order and symplectic:
+The leapfrog scheme is 2nd-order centred:
 
 ```math
 \mathbf{x}^{n+1} = \mathbf{x}^{n-1} + 2\Delta t \, \mathbf{u}(\mathbf{x}^n)
