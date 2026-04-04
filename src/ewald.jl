@@ -150,24 +150,31 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
-    # All Dict access is under the lock to avoid races during hash table
-    # resize.  ReentrantLock is fast when uncontended, and the lock is only
-    # contested during the initial warm-up phase.
-    cache = lock(_ewald_cache_lock) do
-        cached = get(caches, key, nothing)
-        if cached !== nothing
-            return cached
+    # Fast path: check if cache already exists (lock-free read).
+    # Dict reads are safe when no concurrent writes are happening,
+    # which is the common case after warm-up.
+    cached = lock(_ewald_cache_lock) do
+        get(caches, key, nothing)
+    end
+    cached !== nothing && return cached
+
+    # Slow path: build outside the lock, then store under the lock.
+    new_cache = build_ewald_cache(domain, kernel)
+
+    lock(_ewald_cache_lock) do
+        # Double-check: another thread may have built it while we were computing.
+        existing = get(caches, key, nothing)
+        if existing !== nothing
+            return existing
         end
-        new_cache = build_ewald_cache(domain, kernel)
         while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
             old_key = popfirst!(order)
             delete!(caches, old_key)
         end
         caches[key] = new_cache
         push!(order, key)
-        new_cache
+        return new_cache
     end
-    return cache
 end
 
 # Pre-fetch Ewald cache for use in threaded velocity computation.
@@ -336,7 +343,12 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
-        r_vec0 = x - s_pt
+        r_vec0_raw = x - s_pt
+        # Minimum-image wrap so the central image (px=0,py=0) is always the
+        # closest periodic copy, reducing the n_images required for convergence.
+        r_vec0 = SVector{2,T}(
+            r_vec0_raw[1] - round(r_vec0_raw[1] / (2 * Lx)) * (2 * Lx),
+            r_vec0_raw[2] - round(r_vec0_raw[2] / (2 * Ly)) * (2 * Ly))
         G_corr = zero(T)
 
         # Real-space Ewald sum with central-image singularity subtracted
@@ -425,6 +437,11 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     # G_QG_per - G_Euler_per = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
     # The sign is negative because the QG kernel (K₀) is screened relative
     # to the Euler kernel (log): F{K₀(κr)/(2π)} = 1/(k²+κ²) < 1/k² = F{-log(r)/(2π)}.
+    # NOTE: These coefficients are computed inline (without Gaussian damping)
+    # because the correction is smooth and converges without Ewald splitting.
+    # The precomputed QG fourier_coeffs from build_ewald_cache include Gaussian
+    # damping and are therefore not used here.
+    # TODO: precompute the exact correction coefficients to avoid recomputing per GL point.
     kappa2 = one(T) / kernel.Ld^2
     area = 4 * domain.Lx * domain.Ly
 
@@ -504,7 +521,11 @@ function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
 
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
-        r_vec0 = x - s_pt
+        r_vec0_raw = x - s_pt
+        # Minimum-image wrap for the real-space sum
+        r_vec0 = SVector{2,T}(
+            r_vec0_raw[1] - round(r_vec0_raw[1] / (2 * Lx)) * (2 * Lx),
+            r_vec0_raw[2] - round(r_vec0_raw[2] / (2 * Ly)) * (2 * Ly))
         G_corr = zero(T)
 
         # Real-space Ewald sum with central-image singularity subtracted
