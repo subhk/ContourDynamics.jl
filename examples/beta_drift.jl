@@ -72,7 +72,7 @@ evolve!(prob, stepper, surgery_params;
 
 # Find the vortex among final contours (non-spanning, largest area)
 vortex_final = argmax(c -> is_spanning(c) ? zero(T) : abs(vortex_area(c)), prob.contours)
-cf = centroid(prob.contours[vortex_final])
+cf = centroid(vortex_final)
 println("\nVortex drift: Δx=$(round(cf[1] - c0[1]; digits=4)), Δy=$(round(cf[2] - c0[2]; digits=4))")
 println("(Cyclones drift north-westward on a beta plane)")
 
