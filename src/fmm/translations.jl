@@ -194,9 +194,16 @@ function _m2l!(
             # Skip sources with no strengths
             all(s -> s == zero(SVector{2,T}), source_eq) && continue
 
-            # Compute displacement in box-width units
-            dx = round(Int, (source_box.center[1] - box.center[1]) / box_width)
-            dy = round(Int, (source_box.center[2] - box.center[2]) / box_width)
+            # Compute displacement in box-width units.
+            # Use floor(x + 0.5) instead of round() to handle floating-point
+            # drift at deep tree levels more robustly: if the true displacement
+            # is exactly N box widths, accumulated center-offset error could
+            # push the value to N ± eps, and round() with banker's rounding
+            # might snap the wrong way.
+            dx_raw = (source_box.center[1] - box.center[1]) / box_width
+            dy_raw = (source_box.center[2] - box.center[2]) / box_width
+            dx = floor(Int, dx_raw + T(0.5))
+            dy = floor(Int, dy_raw + T(0.5))
 
             # Look up precomputed M2L matrix
             if !haskey(level_m2l.operators, (dx, dy))
