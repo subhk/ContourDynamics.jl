@@ -174,8 +174,7 @@ on Julia 1.10--1.12 across Linux and macOS via continuous integration.
 # Research Impact Statement
 
 `ContourDynamics.jl` makes reproducible Lagrangian vortex dynamics experiments
-accessible for the first time as open-source software. The package has been
-developed over multiple months with continuous integration, documentation, and
+accessible for the first time as open-source software. The package includes continuous integration, documentation, and
 comprehensive test coverage. Example scripts reproduce classical results from
 the literature — vortex merger, filamentation, beta-plane drift, two-layer
 baroclinic dynamics — providing ready-made starting points for new research.
