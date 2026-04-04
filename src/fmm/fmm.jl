@@ -1,6 +1,20 @@
 # Top-level FMM driver: upward pass, downward pass, local evaluation.
 
-"""Opening-angle parameter for the production treecode path."""
+"""
+Opening-angle parameter for the production treecode path.
+
+The treecode uses a first-order Taylor expansion with finite-difference Jacobians
+(5 evaluations per source box). The tight θ=0.15 compensates for the low-order
+expansion, giving ~2e-3 relative error.
+
+Performance/accuracy tradeoff:
+- θ=0.15 + 1st order: ~2e-3 error, conservative (many direct evaluations)
+- θ=0.3-0.5 + 2nd order: would give similar error with ~4x fewer direct evals
+- Analytic Jacobians would eliminate the 5x FD overhead per accepted box
+
+TODO: implement analytic kernel Jacobians and/or second-order expansion to allow
+relaxing theta, significantly improving performance for large problems.
+"""
 const _TREECODE_THETA = 0.15
 
 @inline function _treecode_accepts(target_box::FMMBox{T}, source_box::FMMBox{T},
