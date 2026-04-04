@@ -344,14 +344,42 @@ function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
 
     # Near lists: for each leaf box, find all leaf boxes (any level) that are adjacent.
     # In an adaptive tree, adjacent leaves can be at different levels.
+    # Use spatial hashing to avoid O(L²) all-pairs comparison.
     all_leaves = Int[]
     for i in 1:nboxes
         boxes[i].is_leaf && push!(all_leaves, i)
     end
-    for i in all_leaves
-        for j in all_leaves
-            if _are_adjacent_or_self(boxes[i], boxes[j])
-                push!(near_lists[i], j)  # Set handles deduplication
+
+    if !isempty(all_leaves)
+        # Grid cell size = 2 * max leaf half_width, so each leaf fits in one cell
+        max_hw = maximum(boxes[i].half_width for i in all_leaves)
+        cell_size = 2 * max_hw * T(1.02)  # slight padding for adjacency check
+
+        # Hash leaves into grid cells
+        leaf_grid = Dict{Tuple{Int,Int}, Vector{Int}}()
+        for i in all_leaves
+            cx = floor(Int, boxes[i].center[1] / cell_size)
+            cy = floor(Int, boxes[i].center[2] / cell_size)
+            key = (cx, cy)
+            if haskey(leaf_grid, key)
+                push!(leaf_grid[key], i)
+            else
+                leaf_grid[key] = [i]
+            end
+        end
+
+        # For each leaf, only check leaves in the 3x3 neighborhood of grid cells
+        for i in all_leaves
+            cx = floor(Int, boxes[i].center[1] / cell_size)
+            cy = floor(Int, boxes[i].center[2] / cell_size)
+            for dx in -1:1, dy in -1:1
+                nbr_key = (cx + dx, cy + dy)
+                haskey(leaf_grid, nbr_key) || continue
+                for j in leaf_grid[nbr_key]
+                    if _are_adjacent_or_self(boxes[i], boxes[j])
+                        push!(near_lists[i], j)
+                    end
+                end
             end
         end
     end
