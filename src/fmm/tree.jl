@@ -167,7 +167,9 @@ function _partition_segments!(
         starts[4]:(starts[4] + counts[4] - 1),
     )
 
-    # Copy to temporary arrays, then write back in sorted order
+    # Copy to temporary arrays, then write back in sorted order.
+    # TODO: pre-allocate a single buffer of length total_segs and reuse across subdivisions
+    # to reduce O(N log N) total allocation from per-subdivision copies.
     tmp_mid = midpoints[lo:hi]
     tmp_ids = seg_ids[lo:hi]
 
