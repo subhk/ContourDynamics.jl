@@ -164,7 +164,7 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
             local nc = nnodes(c)
             nc < 2 && continue
             pv = c.pv
-            for j in 1:nc
+            @inbounds for j in 1:nc
                 a = c.nodes[j]
                 b = next_node(c, j)
                 v = v + pv * segment_velocity(kernel, domain, xi, a, b, ewald)
