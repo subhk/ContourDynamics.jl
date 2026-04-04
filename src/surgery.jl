@@ -64,10 +64,16 @@ end
 
 @inline function _push_bin!(bins::Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}},
                             key::Tuple{Int,Int}, ci::Int, ni::Int)
+    entry = (ci, ni)
     if !haskey(bins, key)
-        bins[key] = Tuple{Int,Int}[]
+        bins[key] = [entry]
+    else
+        # Deduplicate: same segment can be sampled at multiple points in the
+        # same bin.  Only need one entry per segment per bin; duplicates cause
+        # redundant distance computations in find_close_segments.
+        vec = bins[key]
+        isempty(vec) || last(vec) == entry || push!(vec, entry)
     end
-    push!(bins[key], (ci, ni))
 end
 
 function _insert_bin!(bins::Dict{Tuple{Int,Int}, Vector{Tuple{Int,Int}}},
