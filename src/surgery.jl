@@ -1,12 +1,18 @@
 # ── Periodic Helpers ────────────────────────────────────
 
-"""Wrap a scalar coordinate to the canonical interval [-L, L)."""
+"""Wrap a scalar coordinate to the canonical interval [-L, L) using floor."""
 @inline function _wrap_coord(x::T, L::T) where {T}
     L2 = 2 * L
     return x - floor((x + L) / L2) * L2
 end
 
-"""Minimum-image displacement vector for a periodic domain."""
+"""
+Minimum-image displacement vector for a periodic domain using round.
+
+Note: uses round (nearest-integer) rather than floor, giving the interval (-L, L]
+instead of [-L, L). The difference matters only at exact boundary values, which
+are astronomically unlikely with floating-point arithmetic.
+"""
 @inline function _min_image(r::SVector{2,Tr}, domain::PeriodicDomain{Td}) where {Tr, Td}
     T = promote_type(Tr, Td)
     Lx2 = 2 * T(domain.Lx)
