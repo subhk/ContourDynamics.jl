@@ -7,11 +7,12 @@
 end
 
 """Minimum-image displacement vector for a periodic domain."""
-@inline function _min_image(r::SVector{2,T}, domain::PeriodicDomain{T}) where {T}
-    Lx2 = 2 * domain.Lx
-    Ly2 = 2 * domain.Ly
-    SVector{2,T}(r[1] - round(r[1] / Lx2) * Lx2,
-                 r[2] - round(r[2] / Ly2) * Ly2)
+@inline function _min_image(r::SVector{2,Tr}, domain::PeriodicDomain{Td}) where {Tr, Td}
+    T = promote_type(Tr, Td)
+    Lx2 = 2 * T(domain.Lx)
+    Ly2 = 2 * T(domain.Ly)
+    SVector{2,T}(T(r[1]) - round(T(r[1]) / Lx2) * Lx2,
+                 T(r[2]) - round(T(r[2]) / Ly2) * Ly2)
 end
 @inline _min_image(r::SVector{2}, ::UnboundedDomain) = r
 
