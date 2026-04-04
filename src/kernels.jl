@@ -78,14 +78,19 @@ The velocity direction is along `ds = b - a`, not rotated.
 # F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*arctan(u/h)
 @inline function _euler_antideriv(u::T, h::T, h_sq::T) where {T}
     r2 = u * u + h_sq
+    # Threshold: eps(T)^2 ≈ 5e-32 for Float64.  Only catches points at
+    # essentially zero distance; self-segment contributions with small but
+    # nonzero r remain correctly evaluated (their log-integral is meaningful).
     if r2 < eps(T)^2
         return zero(T)
     end
     val = u * log(r2) - 2 * u
-    if abs(h) > eps(T)
+    # Guard against h/h division: when h² ≤ eps(T)², the atan term
+    # 2h·atan(u/h) → ±π·h is at most π·eps(T), negligible at Float64 scale.
+    # Use h_sq threshold consistent with the r2 guard above.
+    if h_sq > eps(T)^2
         val += 2 * h * atan(u / h)
     end
-    # When h ≈ 0 the atan term vanishes: lim_{h→0} 2h·atan(u/h) = 0.
     return val
 end
 
@@ -214,6 +219,27 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
     return v
 end
 
+# Compute K₀(z) + log(z/2) + γ without catastrophic cancellation for small z.
+# Uses the identity: K₀(z) = -(log(z/2) + γ)I₀(z) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
+# so K₀(z) + log(z/2) + γ = -(log(z/2) + γ)(I₀(z) - 1) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
+# Both terms are O(z²), avoiding the subtraction of two O(log(1/z)) quantities.
+@inline function _besselk0_correction(z::T) where {T}
+    z2_4 = (z / 2)^2
+    I0_minus_1 = zero(T)
+    S = zero(T)
+    term = one(T)
+    Hk = zero(T)
+    for k in 1:25
+        term *= z2_4 / T(k)^2
+        Hk += one(T) / T(k)
+        I0_minus_1 += term
+        S += term * Hk
+        abs(term * Hk) < eps(T) && break
+    end
+    log_z2_gamma = log(z / 2) + T(Base.MathConstants.eulergamma)
+    return -log_z2_gamma * I0_minus_1 + S
+end
+
 """
     segment_velocity(::QGKernel, ::UnboundedDomain, x, a, b)
 
@@ -272,8 +298,15 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
 
         r = sqrt(r2)
         rr = r / Ld
-        # K₀(r/Ld) + log(r) is smooth and bounded near r=0
-        corr_integral += g_weights[q] * (besselk(0, rr) + log(r))
+        # K₀(r/Ld) + log(r) = [K₀(z) + log(z/2) + γ] + log(2Ld) - γ
+        # For small z = r/Ld, use series to avoid catastrophic cancellation
+        # between besselk(0, z) ≈ -log(z/2) - γ and log(r).
+        if rr < T(0.5)
+            val = _besselk0_correction(rr) + log(2 * Ld) - T(Base.MathConstants.eulergamma)
+        else
+            val = besselk(0, rr) + log(r)
+        end
+        corr_integral += g_weights[q] * val
     end
 
     # Scale: the Gauss quadrature approximates ∫₋₁¹ f(t) dt, and our
