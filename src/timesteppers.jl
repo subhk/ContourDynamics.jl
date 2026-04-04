@@ -197,8 +197,11 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
         end
 
         if step % params.n_surgery == 0
+            old_N = total_nodes(prob)
             surgery!(prob, params)
-            resize_buffers!(stepper, prob)
+            if total_nodes(prob) != old_N
+                resize_buffers!(stepper, prob)
+            end
         end
 
         if callbacks !== nothing
@@ -397,8 +400,11 @@ function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
         end
 
         if step % params.n_surgery == 0
+            old_N = total_nodes(prob)
             surgery!(prob, params)
-            resize_buffers!(stepper, prob)
+            if total_nodes(prob) != old_N
+                resize_buffers!(stepper, prob)
+            end
         end
 
         if callbacks !== nothing
