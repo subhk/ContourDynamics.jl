@@ -10,12 +10,13 @@ Falls back to a plain serial loop otherwise, avoiding thread-spawn overhead.
 """
 macro _maybe_threads(cond, loop)
     @assert loop.head === :for
-    # Inject @inbounds into the threaded path only — tasks don't inherit
-    # @inbounds from the caller scope. The serial path retains bounds
-    # checking as a safety net for catching regressions.
+    # Inject @inbounds into both paths for consistent semantics.
+    # Tasks don't inherit @inbounds from the caller scope, so the
+    # threaded path needs it explicitly. The serial path also gets
+    # @inbounds so that both paths behave identically.
     inbounds_loop = Expr(:for, loop.args[1], Expr(:macrocall, Symbol("@inbounds"), nothing, loop.args[2]))
     threaded = esc(:(Threads.@threads $inbounds_loop))
-    serial = esc(loop)
+    serial = esc(inbounds_loop)
     quote
         if $(esc(cond))
             $threaded
