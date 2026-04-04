@@ -135,4 +135,16 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     return (ode_prob=ODEProblem(rhs!, u0, tspan, prob), callback=cb)
 end
 
+# Informative errors for unsupported multi-layer problems
+const _MULTILAYER_MSG = "MultiLayerContourProblem is not yet supported by the OrdinaryDiffEq extension. Use evolve!() with the built-in time steppers instead."
+
+ContourDynamics.flatten_nodes(::MultiLayerContourProblem) =
+    throw(ArgumentError(_MULTILAYER_MSG))
+
+ContourDynamics.unflatten_nodes!(::MultiLayerContourProblem, ::AbstractVector) =
+    throw(ArgumentError(_MULTILAYER_MSG))
+
+ContourDynamics.to_ode_problem(::MultiLayerContourProblem, args...; kwargs...) =
+    throw(ArgumentError(_MULTILAYER_MSG))
+
 end # module
