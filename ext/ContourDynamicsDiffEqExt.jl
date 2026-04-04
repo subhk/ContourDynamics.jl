@@ -111,7 +111,8 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     function condition(u, t, integrator)
         # Small tolerance avoids missing the target time due to floating-point
         # rounding in fixed-step integrators.
-        return t >= next_surgery_time[] - eps(typeof(t)) * abs(next_surgery_time[])
+        t_f = float(t)
+        return t_f >= next_surgery_time[] - eps(typeof(t_f)) * abs(next_surgery_time[])
     end
     _adaptive_warned = Ref(false)
     function affect!(integrator)
