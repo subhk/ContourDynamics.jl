@@ -98,7 +98,11 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
         # Enforce consistency between the user-facing deformation radii and the
         # coupling matrix that actually sets the modal Helmholtz scales.
         λscale = maximum(abs.(eigenvalues))
-        λtol = max(one(T), λscale) * sqrt(eps(T)) * T(100)
+        # Use relative tolerance when eigenvalues are O(1) or larger,
+        # but fall back to a small absolute tolerance so that physically
+        # significant small eigenvalues (e.g. λ ~ 1/Ld² for large Ld)
+        # are not incorrectly classified as near-zero.
+        λtol = λscale * sqrt(eps(T)) * T(100) + eps(T) * T(100)
         modal_radii = T[one(T) / sqrt(abs(λ)) for λ in eigenvalues if abs(λ) > λtol]
         length(modal_radii) == M || throw(ArgumentError(
             "Coupling matrix implies $(length(modal_radii)) significant baroclinic mode(s), " *
