@@ -4,14 +4,45 @@ using ContourDynamics
 using JLD2
 using StaticArrays
 
+# Save kernel/domain metadata so snapshots can be restored without external info.
+function _save_metadata!(g, kernel::EulerKernel, domain)
+    g["kernel_type"] = "EulerKernel"
+    _save_domain!(g, domain)
+end
+function _save_metadata!(g, kernel::QGKernel{T}, domain) where {T}
+    g["kernel_type"] = "QGKernel"
+    g["kernel_Ld"] = kernel.Ld
+    _save_domain!(g, domain)
+end
+function _save_metadata!(g, kernel::SQGKernel{T}, domain) where {T}
+    g["kernel_type"] = "SQGKernel"
+    g["kernel_delta"] = kernel.delta
+    _save_domain!(g, domain)
+end
+function _save_metadata!(g, kernel::MultiLayerQGKernel{N,M,T}, domain) where {N,M,T}
+    g["kernel_type"] = "MultiLayerQGKernel"
+    g["kernel_Ld"] = collect(kernel.Ld)
+    g["kernel_coupling"] = collect(kernel.coupling)
+    g["kernel_nlayers"] = N
+    _save_domain!(g, domain)
+end
+function _save_domain!(g, ::UnboundedDomain)
+    g["domain_type"] = "UnboundedDomain"
+end
+function _save_domain!(g, domain::PeriodicDomain{T}) where {T}
+    g["domain_type"] = "PeriodicDomain"
+    g["domain_Lx"] = domain.Lx
+    g["domain_Ly"] = domain.Ly
+end
+
 """
     save_snapshot(filename, prob, step; dt=nothing, diagnostics=true)
 
 Save a single snapshot of the simulation state to a JLD2 file.
 Each snapshot is stored under a group `step_NNNNNN`.
 
-Saves: contour nodes, PV values, node counts, and optionally
-energy, circulation, enstrophy, and angular momentum.
+Saves: contour nodes, PV values, node counts, kernel/domain metadata,
+and optionally energy, circulation, enstrophy, and angular momentum.
 """
 function ContourDynamics.save_snapshot(filename::String,
                                        prob::ContourProblem{K,D,T},
@@ -32,6 +63,9 @@ function ContourDynamics.save_snapshot(filename::String,
         end
         g["ncontours"] = length(prob.contours)
 
+        # Save kernel/domain metadata for restorability
+        mg = JLD2.Group(g, "metadata")
+        _save_metadata!(mg, prob.kernel, prob.domain)
 
         for (ci, c) in enumerate(prob.contours)
             cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))
@@ -87,6 +121,10 @@ function ContourDynamics.save_snapshot(filename::String,
         if dt !== nothing
             g["time"] = step * dt
         end
+
+        # Save kernel/domain metadata for restorability
+        mg = JLD2.Group(g, "metadata")
+        _save_metadata!(mg, prob.kernel, prob.domain)
 
         for (li, layer) in enumerate(prob.layers)
             lg = JLD2.Group(g, "layer_" * lpad(li, 2, '0'))
