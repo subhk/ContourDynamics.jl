@@ -51,46 +51,39 @@ to machine precision.
 `ContourDynamics.jl` is a Julia package that implements contour dynamics and
 contour surgery [@dritschel1988] for four physical regimes — 2D Euler, surface
 quasi-geostrophic (SQG), single-layer quasi-geostrophic (QG), and N-layer QG —
-on both unbounded and doubly-periodic domains. It provides topologically stable
-long-time integration with automatic filament removal, GPU-accelerated velocity
-evaluation, and analytical diagnostics (energy, circulation, enstrophy, angular
-momentum) computed directly from the contour geometry.
+on both unbounded and doubly-periodic domains.
 
 # Statement of Need
 
-Contour dynamics has been a cornerstone of idealised geophysical fluid dynamics
-research for over three decades. It has enabled landmark studies of the inverse
-energy cascade in 2D turbulence [@dritschel2008], the filamentation and
-stripping of quasi-geostrophic vortices [@dritschel1989], and the formation of
-sharp temperature fronts in surface quasi-geostrophic flows
-[@held1995; @scott2014]. The method's strength lies in situations where
-grid-based solvers struggle: long-time vortex interaction problems where
-pseudospectral diffusion artificially dissipates the fine-scale filamentary
-structures that contour dynamics preserves exactly.
+This combination of exactness and geometric elegance has made contour dynamics
+a cornerstone of idealised geophysical fluid dynamics research for over three
+decades. It has enabled landmark studies of the inverse energy cascade in 2D
+turbulence [@dritschel2008], the filamentation and stripping of
+quasi-geostrophic vortices [@dritschel1989], and the formation of sharp
+temperature fronts in surface quasi-geostrophic flows
+[@held1995; @scott2014]. The method excels precisely where grid-based solvers
+struggle: long-time vortex interaction problems in which pseudospectral
+diffusion artificially dissipates the fine-scale filamentary structures that
+contour dynamics preserves exactly.
 
 Despite this scientific impact, the method has remained difficult to access.
-The most widely used implementations are Dritschel's original Fortran codes,
-which have shaped the field but are not distributed as maintained open-source
-software. Individual research groups have written their own versions, but these
-tend to be unpublished, single-purpose, and limited to one flow regime. The
-Julia ecosystem for geophysical fluid dynamics has matured rapidly — packages
-like GeophysicalFlows.jl provide pseudospectral solvers — but open-source
-tooling for Lagrangian contour dynamics has been absent.
-
-`ContourDynamics.jl` fills this gap with a performant, extensible
-implementation that makes contour dynamics reproducible and accessible to a
-new generation of researchers.
+Widely used implementations are tied to legacy Fortran codes that are not
+distributed as maintained open-source software, and in-house codes written by
+individual research groups tend to be unpublished and limited to a single flow
+regime. `ContourDynamics.jl` fills this gap with a performant, extensible Julia
+implementation that makes contour dynamics reproducible and accessible to a new
+generation of researchers.
 
 # State of the Field
 
-Existing contour dynamics implementations fall into three categories.
-Dritschel's Fortran codes [@dritschel1988; @dritschel1989; @dritschel1997] are
-the methodological gold standard but are not publicly distributed as maintained
-packages. In-house codes written by individual research groups are typically
-undocumented and restricted to a single kernel type. Grid-based pseudospectral
-solvers such as GeophysicalFlows.jl handle the same physical regimes but
-introduce numerical diffusion that limits their fidelity for fine-scale
-structures.
+The primary reference implementations are Dritschel's original Fortran codes
+[@dritschel1988; @dritschel1989; @dritschel1997], which remain the
+methodological gold standard but are not publicly available as installable
+packages. Grid-based alternatives such as GeophysicalFlows.jl (pseudospectral)
+cover the same physical regimes but introduce numerical diffusion that limits
+their fidelity for fine-scale structures. Point-vortex codes avoid grids but
+sacrifice the exact PV conservation and topological surgery that contour
+dynamics provides.
 
 `ContourDynamics.jl` is, to our knowledge, the first publicly available,
 open-source contour dynamics package that unifies multiple kernel types
@@ -100,7 +93,7 @@ acceleration in a single, extensible codebase.
 # Method
 
 The central idea of contour dynamics is to replace the area integral of the
-Green's function with a sum of line integrals along contour boundaries, using
+Green's function with a sum of line integrals along contour boundaries, via
 Green's theorem:
 
 $$\mathbf{u}(\mathbf{x}) = \sum_k \Delta q_k \oint_{C_k} G(\mathbf{x} - \mathbf{x}') \, d\mathbf{x}'$$
@@ -124,22 +117,23 @@ decomposes the slowly-convergent lattice sum into rapidly-convergent real-space
 and Fourier-space components.
 
 As contours evolve, they develop exponentially thinning filaments that
-eventually become unresolvable on any finite mesh. Contour surgery
-[@dritschel1988] addresses this through a cycle of four operations: remeshing
-to redistribute nodes at uniform arc-length spacing, proximity detection via
-spatial hashing, topological reconnection of nearly-touching segments, and
-removal of sub-grid filaments. This preserves topological consistency and
-integral invariants over arbitrarily long integrations.
+eventually become unresolvable. Contour surgery [@dritschel1988] keeps the
+calculation well-posed through four operations applied at regular intervals:
+redistributing nodes at uniform arc-length spacing (remeshing), detecting
+nearly-touching segments via spatial hashing, reconnecting them to change the
+contour topology, and removing sub-grid filaments below an area threshold. This
+cycle preserves topological consistency and integral invariants over arbitrarily
+long integrations.
 
 # Software Design
 
 The package maps the physical hierarchy directly onto Julia's type system:
 kernel types (`EulerKernel`, `QGKernel`, `SQGKernel`, `MultiLayerQGKernel`)
 and domain types (`UnboundedDomain`, `PeriodicDomain`) select the correct
-velocity formula at compile time via multiple dispatch, with zero runtime
-overhead. Node positions are stored as `SVector{2,T}` from StaticArrays.jl for
-cache-friendly, allocation-free arithmetic. Time integration uses a classical
-4th-order Runge-Kutta scheme or a leapfrog scheme with Robert-Asselin filtering.
+velocity formula at compile time via multiple dispatch. Node positions use
+`SVector{2,T}` from StaticArrays.jl for efficient, allocation-free arithmetic.
+Time integration uses a classical 4th-order Runge-Kutta scheme or a leapfrog
+scheme with Robert-Asselin filtering.
 
 For large problems, an adaptive treecode provides $O(N \log N)$ velocity
 evaluation, replacing the $O(N^2)$ direct summation. GPU-accelerated evaluation
@@ -174,13 +168,13 @@ on Julia 1.10--1.12 across Linux and macOS via continuous integration.
 # Research Impact Statement
 
 `ContourDynamics.jl` makes reproducible Lagrangian vortex dynamics experiments
-accessible for the first time as open-source software. The package includes continuous integration, documentation, and
-comprehensive test coverage. Example scripts reproduce classical results from
-the literature — vortex merger, filamentation, beta-plane drift, two-layer
-baroclinic dynamics — providing ready-made starting points for new research.
-By unifying multiple kernel types, periodic domains, and GPU acceleration in a
-single Julia package, it lowers the barrier to entry for researchers across
-geophysical fluid dynamics.
+accessible for the first time as open-source software. Example scripts
+reproduce classical results from the literature — vortex merger, filamentation,
+beta-plane drift, two-layer baroclinic dynamics — and serve as starting points
+for new research. By unifying multiple kernel types, periodic domains, and GPU
+acceleration in a tested, documented Julia package, it lowers the barrier to
+entry for researchers investigating vortex dynamics across geophysical flow
+regimes.
 
 # AI Usage Disclosure
 
