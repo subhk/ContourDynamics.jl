@@ -7,6 +7,8 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
                                           nsteps::Int, frameskip::Int=10,
                                           filename="contour_evolution.mp4",
                                           callbacks=nothing)
+    frameskip > 0 || throw(ArgumentError("frameskip must be positive, got $frameskip"))
+
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
@@ -25,6 +27,10 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
     end
     evolved = Ref(0)
 
+    # Pre-allocate reusable coordinate buffers to reduce GC pressure
+    xs_buf = Float64[]
+    ys_buf = Float64[]
+
     Makie.record(fig, filename, frame_indices; framerate=30) do frame
         # Evolve only for frames after the initial state
         if frame > 0
@@ -42,14 +48,18 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
         for c in prob.contours
             nodes = c.nodes
             n = length(nodes)
-            xs = [nodes[i][1] for i in 1:n]
-            ys = [nodes[i][2] for i in 1:n]
-            if !ContourDynamics.is_spanning(c)
-                # Close the contour back to the first node
-                push!(xs, nodes[1][1])
-                push!(ys, nodes[1][2])
+            n_pts = ContourDynamics.is_spanning(c) ? n : n + 1
+            resize!(xs_buf, n_pts)
+            resize!(ys_buf, n_pts)
+            for i in 1:n
+                xs_buf[i] = nodes[i][1]
+                ys_buf[i] = nodes[i][2]
             end
-            Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
+            if !ContourDynamics.is_spanning(c)
+                xs_buf[n+1] = nodes[1][1]
+                ys_buf[n+1] = nodes[1][2]
+            end
+            Makie.lines!(ax, copy(xs_buf), copy(ys_buf); color=c.pv, colormap=:RdBu,
                          colorrange=(pv_lo, pv_hi))
         end
     end
@@ -61,6 +71,8 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                                           nsteps::Int, frameskip::Int=10,
                                           filename="contour_evolution.mp4",
                                           callbacks=nothing) where {N}
+    frameskip > 0 || throw(ArgumentError("frameskip must be positive, got $frameskip"))
+
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
 
@@ -72,11 +84,17 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
         pv_hi += one(pv_hi)
     end
 
+    # Distinct line styles for each layer
+    layer_styles = [:solid, :dash, :dot, :dashdot, :dashdotdot]
+
     frame_indices = vcat([0], collect(frameskip:frameskip:nsteps))
     if frame_indices[end] != nsteps
         push!(frame_indices, nsteps)
     end
     evolved = Ref(0)
+
+    xs_buf = Float64[]
+    ys_buf = Float64[]
 
     Makie.record(fig, filename, frame_indices; framerate=30) do frame
         if frame > 0
@@ -92,18 +110,24 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
         end
         Makie.empty!(ax)
         for (li, layer) in enumerate(prob.layers)
+            style = layer_styles[mod1(li, length(layer_styles))]
             for c in layer
                 nodes = c.nodes
                 n = length(nodes)
-                xs = [nodes[i][1] for i in 1:n]
-                ys = [nodes[i][2] for i in 1:n]
-                if !ContourDynamics.is_spanning(c)
-                    push!(xs, nodes[1][1])
-                    push!(ys, nodes[1][2])
+                n_pts = ContourDynamics.is_spanning(c) ? n : n + 1
+                resize!(xs_buf, n_pts)
+                resize!(ys_buf, n_pts)
+                for i in 1:n
+                    xs_buf[i] = nodes[i][1]
+                    ys_buf[i] = nodes[i][2]
                 end
-                Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
-                             colorrange=(pv_lo, pv_hi),
-                             linestyle=li == 1 ? :solid : :dash)
+                if !ContourDynamics.is_spanning(c)
+                    xs_buf[n+1] = nodes[1][1]
+                    ys_buf[n+1] = nodes[1][2]
+                end
+                Makie.lines!(ax, copy(xs_buf), copy(ys_buf); color=c.pv, colormap=:RdBu,
+                             colorrange=(pv_lo, pv_hi), linestyle=style,
+                             label=li <= N ? "Layer $li" : nothing)
             end
         end
     end
