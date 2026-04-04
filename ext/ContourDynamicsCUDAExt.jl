@@ -28,7 +28,13 @@ function Adapt.adapt_structure(to, prob::ContourDynamics.MultiLayerContourProble
     ContourDynamics.MultiLayerContourProblem(prob.kernel, prob.domain, prob.layers; dev=new_dev)
 end
 
-_detect_device(::CUDA.CuArrayAdaptor) = ContourDynamics.GPU()
+# Detect GPU from Adapt.jl adaptors.  CuArrayAdaptor may not exist in all
+# CUDA.jl 5.x releases, so wrap in a try/catch to avoid load-time errors.
+try
+    @eval _detect_device(::CUDA.CuArrayAdaptor) = ContourDynamics.GPU()
+catch
+    # CuArrayAdaptor not available in this CUDA version; fall through to catch-all.
+end
 _detect_device(::Type{T}) where {T<:CuArray} = ContourDynamics.GPU()
 _detect_device(::Type{T}) where {T<:Array} = ContourDynamics.CPU()
 _detect_device(::Any) = ContourDynamics.CPU()
