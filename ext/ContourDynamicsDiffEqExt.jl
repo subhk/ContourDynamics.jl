@@ -109,7 +109,9 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     # Time-based surgery condition (works with both fixed and adaptive solvers)
     next_surgery_time = Ref(tspan[1] + dt_surgery)
     function condition(u, t, integrator)
-        return t >= next_surgery_time[]
+        # Small tolerance avoids missing the target time due to floating-point
+        # rounding in fixed-step integrators.
+        return t >= next_surgery_time[] - eps(typeof(t)) * abs(next_surgery_time[])
     end
     _adaptive_warned = Ref(false)
     function affect!(integrator)
