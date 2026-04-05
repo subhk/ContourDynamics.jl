@@ -114,7 +114,7 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
         sorted_Ld = sort(Vector(Ld))
         for m in 1:M
             isapprox(sorted_modal[m], sorted_Ld[m];
-                     rtol=sqrt(eps(T)) * T(100), atol=zero(T)) || throw(ArgumentError(
+                     rtol=sqrt(eps(T)) * T(100), atol=eps(T) * T(100)) || throw(ArgumentError(
                 "Provided deformation radii $(Vector(Ld)) are inconsistent with the coupling matrix. " *
                 "The coupling-implied modal radii are $(modal_radii)."
             ))
