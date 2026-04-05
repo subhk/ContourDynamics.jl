@@ -114,8 +114,11 @@ function ellipse_moments(c::PVContour{T}) where {T}
     lambda1 = trace / 2 + disc
     lambda2 = trace / 2 - disc
 
-    # Guard against near-degenerate contours: use a threshold relative to
-    # the trace (sum of eigenvalues) so that the aspect ratio stays finite.
+    # Guard against near-degenerate contours: if the trace (sum of eigenvalues)
+    # is negligible, the contour is essentially a point — return unit aspect ratio.
+    if trace < eps(T)
+        return (one(T), zero(T))
+    end
     lambda2_safe = max(lambda2, trace * eps(T) * T(100))
     aspect_ratio = sqrt(max(one(T), lambda1 / lambda2_safe))
     angle = T(0.5) * atan(2 * Jxy, Jxx - Jyy)
