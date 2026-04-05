@@ -27,10 +27,6 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
     end
     evolved = Ref(0)
 
-    # Pre-allocate reusable coordinate buffers to reduce GC pressure
-    xs_buf = Float64[]
-    ys_buf = Float64[]
-
     Makie.record(fig, filename, frame_indices; framerate=30) do frame
         # Evolve only for frames after the initial state
         if frame > 0
@@ -49,17 +45,17 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
             nodes = c.nodes
             n = length(nodes)
             n_pts = ContourDynamics.is_spanning(c) ? n : n + 1
-            resize!(xs_buf, n_pts)
-            resize!(ys_buf, n_pts)
+            xs = Vector{Float64}(undef, n_pts)
+            ys = Vector{Float64}(undef, n_pts)
             for i in 1:n
-                xs_buf[i] = nodes[i][1]
-                ys_buf[i] = nodes[i][2]
+                xs[i] = nodes[i][1]
+                ys[i] = nodes[i][2]
             end
             if !ContourDynamics.is_spanning(c)
-                xs_buf[n+1] = nodes[1][1]
-                ys_buf[n+1] = nodes[1][2]
+                xs[n+1] = nodes[1][1]
+                ys[n+1] = nodes[1][2]
             end
-            Makie.lines!(ax, copy(xs_buf), copy(ys_buf); color=c.pv, colormap=:RdBu,
+            Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
                          colorrange=(pv_lo, pv_hi))
         end
     end
@@ -93,9 +89,6 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
     end
     evolved = Ref(0)
 
-    xs_buf = Float64[]
-    ys_buf = Float64[]
-
     Makie.record(fig, filename, frame_indices; framerate=30) do frame
         if frame > 0
             steps_to_take = frame - evolved[]
@@ -116,17 +109,17 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                 nodes = c.nodes
                 n = length(nodes)
                 n_pts = ContourDynamics.is_spanning(c) ? n : n + 1
-                resize!(xs_buf, n_pts)
-                resize!(ys_buf, n_pts)
+                xs = Vector{Float64}(undef, n_pts)
+                ys = Vector{Float64}(undef, n_pts)
                 for i in 1:n
-                    xs_buf[i] = nodes[i][1]
-                    ys_buf[i] = nodes[i][2]
+                    xs[i] = nodes[i][1]
+                    ys[i] = nodes[i][2]
                 end
                 if !ContourDynamics.is_spanning(c)
-                    xs_buf[n+1] = nodes[1][1]
-                    ys_buf[n+1] = nodes[1][2]
+                    xs[n+1] = nodes[1][1]
+                    ys[n+1] = nodes[1][2]
                 end
-                Makie.lines!(ax, copy(xs_buf), copy(ys_buf); color=c.pv, colormap=:RdBu,
+                Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
                              colorrange=(pv_lo, pv_hi), linestyle=style,
                              label=first_in_layer ? "Layer $li" : nothing)
                 first_in_layer = false
