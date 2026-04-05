@@ -328,22 +328,13 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     return prob
 end
 
-# Module-level surgery buffer cache to avoid repeated allocation in long simulations.
-const _surgery_bufs = Ref{Any}(nothing)
-
-function _get_surgery_bufs(::Type{T}) where {T}
-    bufs = _surgery_bufs[]
-    if bufs isa Tuple{Vector{SVector{2,T}}, Vector{T}, Vector{SVector{2,T}}}
-        return bufs
-    end
-    new_bufs = (SVector{2,T}[], T[], SVector{2,T}[])
-    _surgery_bufs[] = new_bufs
-    return new_bufs
-end
-
 function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:AbstractDomain, T}, params::SurgeryParams) where {N, T}
     domain = prob.domain
-    _remesh_buf, _arc_buf, _vnodes_buf = _get_surgery_bufs(T)
+    # Allocate scratch buffers locally — thread-safe and negligible cost
+    # relative to the O(N²) reconnection work that follows.
+    _remesh_buf = SVector{2, T}[]
+    _arc_buf = T[]
+    _vnodes_buf = SVector{2, T}[]
     for i in 1:N
         contours = prob.layers[i]
         for j in eachindex(contours)
