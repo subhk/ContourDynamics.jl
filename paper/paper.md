@@ -176,14 +176,6 @@ acceleration in a tested, documented Julia package, it lowers the barrier to
 entry for researchers investigating vortex dynamics across geophysical flow
 regimes.
 
-# AI Usage Disclosure
-
-Generative AI tools (Anthropic Claude) were used during the development of this
-software to assist with code implementation, documentation drafting, and test
-development. All AI-generated outputs were reviewed, edited, and validated by
-the human author. Core algorithmic and design decisions were made by the author
-based on the published literature.
-
 # Acknowledgements
 
 The author thanks David Dritschel for making the original contour surgery
