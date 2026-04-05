@@ -42,7 +42,7 @@ include("test_utils.jl")
     end
 
     @testset "Euler Kernel" begin
-        c = circular_patch(1.0, 32, 1.0)
+        c = circular_patch(1.0, 64, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
         vel = zeros(SVector{2, Float64}, total_nodes(prob))
         velocity!(vel, prob)
@@ -51,13 +51,13 @@ include("test_utils.jl")
         expected_speed = 0.5
         for i in 1:nnodes(c)
             speed = sqrt(vel[i][1]^2 + vel[i][2]^2)
-            @test speed ≈ expected_speed rtol=0.05
+            @test speed ≈ expected_speed rtol=0.02
         end
 
-        # Check tangential direction: velocity perpendicular to position
+        # Check tangential direction: velocity perpendicular to position (dot product ≈ 0)
         for i in 1:nnodes(c)
             pos = c.nodes[i]
-            @test abs(vel[i][1]*pos[1] + vel[i][2]*pos[2]) < 0.05
+            @test abs(vel[i][1]*pos[1] + vel[i][2]*pos[2]) < 0.01
         end
     end
 
@@ -371,6 +371,10 @@ include("test_utils.jl")
     include("test_fmm.jl")
 
     include("test_device.jl")
+
+    include("test_edge_cases.jl")
+
+    include("test_multi_contour.jl")
 
     @testset "Spanning Contours & Beta Staircase" begin
         T = Float64
