@@ -57,7 +57,7 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
 end
 
 # Module-level workspace cache (one workspace at a time).
-const _gpu_ws_ref = Ref{Any}(nothing)
+const _gpu_ws_ref = Ref{Union{Nothing, _GPUWorkspace}}(nothing)
 const _gpu_ws_lock = ReentrantLock()
 
 function _get_gpu_workspace!(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
