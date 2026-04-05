@@ -254,7 +254,7 @@ function _collect_velocities!(flat::Vector{SVector{2,T}}, vel::NTuple{N, Vector{
     return flat
 end
 
-function _make_vel_tuple(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+function _make_vel_tuple(prob::MultiLayerContourProblem{N, <:Any, <:Any, T}) where {N, T}
     ntuple(i -> zeros(SVector{2,T}, sum(nnodes(c) for c in prob.layers[i]; init=0)), Val(N))
 end
 
