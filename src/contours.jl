@@ -131,7 +131,10 @@ function remesh(c::PVContour{T}, params::SurgeryParams;
         end
     end
 
-    length(new_nodes) < 3 && return c
+    if length(new_nodes) < 3
+        @warn "remesh: produced fewer than 3 nodes; returning original contour unchanged" maxlog=1
+        return c
+    end
 
     # `_buf` is scratch storage owned by the caller. Never hand it back as the
     # contour's live node vector, or later remesh calls will mutate existing
