@@ -141,8 +141,8 @@ _ewald_key_order(::Type{Float64}) = _ewald_key_order_f64
 _ewald_key_order(::Type{Float32}) = _ewald_key_order_f32
 
 # Generic fallback for other float types (BigFloat, Float16, etc.)
-const _ewald_caches_generic = Dict{Any, Any}()
-const _ewald_key_order_generic = Any[]
+const _ewald_caches_generic = Dict{Tuple, EwaldCache}()
+const _ewald_key_order_generic = Vector{Tuple}()
 _ewald_cache_dict(::Type{T}) where {T<:AbstractFloat} = _ewald_caches_generic
 _ewald_key_order(::Type{T}) where {T<:AbstractFloat} = _ewald_key_order_generic
 
@@ -440,7 +440,6 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     # because the correction is smooth and converges without Ewald splitting.
     # The precomputed QG fourier_coeffs from build_ewald_cache include Gaussian
     # damping and are therefore not used here.
-    # TODO: precompute the exact correction coefficients to avoid recomputing per GL point.
     kappa2 = one(T) / kernel.Ld^2
     area = 4 * domain.Lx * domain.Ly
 
@@ -448,19 +447,37 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
     mid = (a + b) / 2
     half_ds = ds / 2
 
+    # Precompute correction coefficients once (independent of GL quadrature point).
+    nkx = length(euler_cache.kx)
+    nky = length(euler_cache.ky)
+    qg_corr_coeffs = Matrix{T}(undef, nkx, nky)
+    @inbounds for mi in 1:nkx
+        kxi = euler_cache.kx[mi]
+        for ni in 1:nky
+            kyi = euler_cache.ky[ni]
+            k2 = kxi^2 + kyi^2
+            if k2 < eps(T)
+                qg_corr_coeffs[mi, ni] = zero(T)
+            else
+                qg_corr_coeffs[mi, ni] = kappa2 / (k2 * (k2 + kappa2) * area)
+            end
+        end
+    end
+
     corr_integral = zero(T)
     for q in 1:3
         s_pt = mid + g_nodes[q] * half_ds
         r_vec = x - s_pt
         rx, ry = r_vec[1], r_vec[2]
         G_corr = zero(T)
-        for kxi in euler_cache.kx
+        @inbounds for mi in 1:nkx
+            kxi = euler_cache.kx[mi]
             cx = cos(kxi * rx)
             sx = sin(kxi * rx)
-            for kyi in euler_cache.ky
-                k2 = kxi^2 + kyi^2
-                k2 < eps(T) && continue
-                coeff = kappa2 / (k2 * (k2 + kappa2) * area)
+            for ni in 1:nky
+                coeff = qg_corr_coeffs[mi, ni]
+                abs(coeff) < eps(T) && continue
+                kyi = euler_cache.ky[ni]
                 G_corr -= coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
             end
         end
