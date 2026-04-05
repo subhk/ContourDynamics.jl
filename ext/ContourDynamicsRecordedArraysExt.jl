@@ -28,10 +28,9 @@ e = getentries(rec.energy)
 function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
                                               dt::Real,
                                               nsteps::Int,
-                                              record_every::Int=1,
-                                              dt_record::Int=record_every) where {K,D,T}
-    dt = T(dt)
-    tmax = dt * T(nsteps)
+                                              record_every::Int=1) where {K,D,T}
+    dt_T = T(dt)
+    tmax = dt_T * T(nsteps)
     clock = ContinuousClock(tmax)
 
     energy_rec = recorded(StaticEntry, clock, T[])
@@ -42,8 +41,8 @@ function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
     last_time = Ref(zero(T))
 
     function callback(p, step)
-        if step % dt_record == 0
-            t = dt * T(step)
+        if step % record_every == 0
+            t = dt_T * T(step)
             advance = t - last_time[]
             if advance > zero(T)
                 increase!(clock, advance)
@@ -74,10 +73,9 @@ end
 function ContourDynamics.recorded_diagnostics(prob::MultiLayerContourProblem{N,K,D,T};
                                               dt::Real,
                                               nsteps::Int,
-                                              record_every::Int=1,
-                                              dt_record::Int=record_every) where {N,K,D,T}
-    dt = T(dt)
-    tmax = dt * T(nsteps)
+                                              record_every::Int=1) where {N,K,D,T}
+    dt_T = T(dt)
+    tmax = dt_T * T(nsteps)
     clock = ContinuousClock(tmax)
 
     energy_rec = recorded(StaticEntry, clock, T[])
@@ -88,8 +86,8 @@ function ContourDynamics.recorded_diagnostics(prob::MultiLayerContourProblem{N,K
     last_time = Ref(zero(T))
 
     function callback(p, step)
-        if step % dt_record == 0
-            t = dt * T(step)
+        if step % record_every == 0
+            t = dt_T * T(step)
             advance = t - last_time[]
             if advance > zero(T)
                 increase!(clock, advance)
