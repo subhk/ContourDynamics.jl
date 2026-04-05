@@ -78,7 +78,7 @@ end
 Collect all segment midpoints and corresponding (contour_idx, node_idx) identifiers.
 """
 function _collect_segment_midpoints(contours::AbstractVector{PVContour{T}}) where {T}
-    total = sum(nnodes(c) for c in contours)
+    total = sum(nnodes(c) for c in contours; init=0)
     midpoints = Vector{SVector{2,T}}(undef, total)
     seg_ids = Vector{Tuple{Int,Int}}(undef, total)
     k = 0
