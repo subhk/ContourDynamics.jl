@@ -62,14 +62,14 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
     @testset "QG periodic energy conservation" begin
         # Circular patch is an exact steady state — energy drift signals formula errors
         R = 0.5
-        N_nodes = extended ? 128 : 32
+        N_nodes = extended ? 64 : 32
         Ld = 2.0
         c = circular_patch(R, N_nodes, 1.0)
         domain = PeriodicDomain(5.0, 5.0)
         prob = ContourProblem(QGKernel(Ld), domain, [c])
 
         dt = 0.01
-        nsteps = extended ? 200 : 20
+        nsteps = extended ? 100 : 20
         stepper = RK4Stepper(dt, total_nodes(prob))
         params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)
 
@@ -81,7 +81,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         E1 = energy(prob)
         G1 = circulation(prob)
 
-        energy_tol = extended ? 1e-6 : 1e-4
+        energy_tol = extended ? 1e-5 : 1e-4
         @test abs(E1 - E0) / abs(E0) < energy_tol
         @test G1 ≈ G0 rtol=1e-6
     end

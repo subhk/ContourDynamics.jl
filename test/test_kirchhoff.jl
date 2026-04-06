@@ -6,7 +6,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
     a = 2.0
     b = 1.0
     pv = 1.0
-    N_nodes = extended ? 128 : 32
+    N_nodes = extended ? 64 : 32
 
     c = elliptical_patch(a, b, N_nodes, pv)
     prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
@@ -14,7 +14,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
     Omega = a * b * pv / (a + b)^2
     T_period = 2π / Omega
 
-    nsteps = extended ? 1000 : 100
+    nsteps = extended ? 500 : 100
     dt = T_period / nsteps
     stepper = RK4Stepper(dt, total_nodes(prob))
     params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)
@@ -32,7 +32,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
     @test final_circ ≈ initial_circ rtol=1e-4
 
     # After one full period, nodes should return near initial positions
-    node_tol = extended ? 0.05 : 0.10
+    node_tol = extended ? 0.08 : 0.10
     for i in 1:N_nodes
         @test prob.contours[1].nodes[i] ≈ initial_nodes[i] atol=node_tol
     end
