@@ -178,8 +178,5 @@ regimes.
 
 # Acknowledgements
 
-The author thanks David Dritschel for making the original contour surgery
-algorithm and its mathematical foundations available in the literature, which
-this implementation closely follows.
 
 # References
