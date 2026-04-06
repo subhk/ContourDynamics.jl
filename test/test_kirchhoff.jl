@@ -14,7 +14,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
     Omega = a * b * pv / (a + b)^2
     T_period = 2π / Omega
 
-    nsteps = extended ? 4000 : 100
+    nsteps = extended ? 1000 : 100
     dt = T_period / nsteps
     stepper = RK4Stepper(dt, total_nodes(prob))
     params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)

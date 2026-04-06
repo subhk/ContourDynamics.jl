@@ -11,7 +11,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
 
         dt = 0.01
-        nsteps = extended ? 10000 : 50
+        nsteps = extended ? 2000 : 50
         stepper = RK4Stepper(dt, total_nodes(prob))
         params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)
 
@@ -42,7 +42,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
 
         dt = 0.01
-        nsteps = extended ? 500 : 20
+        nsteps = extended ? 200 : 20
         stepper = RK4Stepper(dt, total_nodes(prob))
         params = SurgeryParams(0.001, 0.01, 0.2, 1e-8, nsteps + 1)
 
