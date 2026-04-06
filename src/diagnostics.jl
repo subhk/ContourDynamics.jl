@@ -54,7 +54,7 @@ function centroid(c::PVContour{T}) where {T}
     n = length(nodes)
     n < 3 && return zero(SVector{2, T})
     A = vortex_area(c)
-    abs(A) < eps(T) && return zero(SVector{2, T})
+    abs(A) < eps(T) && return sum(nodes) / n
 
     cx = zero(T)
     cy = zero(T)

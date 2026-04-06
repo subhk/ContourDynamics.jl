@@ -18,8 +18,6 @@ The critical merger distance and the topological reconnection that enables it ar
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
-![Vortex merger evolution](assets/examples/vortex_merger.png)
-
 *Time evolution of two co-rotating vortex patches undergoing merger. Left: initial state with two circular patches separated by 1.8R. Right: merged state after filament exchange and surgery.*
 :::
 
@@ -67,8 +65,6 @@ An elliptical vortex patch with high aspect ratio sheds thin filaments that are 
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
-![Filamentation evolution](assets/examples/filamentation.png)
-
 *Filamentation of an elliptical vortex patch (aspect ratio 3.3). The unstable ellipse sheds thin filaments that are removed by contour surgery, leaving a rounder core vortex.*
 :::
 
@@ -106,8 +102,6 @@ A cyclonic vortex on a beta plane drifts north-westward due to the planetary vor
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
-![Beta drift trajectory](assets/examples/beta_drift.png)
-
 *Trajectory of a cyclonic vortex patch on a beta plane (QG dynamics). The vortex drifts north-westward, consistent with the classical Rossby wave radiation mechanism. Background: PV staircase contours (horizontal lines).*
 :::
 
@@ -163,8 +157,6 @@ SQG dynamics and their role in atmospheric front formation are described in [Hel
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
-![SQG ellipse evolution](assets/examples/sqg_ellipse.png)
-
 *SQG evolution of an elliptical buoyancy patch. The fractional Laplacian produces sharper filaments and stronger fronts than the Euler kernel, with a self-similar cascade of instabilities.*
 :::
 
@@ -205,8 +197,6 @@ Multi-layer contour dynamics and the modal decomposition are described in [Drits
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
-![Two-layer QG evolution](assets/examples/two_layer_qg.png)
-
 *Evolution of a vortex patch in the upper layer of a two-layer QG system. The baroclinic coupling transfers energy between the barotropic and baroclinic modes, modifying the vortex shape compared to single-layer dynamics.*
 :::
 
