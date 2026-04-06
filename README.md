@@ -143,10 +143,4 @@ Full documentation is available at [subhk.github.io/ContourDynamics.jl](https://
 - Dritschel, D.G. (1989). Contour dynamics and contour surgery. *Comput. Phys. Rep.* **10**(3), 77-146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
 - Held, I.M., Pierrehumbert, R.T., Garner, S.T. & Swanson, K.L. (1995). Surface quasi-geostrophic dynamics. *J. Fluid Mech.* **282**, 1-20. [doi:10.1017/S0022112095000012](https://doi.org/10.1017/S0022112095000012)
 
-## Citation
 
-If you use ContourDynamics.jl in your research, please cite our JOSS paper (forthcoming).
-
-## License
-
-MIT
