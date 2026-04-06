@@ -202,6 +202,6 @@ println("Circulation change: $(abs(circulation(prob) - Γ0) / abs(Γ0))")
 
 ## Next Steps
 
-- See complete runnable scripts in the [Examples](@ref) section
-- Read the [Theory & Method](@ref) page for the mathematics behind Ewald summation and modal decomposition
-- Check the [API Reference](@ref) for all available functions
+- See complete runnable scripts in the [Examples](/examples) section
+- Read the [Theory & Method](/theory) page for the mathematics behind Ewald summation and modal decomposition
+- Check the [API Reference](/api) for all available functions

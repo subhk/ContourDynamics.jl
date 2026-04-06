@@ -132,6 +132,6 @@ println("Velocity at (5,0): $v_far")
 
 ## Next Steps
 
-- Learn about [quasi-geostrophic dynamics](@ref "Tutorial: Quasi-Geostrophic Dynamics") with finite deformation radii
-- See complete runnable scripts in the [Examples](@ref) section
-- Read the [Theory & Method](@ref) page for mathematical details
+- Learn about [quasi-geostrophic dynamics](/tutorial_qg) with finite deformation radii
+- See complete runnable scripts in the [Examples](/examples) section
+- Read the [Theory & Method](/theory) page for mathematical details

@@ -50,8 +50,8 @@ features:
   - icon: 🚀
     title: GPU Acceleration
     details: Pass dev=GPU() to offload velocity computations to an NVIDIA GPU via CUDA.jl. Surgery and diagnostics continue on CPU — no code changes required beyond the constructor arguments.
-    link: /gpu
-    linkText: GPU docs
+    link: /tutorial_euler
+    linkText: Try a tutorial
 ---
 ```
 
@@ -83,7 +83,7 @@ println("Circulation: ", circulation(prob))
     prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
     stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
     ```
-    See [GPU Acceleration](@ref) for details.
+    See the [tutorial](/tutorial_euler) for details.
 
 ## Installation
 
