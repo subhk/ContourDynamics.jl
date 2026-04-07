@@ -56,20 +56,25 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
     )
 end
 
-# Module-level workspace cache (one workspace at a time).
-const _gpu_ws_ref = Ref{Union{Nothing, _GPUWorkspace}}(nothing)
-const _gpu_ws_lock = ReentrantLock()
+# Module-level workspace cache keyed by (T, N) so problems with different
+# sizes don't thrash a single slot.  Each entry also carries its own lock
+# so that concurrent velocity evaluations on the *same* workspace block
+# rather than racing on shared buffers.
+struct _WSEntry
+    ws::_GPUWorkspace
+    lock::ReentrantLock
+end
+const _gpu_ws_cache = Dict{UInt, _WSEntry}()
+const _gpu_ws_cache_lock = ReentrantLock()
 
 function _get_gpu_workspace!(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
-    lock(_gpu_ws_lock) do
-        ws = _gpu_ws_ref[]
-        if ws isa _GPUWorkspace{T, <:AbstractVector{T}} && ws.n == N
-            return ws::_GPUWorkspace{T}
+    key = hash((T, N))
+    entry = lock(_gpu_ws_cache_lock) do
+        get!(_gpu_ws_cache, key) do
+            _WSEntry(_create_gpu_workspace(dev, T, N), ReentrantLock())
         end
-        new_ws = _create_gpu_workspace(dev, T, N)
-        _gpu_ws_ref[] = new_ws
-        return new_ws
     end
+    return entry
 end
 
 """
@@ -173,7 +178,7 @@ end
     vy = zero(T)
     inv4pi = one(T) / (4 * T(π))
 
-    for j in 1:n_seg
+    @inbounds for j in 1:n_seg
         dsx = seg_bx[j] - seg_ax[j]
         dsy = seg_by[j] - seg_ay[j]
         ds_len_sq = dsx^2 + dsy^2
