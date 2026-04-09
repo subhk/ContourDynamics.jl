@@ -213,7 +213,7 @@ end
     setup_ewald_cache!(domain, kernel::QGKernel; n_fourier=8, n_images=2)
 
 Pre-build Ewald caches for QG velocity computation.  The periodic QG velocity
-decomposes as `G_QG_per = G_Euler_per + G_correction`, so the velocity path
+decomposes as `G_QG_per = G_Euler_per - G_correction`, so the velocity path
 uses an Euler Ewald cache internally.  This method builds both the QG-specific
 cache and the Euler cache that the velocity path actually reads, ensuring that
 custom `n_fourier`/`n_images` parameters take effect.
@@ -410,7 +410,7 @@ end
 Velocity at point `x` from segment `a→b` in a periodic domain using the QG kernel.
 
 Decomposes the periodic QG Green's function as:
-  G_QG_per = G_Euler_per + G_correction
+  G_QG_per = G_Euler_per - G_correction
 where the Euler part is handled by the validated Ewald summation, and the
 correction is a smooth, rapidly convergent Fourier series:
   G_corr(r) = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
