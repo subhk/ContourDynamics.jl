@@ -5,6 +5,14 @@ using Test
 # Guard against double-include when run from runtests.jl
 @isdefined(circular_patch) || include("test_utils.jl")
 
+# Disable scalar indexing on GPU arrays to catch accidental cu_array[i] access.
+# Only activates when CUDA is actually loaded.
+try
+    using CUDA
+    CUDA.allowscalar(false)
+catch
+end
+
 @testset "Device abstraction" begin
     @testset "ContourProblem defaults to CPU" begin
         c = circular_patch(0.5, 32, 1.0)
@@ -20,6 +28,12 @@ using Test
 
     @testset "GPU() without CUDA gives helpful error" begin
         @test_throws ErrorException device_array(GPU())
+    end
+
+    @testset "GPU() with unsupported kernel/domain errors at construction" begin
+        c = circular_patch(0.5, 32, 1.0)
+        @test_throws ArgumentError ContourProblem(QGKernel(1.0), UnboundedDomain(), [c]; dev=GPU())
+        @test_throws ArgumentError ContourProblem(EulerKernel(), PeriodicDomain(1.0, 1.0), [c]; dev=GPU())
     end
 
     @testset "CPU device_array returns Array" begin

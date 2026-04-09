@@ -282,6 +282,8 @@ include("test_utils.jl")
         end
     end
 
+    include("test_problem.jl")
+
     include("test_kirchhoff.jl")
 
     include("test_conservation.jl")
@@ -425,6 +427,8 @@ include("test_utils.jl")
         @test is_spanning(remeshed)
         @test remeshed.wrap == staircase[1].wrap
     end
+
+    include("test_shapes.jl")
 
     # Extension tests (only run when deps are available)
     if haskey(Base.loaded_modules, Base.PkgId(Base.UUID("033835bb-8acc-5ee8-8aae-3f567f8a3819"), "JLD2"))

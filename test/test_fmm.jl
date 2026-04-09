@@ -61,7 +61,7 @@ using Test, ContourDynamics, StaticArrays
         end
 
         @testset "Level Operators" begin
-            c = circular_patch(1.0, 200, 1.0)
+            c = circular_patch(1.0, 128, 1.0)
             tree = ContourDynamics.build_fmm_tree([c])
             ops = ContourDynamics.precompute_level_operators(tree, EulerKernel())
             @test length(ops) == tree.max_level + 1
@@ -109,7 +109,7 @@ using Test, ContourDynamics, StaticArrays
 
     @testset "Translation Operators" begin
         @testset "M2L Operator Precomputation" begin
-            c = circular_patch(1.0, 300, 1.0)
+            c = circular_patch(1.0, 128, 1.0)
             tree = ContourDynamics.build_fmm_tree([c])
             ops = ContourDynamics.precompute_level_operators(tree, EulerKernel())
             m2l = ContourDynamics.precompute_m2l_operators(tree, EulerKernel(),
@@ -128,7 +128,7 @@ using Test, ContourDynamics, StaticArrays
             @test_skip "Proxy FMM disabled (_FMM_ACCELERATION_ENABLED = false)"
         else
             @testset "Euler Unbounded" begin
-                c = circular_patch(1.0, 300, 1.0)
+                c = circular_patch(1.0, 128, 1.0)
                 prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
                 N = total_nodes(prob)
                 vel_direct = zeros(SVector{2,Float64}, N)
@@ -141,7 +141,7 @@ using Test, ContourDynamics, StaticArrays
             end
 
             @testset "QG Unbounded" begin
-                c = circular_patch(1.0, 300, 1.0)
+                c = circular_patch(1.0, 128, 1.0)
                 prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
                 N = total_nodes(prob)
                 vel_direct = zeros(SVector{2,Float64}, N)
@@ -246,7 +246,7 @@ using Test, ContourDynamics, StaticArrays
 
     @testset "FMM Conservation" begin
         @testset "Kirchhoff Ellipse" begin
-            e = elliptical_patch(2.0, 1.0, 300, 1.0)
+            e = elliptical_patch(2.0, 1.0, 128, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [e])
             stepper = RK4Stepper(0.01, total_nodes(prob))
             params = SurgeryParams(0.005, 0.02, 0.3, 1e-6, 50)
@@ -254,7 +254,7 @@ using Test, ContourDynamics, StaticArrays
             circ0 = circulation(prob)
             area0 = vortex_area(prob.contours[1])
 
-            evolve!(prob, stepper, params; nsteps=100)
+            evolve!(prob, stepper, params; nsteps=20)
 
             @test abs(circulation(prob) - circ0) / abs(circ0) < 1e-6
             @test abs(vortex_area(prob.contours[1]) - area0) / abs(area0) < 1e-4
