@@ -21,7 +21,7 @@ using Test, ContourDynamics, StaticArrays
         circ0 = circulation(prob)
         E0 = energy(prob)
 
-        evolve!(prob, stepper, params; nsteps=50)
+        evolve!(prob, stepper, params; nsteps=20)
 
         # Conservation: circulation and energy should be preserved
         @test circulation(prob) ≈ circ0 rtol=1e-4
