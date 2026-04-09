@@ -1,5 +1,7 @@
 using Test, ContourDynamics, StaticArrays
 
+extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
+
 @testset "FMM" begin
     @testset "Quadtree Construction" begin
         c = circular_patch(1.0, 200, 1.0)
@@ -156,7 +158,7 @@ using Test, ContourDynamics, StaticArrays
     end
 
     @testset "Large-Problem Dispatcher" begin
-        c = circular_patch(1.0, 1200, 1.0)
+        c = circular_patch(1.0, extended ? 1200 : 400, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
         vel = zeros(SVector{2,Float64}, total_nodes(prob))
         expected = similar(vel)
@@ -176,7 +178,8 @@ using Test, ContourDynamics, StaticArrays
 
     @testset "Production Treecode Accuracy" begin
         @testset "Euler Unbounded" begin
-            c = circular_patch(1.0, 600, 1.0)
+            N_tree = extended ? 600 : 200
+            c = circular_patch(1.0, N_tree, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
             N = total_nodes(prob)
             vel_direct = zeros(SVector{2,Float64}, N)
@@ -189,7 +192,8 @@ using Test, ContourDynamics, StaticArrays
         end
 
         @testset "QG Unbounded" begin
-            c = circular_patch(1.0, 600, 1.0)
+            N_tree = extended ? 600 : 200
+            c = circular_patch(1.0, N_tree, 1.0)
             prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
             N = total_nodes(prob)
             vel_direct = zeros(SVector{2,Float64}, N)
@@ -202,7 +206,8 @@ using Test, ContourDynamics, StaticArrays
         end
 
         @testset "SQG Unbounded" begin
-            c = circular_patch(1.0, 600, 1.0)
+            N_tree = extended ? 600 : 200
+            c = circular_patch(1.0, N_tree, 1.0)
             prob = ContourProblem(SQGKernel(0.05), UnboundedDomain(), [c])
             N = total_nodes(prob)
             vel_direct = zeros(SVector{2,Float64}, N)
@@ -215,8 +220,9 @@ using Test, ContourDynamics, StaticArrays
         end
 
         @testset "Two Patches" begin
-            c1 = circular_patch(0.5, 300, 1.0)
-            c2_nodes = [SVector(3.0 + 0.5*cos(2*pi*i/300), 0.5*sin(2*pi*i/300)) for i in 0:299]
+            N_patch = extended ? 300 : 100
+            c1 = circular_patch(0.5, N_patch, 1.0)
+            c2_nodes = [SVector(3.0 + 0.5*cos(2*pi*i/N_patch), 0.5*sin(2*pi*i/N_patch)) for i in 0:(N_patch-1)]
             c2 = PVContour(c2_nodes, -0.5)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
             N = total_nodes(prob)
@@ -231,7 +237,8 @@ using Test, ContourDynamics, StaticArrays
 
         @testset "Euler Periodic" begin
             domain = PeriodicDomain(Float64(pi), Float64(pi))
-            c = circular_patch(0.5, 300, 1.0)
+            N_per = extended ? 300 : 100
+            c = circular_patch(0.5, N_per, 1.0)
             prob = ContourProblem(EulerKernel(), domain, [c])
             N = total_nodes(prob)
             vel_direct = zeros(SVector{2,Float64}, N)
@@ -264,7 +271,8 @@ using Test, ContourDynamics, StaticArrays
     @testset "FMM Periodic" begin
         @testset "Euler Periodic" begin
             domain = PeriodicDomain(Float64(pi), Float64(pi))
-            c = circular_patch(0.5, 300, 1.0)
+            N_per = extended ? 300 : 100
+            c = circular_patch(0.5, N_per, 1.0)
             prob = ContourProblem(EulerKernel(), domain, [c])
             N = total_nodes(prob)
 
@@ -281,7 +289,8 @@ using Test, ContourDynamics, StaticArrays
 
         @testset "QG Periodic" begin
             domain = PeriodicDomain(Float64(pi), Float64(pi))
-            c = circular_patch(0.5, 300, 1.0)
+            N_per = extended ? 300 : 100
+            c = circular_patch(0.5, N_per, 1.0)
             prob = ContourProblem(QGKernel(1.0), domain, [c])
             N = total_nodes(prob)
             vel_direct = zeros(SVector{2,Float64}, N)
@@ -301,8 +310,9 @@ using Test, ContourDynamics, StaticArrays
             coupling = SMatrix{2,2}(-F, F, F, -F)
             kernel = MultiLayerQGKernel(Ld, coupling)
 
-            c1 = circular_patch(0.5, 300, 1.0)
-            c2_nodes = [SVector(2.0 + 0.5*cos(2*pi*i/300), 0.5*sin(2*pi*i/300)) for i in 0:299]
+            N_ml = extended ? 300 : 100
+            c1 = circular_patch(0.5, N_ml, 1.0)
+            c2_nodes = [SVector(2.0 + 0.5*cos(2*pi*i/N_ml), 0.5*sin(2*pi*i/N_ml)) for i in 0:(N_ml-1)]
             c2 = PVContour(c2_nodes, 0.5)
             layers = ([c1], [c2])
             prob = MultiLayerContourProblem(kernel, UnboundedDomain(), layers)
