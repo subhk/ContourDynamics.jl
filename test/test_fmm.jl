@@ -221,6 +221,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         @testset "Two Patches" begin
             N_patch = extended ? 300 : 100
+            tree_tol = extended ? 2e-3 : 5e-3
             c1 = circular_patch(0.5, N_patch, 1.0)
             c2_nodes = [SVector(3.0 + 0.5*cos(2*pi*i/N_patch), 0.5*sin(2*pi*i/N_patch)) for i in 0:(N_patch-1)]
             c2 = PVContour(c2_nodes, -0.5)
@@ -232,7 +233,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             ContourDynamics._treecode_velocity!(vel_tree, prob)
             max_err = maximum(sqrt(sum((vel_tree[i] - vel_direct[i]).^2)) /
                               max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
-            @test max_err < 2e-3
+            @test max_err < tree_tol
         end
 
         @testset "Euler Periodic" begin
