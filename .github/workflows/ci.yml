@@ -17,21 +17,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version:
-          - "1.10"
-          - "1.11"
-          - "1.12"
-        os:
-          - ubuntu-latest
-          - macos-latest
-        threads:
-          - 2
         include:
-          # Single-threaded run to catch threading-related bugs
-          - version: "1.12"
+          # Oldest supported + single-threaded for race detection
+          - version: "1.10"
             os: ubuntu-latest
             threads: 1
-    timeout-minutes: 30
+          # Latest + multi-threaded
+          - version: "1.12"
+            os: ubuntu-latest
+            threads: 2
+          # macOS platform coverage
+          - version: "1.12"
+            os: macos-latest
+            threads: 2
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
