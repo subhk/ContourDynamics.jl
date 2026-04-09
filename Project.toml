@@ -1,7 +1,7 @@
 name = "ContourDynamics"
 uuid = "0a114e3f-4576-410c-8414-be1d36bbc63f"
-authors = ["Subhajit Kar"]
 version = "0.1.0"
+authors = ["Subhajit Kar"]
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -29,8 +29,8 @@ ContourDynamicsRecordedArraysExt = "RecordedArrays"
 Adapt = "4"
 CUDA = "5"
 JLD2 = "0.5, 0.6"
-Makie = "0.21, 0.22"
 KernelAbstractions = "0.9"
+Makie = "0.21, 0.22, 0.24"
 OrdinaryDiffEq = "6"
 RecordedArrays = "0.4, 0.5"
 SpecialFunctions = "2"
