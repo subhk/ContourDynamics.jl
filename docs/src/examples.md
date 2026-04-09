@@ -4,8 +4,8 @@ Complete runnable scripts demonstrating ContourDynamics.jl capabilities. Full sc
 
 ::: tip GPU Acceleration
 The vortex merger and filamentation examples support GPU acceleration.
-Add `using CUDA` and pass `dev=GPU()` to `ContourProblem` and `RK4Stepper`.
-GPU velocity is currently available for `EulerKernel` on `UnboundedDomain`.
+Add `using CUDA` and pass `dev=:gpu` to `Problem`.
+GPU velocity is currently available for the Euler kernel on unbounded domains.
 :::
 
 ---
@@ -23,33 +23,22 @@ The critical merger distance and the topological reconnection that enables it ar
 
 ```julia
 using ContourDynamics
-using StaticArrays
 
-T = Float64
 N = 128          # nodes per contour
 R = 0.5          # patch radius
 sep = 1.8 * R    # centre-to-centre separation (< 3.3R triggers merger)
 pv = 2π          # uniform PV jump
 
 # Two circular patches offset along x
-function circular_nodes(cx, cy, R, N)
-    [SVector{2,T}(cx + R * cos(2π * k / N),
-                  cy + R * sin(2π * k / N)) for k in 0:(N-1)]
-end
+c1 = circular_patch(R, N, pv; cx=-sep / 2)
+c2 = circular_patch(R, N, pv; cx=+sep / 2)
 
-c1 = PVContour(circular_nodes(-sep / 2, 0.0, R, N), pv)
-c2 = PVContour(circular_nodes(+sep / 2, 0.0, R, N), pv)
-
-prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c1, c2])
-
-dt = 0.01
-surgery_params = SurgeryParams(T(0.01), T(0.005), T(0.2), T(1e-6), 5)
-stepper = RK4Stepper(dt, total_nodes(prob))
+prob = Problem(; contours=[c1, c2], dt=0.01)
 
 Γ0 = circulation(prob)
-evolve!(prob, stepper, surgery_params; nsteps=500)
+evolve!(prob; nsteps=500)
 
-println("Final: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes")
+println("Final: $(length(contours(prob))) contour(s), $(total_nodes(prob)) nodes")
 println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
 ```
 
@@ -70,23 +59,19 @@ An elliptical vortex patch with high aspect ratio sheds thin filaments that are 
 
 ```julia
 using ContourDynamics
-using StaticArrays
 
 N = 200
 a, b = 1.0, 0.3  # semi-axes (aspect ratio ≈ 3.3)
 pv = 2π
 
-nodes = [SVector(a * cos(2π * k / N), b * sin(2π * k / N)) for k in 0:(N-1)]
-prob = ContourProblem(EulerKernel(), UnboundedDomain(), [PVContour(nodes, pv)])
+c = elliptical_patch(a, b, N, pv)
+prob = Problem(; contours=[c], dt=0.005)
 
-stepper = RK4Stepper(0.005, total_nodes(prob))
-surgery_params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 10)
+A0 = vortex_area(contours(prob)[1])
+evolve!(prob; nsteps=1000)
 
-A0 = vortex_area(prob.contours[1])
-evolve!(prob, stepper, surgery_params; nsteps=1000)
-
-println("Final: $(length(prob.contours)) contour(s)")
-println("Area of largest contour: $(maximum(c -> abs(vortex_area(c)), prob.contours))")
+println("Final: $(length(contours(prob))) contour(s)")
+println("Area of largest contour: $(maximum(c -> abs(vortex_area(c)), contours(prob)))")
 println("Original area: $A0")
 ```
 
@@ -107,38 +92,34 @@ A cyclonic vortex on a beta plane drifts north-westward due to the planetary vor
 
 ```julia
 using ContourDynamics
-using StaticArrays
 
-T = Float64
-beta = T(1.0)         # planetary vorticity gradient
-Ld = T(1.0)           # deformation radius
-R = T(0.3)            # vortex radius
-L = T(3.0)            # domain half-width
-
-domain = PeriodicDomain(L)
+beta = 1.0            # planetary vorticity gradient
+Ld = 1.0              # deformation radius
+R = 0.3               # vortex radius
+L = 3.0               # domain half-width
 
 # PV staircase: 12 levels discretizing βy
-staircase = beta_staircase(beta, domain, 12; nodes_per_contour=64)
+staircase = beta_staircase(beta, PeriodicDomain(L), 12; nodes_per_contour=64)
 
 # Cyclonic vortex at origin
-N_vortex = 64
-vortex = PVContour(
-    [SVector{2,T}(R * cos(2π*k/N_vortex), R * sin(2π*k/N_vortex))
-     for k in 0:N_vortex-1],
-    T(2π)
+vortex = circular_patch(R, 64, 2π)
+
+prob = Problem(;
+    contours = vcat(staircase, [vortex]),
+    dt       = 0.005,
+    kernel   = :qg,
+    Ld       = Ld,
+    domain   = :periodic,
+    Lx       = L,
+    Ly       = L,
 )
 
-prob = ContourProblem(QGKernel(Ld), domain, vcat(staircase, [vortex]))
-
-stepper = RK4Stepper(T(0.005), total_nodes(prob))
-params = SurgeryParams(T(0.02), T(0.01), T(0.3), T(1e-6), 401)  # no surgery
-
 c0 = centroid(vortex)
-evolve!(prob, stepper, params; nsteps=400)
+evolve!(prob; nsteps=400)
 
 # Find vortex (largest non-spanning contour)
-idx = argmax(c -> is_spanning(c) ? zero(T) : abs(vortex_area(c)), prob.contours)
-cf = centroid(prob.contours[idx])
+idx = argmax(c -> is_spanning(c) ? 0.0 : abs(vortex_area(c)), contours(prob))
+cf = centroid(contours(prob)[idx])
 println("Vortex drift: Δx=$(round(cf[1]-c0[1]; digits=4)), Δy=$(round(cf[2]-c0[2]; digits=4))")
 println("(Cyclones drift north-westward on a beta plane)")
 ```
@@ -162,23 +143,19 @@ SQG dynamics and their role in atmospheric front formation are described in [Hel
 
 ```julia
 using ContourDynamics
-using StaticArrays
 
 N = 200
 a, b_ax = 1.0, 0.5   # semi-axes (aspect ratio 2)
 pv = 2π
 delta = 0.01          # regularization length ≈ segment spacing
 
-nodes = [SVector(a * cos(2π * k / N), b_ax * sin(2π * k / N)) for k in 0:(N-1)]
-prob = ContourProblem(SQGKernel(delta), UnboundedDomain(), [PVContour(nodes, pv)])
-
-stepper = RK4Stepper(0.002, total_nodes(prob))
-params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 10)
+c = elliptical_patch(a, b_ax, N, pv)
+prob = Problem(; contours=[c], dt=0.002, kernel=:sqg, delta_sqg=delta)
 
 Γ0 = circulation(prob)
-evolve!(prob, stepper, params; nsteps=500)
+evolve!(prob; nsteps=500)
 
-println("Final: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes")
+println("Final: $(length(contours(prob))) contour(s), $(total_nodes(prob)) nodes")
 println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
 ```
 
@@ -203,7 +180,6 @@ Multi-layer contour dynamics and the modal decomposition are described in [Drits
 ```julia
 using ContourDynamics
 using StaticArrays
-using LinearAlgebra
 
 R, pv = 0.5, 2π
 N = 100
@@ -213,22 +189,21 @@ Ld = SVector(1.0)                               # baroclinic deformation radius
 F = 1.0 / (2 * Ld[1]^2)
 coupling = SMatrix{2,2}(-F, F, F, -F)          # symmetric with one zero mode
 
-kernel = MultiLayerQGKernel(Ld, coupling)
-
-nodes = [SVector(R * cos(2π * k / N), R * sin(2π * k / N)) for k in 0:(N-1)]
-
 # Upper-layer vortex, quiescent lower layer
-prob = MultiLayerContourProblem(
-    kernel, UnboundedDomain(),
-    ([PVContour(nodes, pv)], PVContour{Float64}[])
-)
+c_upper = circular_patch(R, N, pv)
 
-stepper = RK4Stepper(0.01, total_nodes(prob))
-params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 50)
+prob = Problem(;
+    contours  = c_upper,
+    dt        = 0.01,
+    kernel    = :multilayer_qg,
+    Ld        = Ld,
+    coupling  = coupling,
+    layers    = 2,
+)
 
 E0 = energy(prob)
 Γ0 = circulation(prob)
-evolve!(prob, stepper, params; nsteps=200)
+evolve!(prob; nsteps=200)
 
 println("Energy: $(energy(prob))  (change: $(abs(energy(prob)-E0)/abs(E0)))")
 println("Circulation: $(circulation(prob))  (change: $(abs(circulation(prob)-Γ0)/abs(Γ0)))")

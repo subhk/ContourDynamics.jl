@@ -59,29 +59,23 @@ features:
 
 ```julia
 using ContourDynamics
-using StaticArrays
 
-# Create a circular vortex patch
-R, N, pv = 1.0, 128, 1.0
-nodes = [SVector(R*cos(2π*i/N), R*sin(2π*i/N)) for i in 0:N-1]
-prob = ContourProblem(EulerKernel(), UnboundedDomain(), [PVContour(nodes, pv)])
+# Create a circular vortex patch and set up the problem
+prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01)
 
 # Evolve with RK4 + surgery
-stepper = RK4Stepper(0.01, total_nodes(prob))
-params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 20)
-evolve!(prob, stepper, params; nsteps=1000)
+evolve!(prob; nsteps=1000)
 
 # Check conserved quantities
-println("Energy: ", energy(prob))
-println("Circulation: ", circulation(prob))
+println("Energy: $(energy(prob))")
+println("Circulation: $(circulation(prob))")
 ```
 
 !!! tip "GPU Acceleration"
-    Pass `dev=GPU()` to run velocity computations on an NVIDIA GPU:
+    Pass `dev=:gpu` to run velocity computations on an NVIDIA GPU:
     ```julia
     using CUDA
-    prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
-    stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+    prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=:gpu)
     ```
     See the [tutorial](/tutorial_euler) for details.
 
@@ -112,7 +106,7 @@ where ``G`` is the Green's function (``-\log r`` for 2D Euler, ``-1/r`` for SQG,
 
 Contour dynamics is ideal when:
 
-- You need **exact PV conservation** (no diffusion, no dissipation)
+- You need **sharp PV-interface advection** without grid-scale numerical diffusion
 - The flow is well-described by **piecewise-constant PV** (vortex patches, PV staircases)
 - You want to study **vortex mergers, filamentation, and long-time dynamics**
 - You're working in **2D Euler, SQG, or quasi-geostrophic** settings
