@@ -22,10 +22,7 @@
 # This example uses QGKernel on PeriodicDomain, so it runs on CPU only.
 
 using ContourDynamics
-using StaticArrays
 using JLD2
-
-T = Float64
 
 # --- Physical parameters ---
 beta = 1.0            # β = df/dy
@@ -35,43 +32,36 @@ pv_vortex = 2π        # positive PV → cyclone
 
 # --- Periodic domain ---
 L = 3.0               # half-width; domain is [-L, L] × [-L, L]
-domain = PeriodicDomain(L)
 
 # --- Build PV staircase (discretized βy background) ---
 n_stairs = 12         # number of staircase levels
-staircase = beta_staircase(T(beta), domain, n_stairs; nodes_per_contour=64)
+staircase = beta_staircase(beta, PeriodicDomain(L), n_stairs; nodes_per_contour=64)
 println("Beta staircase: $(length(staircase)) spanning contours, Δq = $(round(staircase[1].pv; digits=4))")
 
 # --- Circular vortex patch at origin ---
-N_vortex = 64
-nodes = [SVector{2,T}(R * cos(2π * k / N_vortex), R * sin(2π * k / N_vortex)) for k in 0:(N_vortex-1)]
-vortex = PVContour(nodes, T(pv_vortex))
+vortex = circular_patch(R, 64, pv_vortex)
 
 # Combine: staircase contours + vortex patch
 all_contours = vcat(staircase, [vortex])
-kernel = QGKernel(T(Ld))
-prob = ContourProblem(kernel, domain, all_contours; dev=CPU())
 
-println("Total contours: $(length(prob.contours)), total nodes: $(total_nodes(prob))")
-
-# --- Time stepping ---
-dt = 0.005
 nsteps = 400
-stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
-surgery_params = SurgeryParams(T(0.02), T(0.01), T(0.3), T(1e-6), nsteps + 1)
+prob = Problem(; kernel=:qg, Ld=Ld,
+                 domain=:periodic, Lx=L, Ly=L,
+                 contours=all_contours, dt=0.005,
+                 surgery=SurgeryParams(0.02, 0.01, 0.3, 1e-6, nsteps + 1))
+display(prob); println()
 
-println("\nRunning $nsteps steps (dt=$dt), saving every t=0.5...")
-recorder = jld2_recorder("beta_drift.jld2"; save_dt=0.5, dt=dt)
+println("Running $nsteps steps, saving every t=0.5...")
+recorder = jld2_recorder("beta_drift.jld2"; save_dt=0.5, dt=prob.stepper.dt)
 
 # Track the vortex patch centroid (last contour)
-vortex_idx = length(prob.contours)
-c0 = centroid(prob.contours[vortex_idx])
+vortex_idx = length(contours(prob))
+c0 = centroid(contours(prob)[vortex_idx])
 
-evolve!(prob, stepper, surgery_params;
-        nsteps=nsteps, callbacks=[recorder])
+evolve!(prob; nsteps=nsteps, callbacks=[recorder])
 
 # Find the vortex among final contours (non-spanning, largest area)
-vortex_final = argmax(c -> is_spanning(c) ? zero(T) : abs(vortex_area(c)), prob.contours)
+vortex_final = argmax(c -> is_spanning(c) ? 0.0 : abs(vortex_area(c)), contours(prob))
 cf = centroid(vortex_final)
 println("\nVortex drift: Δx=$(round(cf[1] - c0[1]; digits=4)), Δy=$(round(cf[2] - c0[2]; digits=4))")
 println("(Cyclones drift north-westward on a beta plane)")

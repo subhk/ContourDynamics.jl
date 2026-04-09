@@ -15,45 +15,35 @@
 #   scheme for extended integrations using contour dynamics."
 #   J. Comput. Phys. 77(1), 240–266. doi:10.1016/0021-9991(88)90165-9
 
-# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
-#   prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
-#   stepper = RK4Stepper(dt, total_nodes(prob); dev=GPU())
+# To run on GPU, add `using CUDA` and pass `dev=:gpu`:
+#   prob = Problem(; contours=[contour], dt=0.005, dev=:gpu)
 
 using ContourDynamics
-using StaticArrays
 using JLD2
 
-T = Float64
 N = 200         # nodes on the ellipse
 a = 1.0         # semi-major axis
 b = 0.3         # semi-minor axis (aspect ratio ~3.3)
 pv = 2π
 
-# Elliptical patch
-nodes = [SVector{2,T}(a * cos(2π * k / N), b * sin(2π * k / N)) for k in 0:(N-1)]
-contour = PVContour(nodes, pv)
+contour = elliptical_patch(a, b, N, pv)
 
-kernel = EulerKernel()
-domain = UnboundedDomain()
-prob = ContourProblem(kernel, domain, [contour]; dev=CPU())
-
-dt = 0.005
-surgery_params = SurgeryParams(0.005, 0.02, 0.2, 1e-6, 10)
-stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
+prob = Problem(; contours=[contour], dt=0.005,
+                 surgery=SurgeryParams(0.005, 0.02, 0.2, 1e-6, 10))
+display(prob); println()
 nsteps = 1000
 
-println("Filamentation: ellipse a=$a, b=$b (ratio=$(a/b))")
-println("Running $nsteps steps (dt=$dt), saving every t=0.5...")
+println("Running $nsteps steps, saving every t=0.5...")
 
 # Save based on physical time interval
-recorder = jld2_recorder("filamentation.jld2"; save_dt=0.5, dt=dt)
+recorder = jld2_recorder("filamentation.jld2"; save_dt=0.5, dt=prob.stepper.dt)
 
-area0 = sum(vortex_area, prob.contours)
-evolve!(prob, stepper, surgery_params; nsteps=nsteps, callbacks=[recorder])
+area0 = sum(vortex_area, contours(prob))
+evolve!(prob; nsteps=nsteps, callbacks=[recorder])
 
-area_final = sum(vortex_area, prob.contours)
+area_final = sum(vortex_area, contours(prob))
 println("\nDone. Area change: |ΔA/A₀| = $(abs(area_final - area0) / abs(area0))")
-println("Final state: $(length(prob.contours)) contour(s), $(total_nodes(prob)) nodes")
+println("Final state: $(length(contours(prob))) contour(s), $(total_nodes(prob)) nodes")
 
 # --- Inspect saved data ---
 snaps = load_simulation("filamentation.jld2")

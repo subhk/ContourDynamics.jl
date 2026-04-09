@@ -21,50 +21,37 @@
 
 using ContourDynamics
 using StaticArrays
-using LinearAlgebra
 using JLD2
 
-T = Float64
 N = 100
 R = 0.5
 pv = 2π
 
 # --- Two-layer parameters ---
-Ld = SVector{1,T}(1.0)                          # single deformation radius (N-1 = 1)
-F = one(T) / (2 * Ld[1]^2)                      # stretching coefficient
-coupling = SMatrix{2,2,T}(-F, F, F, -F)         # [-F F; F -F] (column-major order)
+Ld = SVector(1.0)                                # single deformation radius (N-1 = 1)
+F = 1.0 / (2 * Ld[1]^2)                         # stretching coefficient
+coupling = SMatrix{2,2}(-F, F, F, -F)            # [-F F; F -F] (column-major order)
 
-kernel = MultiLayerQGKernel(Ld, coupling)
-
-println("Two-layer QG kernel:")
-println("  Eigenvalues: $(kernel.eigenvalues)")
-println("  Deformation radius: Ld = $(Ld[1])")
-
-# Upper-layer vortex patch
-nodes = [SVector{2,T}(R * cos(2π * k / N), R * sin(2π * k / N)) for k in 0:(N-1)]
-c_upper = PVContour(nodes, pv)
-
-domain = UnboundedDomain()
-
-# Layer 1 has the vortex, layer 2 is empty
-prob = MultiLayerContourProblem(kernel, domain, ([c_upper], PVContour{T}[]); dev=CPU())
-
-dt = 0.01
-stepper = RK4Stepper(dt, total_nodes(prob); dev=CPU())
+c_upper = circular_patch(R, N, pv)
 nsteps = 200
 
-println("\nRunning $nsteps steps (dt=$dt), saving every t=0.5...")
+prob = Problem(; kernel=:multilayer_qg, Ld=Ld, coupling=coupling,
+                 layers=([c_upper], PVContour{Float64}[]),
+                 dt=0.01,
+                 surgery=SurgeryParams(0.01, 0.005, 0.2, 1e-6, nsteps + 1))
+display(prob); println()
+
+println("Running $nsteps steps, saving every t=0.5...")
 
 # Save based on physical time interval
-recorder = jld2_recorder("two_layer_qg.jld2"; save_dt=0.5, dt=dt)
+recorder = jld2_recorder("two_layer_qg.jld2"; save_dt=0.5, dt=prob.stepper.dt)
 
-evolve!(prob, stepper, SurgeryParams(0.01, 0.005, 0.2, 1e-6, nsteps + 1);
-        nsteps=nsteps, callbacks=[recorder])
+evolve!(prob; nsteps=nsteps, callbacks=[recorder])
 
 println("\nDone. Final state:")
-for (i, contours) in enumerate(prob.layers)
-    n = sum(nnodes, contours; init=0)
-    println("  Layer $i: $(length(contours)) contour(s), $n nodes")
+for (i, layer_contours) in enumerate(prob.contour_problem.layers)
+    n = sum(nnodes, layer_contours; init=0)
+    println("  Layer $i: $(length(layer_contours)) contour(s), $n nodes")
 end
 
 # --- Inspect saved data ---
