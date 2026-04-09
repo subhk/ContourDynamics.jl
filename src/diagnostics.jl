@@ -592,11 +592,17 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
                 quad = quad_analytical + quad_corr
             else
                 quad = zero(T)
+                Lx2 = 2 * domain.Lx
+                Ly2 = 2 * domain.Ly
                 for qi in 1:3
                     pi_pt = midi + g_nodes[qi] * half_dsi
                     for qj in 1:3
                         pj_pt = midj + g_nodes[qj] * half_dsj
-                        r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
+                        r_raw = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
+                        # Minimum-image wrap for Ewald convergence (matches velocity path)
+                        r_vec = SVector{2,T}(
+                            r_raw[1] - round(r_raw[1] / Lx2) * Lx2,
+                            r_raw[2] - round(r_raw[2] / Ly2) * Ly2)
                         # Replace log(r²)/2 with the periodic equivalent: -2π * G_per
                         # since log(r²)/2 = -2π * G_∞ for unbounded Euler.
                         G_per = _eval_ewald_greens(r_vec, cache, domain)
@@ -633,7 +639,8 @@ end
 function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {T}
     contours = prob.contours
     Ld = prob.kernel.Ld
-    # Decompose: G_QG_per = G_Euler_per + G_correction
+    # Decompose: G_QG_per = G_Euler_per + G_correction, where the signed
+    # correction has coefficients -κ²/(k²(k²+κ²)).
     # Use Euler periodic energy + QG correction via Fourier sum.
     euler_cache = _get_ewald_cache(prob.domain, EulerKernel())
     E = zero(T)

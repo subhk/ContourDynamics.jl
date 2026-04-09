@@ -78,7 +78,7 @@ end
         # same bin.  Only need one entry per segment per bin; duplicates cause
         # redundant distance computations in find_close_segments.
         vec = bins[key]
-        isempty(vec) || last(vec) == entry || push!(vec, entry)
+        entry ∈ vec || push!(vec, entry)
     end
 end
 
@@ -407,6 +407,18 @@ function reconnect!(contours::Vector{PVContour{T}},
     end
 end
 
+# Signed area of a raw node vector (shoelace formula, no PVContour needed).
+function _shoelace_area(nodes::AbstractVector{SVector{2,T}}) where {T}
+    n = length(nodes)
+    n < 3 && return zero(T)
+    s = zero(T)
+    @inbounds for i in 1:n
+        j = mod1(i + 1, n)
+        s += nodes[i][1] * nodes[j][2] - nodes[j][1] * nodes[i][2]
+    end
+    return s / 2
+end
+
 function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int,
                         domain::AbstractDomain=UnboundedDomain()) where {T}
     c = contours[ci]
@@ -425,6 +437,17 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
     nodes2 = vcat(c.nodes[hi:nc], c.nodes[1:lo])
 
     if length(nodes1) >= 3 && length(nodes2) >= 3
+        # Preserve the parent's orientation: if the parent was CCW (positive area),
+        # each daughter should also be CCW.  Reverse nodes if the sign flips.
+        orig_sign = sign(vortex_area(c))
+        if orig_sign != 0
+            if sign(_shoelace_area(nodes1)) != orig_sign
+                reverse!(nodes1)
+            end
+            if sign(_shoelace_area(nodes2)) != orig_sign
+                reverse!(nodes2)
+            end
+        end
         contours[ci] = PVContour(nodes1, c.pv)
         push!(contours, PVContour(nodes2, c.pv))
     else

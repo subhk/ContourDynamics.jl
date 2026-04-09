@@ -166,3 +166,22 @@ function Base.show(io::IO, ::MIME"text/plain", p::SurgeryParams{T}) where {T}
     println(io, "├── area_min: ", p.area_min)
     print(io,   "└── n_surgery: ", p.n_surgery, " steps")
 end
+
+# ── Problem ────────────────────────────────────────────
+
+function Base.show(io::IO, prob::Problem)
+    print(io, "Problem(", prob.contour_problem, ", ", prob.stepper, ")")
+end
+
+function Base.show(io::IO, ::MIME"text/plain", prob::Problem)
+    println(io, "Problem")
+    println(io, "├── ", prob.contour_problem)
+    println(io, "├── ", prob.stepper)
+    if prob.surgery_params === nothing
+        print(io, "└── surgery: disabled")
+    else
+        sp = prob.surgery_params
+        print(io, "└── surgery: δ=", sp.delta, ", μ=", sp.mu,
+              ", Δ_max=", sp.Delta_max, ", every ", sp.n_surgery, " steps")
+    end
+end

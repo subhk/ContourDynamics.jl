@@ -267,6 +267,7 @@ function _s2m!(
     # thread for the duration of this parallel section.
     prev_blas_threads = BLAS.get_num_threads()
     BLAS.set_num_threads(1)
+    try
 
     Threads.@threads for li_idx in 1:length(leaves)
         leaf = leaves[li_idx]
@@ -333,6 +334,8 @@ function _s2m!(
         end
     end
 
-    BLAS.set_num_threads(prev_blas_threads)
+    finally
+        BLAS.set_num_threads(prev_blas_threads)
+    end
     return nothing
 end

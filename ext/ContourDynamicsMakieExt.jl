@@ -44,6 +44,7 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
         for c in prob.contours
             nodes = c.nodes
             n = length(nodes)
+            n == 0 && continue
             n_pts = ContourDynamics.is_spanning(c) ? n : n + 1
             xs = Vector{Float64}(undef, n_pts)
             ys = Vector{Float64}(undef, n_pts)
@@ -108,6 +109,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
             for c in layer
                 nodes = c.nodes
                 n = length(nodes)
+                n == 0 && continue
                 n_pts = ContourDynamics.is_spanning(c) ? n : n + 1
                 xs = Vector{Float64}(undef, n_pts)
                 ys = Vector{Float64}(undef, n_pts)

@@ -244,7 +244,7 @@ end
     segment_velocity(::QGKernel, ::UnboundedDomain, x, a, b)
 
 Velocity at point `x` due to a vortex patch contour segment from `a` to `b`
-using the QG Green's function G(r) = -1/(2π) K₀(r/Ld).
+using the QG Green's function G(r) = K₀(r/Ld) / (2π).
 
 The contour dynamics velocity is:
   v_seg = (1/(2π)) ∫₀¹ K₀(|x-P(t)|/Ld) ds dt
@@ -519,14 +519,17 @@ function velocity!(vel::Vector{SVector{2,T}},
     N == 0 && return vel
 
     dev = prob.dev
-    ws = _get_gpu_workspace!(dev, T, N)
-    _gpu_velocity_ws!(ws, prob, dev)
+    entry = _get_gpu_workspace!(dev, T, N)
+    lock(entry.lock) do
+        ws = entry.ws::_GPUWorkspace{T}
+        _gpu_velocity_ws!(ws, prob, dev)
 
-    # Pack CPU results into SVector format
-    vx = ws.cpu_vx
-    vy = ws.cpu_vy
-    @inbounds for i in 1:N
-        vel[i] = SVector{2,T}(vx[i], vy[i])
+        # Pack CPU results into SVector format
+        vx = ws.cpu_vx
+        vy = ws.cpu_vy
+        @inbounds for i in 1:N
+            vel[i] = SVector{2,T}(vx[i], vy[i])
+        end
     end
 
     return vel

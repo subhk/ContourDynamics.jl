@@ -56,25 +56,41 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
     )
 end
 
-# Module-level workspace cache keyed by (T, N) so problems with different
-# sizes don't thrash a single slot.  Each entry also carries its own lock
-# so that concurrent velocity evaluations on the *same* workspace block
-# rather than racing on shared buffers.
-struct _WSEntry
-    ws::_GPUWorkspace
+# Module-level workspace cache keyed by (T, N, Dev) so problems with different
+# sizes or devices don't collide.  Each entry carries its own lock so that
+# concurrent velocity evaluations on the *same* workspace block rather than
+# racing on shared buffers.
+struct _WSEntry{T, DA<:AbstractVector{T}}
+    ws::_GPUWorkspace{T, DA}
     lock::ReentrantLock
 end
-const _gpu_ws_cache = Dict{UInt, _WSEntry}()
+const _gpu_ws_cache = Dict{Tuple{DataType, Int, DataType}, _WSEntry}()
 const _gpu_ws_cache_lock = ReentrantLock()
 
 function _get_gpu_workspace!(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
-    key = hash((T, N))
+    key = (T, N, typeof(dev))
     entry = lock(_gpu_ws_cache_lock) do
         get!(_gpu_ws_cache, key) do
             _WSEntry(_create_gpu_workspace(dev, T, N), ReentrantLock())
         end
     end
     return entry
+end
+
+"""Build the cache key for a ContourProblem's workspace."""
+_gpu_ws_key(prob::ContourProblem{K,D,T,Dev}, N::Int) where {K,D,T,Dev} = (T, N, Dev)
+
+"""
+    _evict_gpu_workspace!(key::Tuple{DataType, Int, DataType})
+
+Remove a specific cached workspace entry by its exact key `(T, N, DevType)`.
+Called after surgery changes the node count so stale entries don't leak memory.
+"""
+function _evict_gpu_workspace!(key::Tuple{DataType, Int, DataType})
+    lock(_gpu_ws_cache_lock) do
+        delete!(_gpu_ws_cache, key)
+    end
+    return nothing
 end
 
 """
@@ -225,19 +241,6 @@ function _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
 end
 
 """
-    _gpu_velocity!(vel_x, vel_y, prob::ContourProblem, dev::AbstractDevice)
-
-Full GPU velocity evaluation: pack segments, pack targets, launch kernel.
-Allocates fresh buffers each call (use `_gpu_velocity_ws!` for buffer reuse).
-"""
-function _gpu_velocity!(vel_x, vel_y, prob::ContourProblem, dev::AbstractDevice)
-    seg = pack_segments(prob, dev)
-    target_x, target_y = pack_targets(prob, dev)
-    _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, dev)
-    return nothing
-end
-
-"""
     _gpu_velocity_ws!(ws::_GPUWorkspace, prob::ContourProblem, dev::AbstractDevice)
 
 GPU velocity evaluation using pre-allocated workspace buffers.
@@ -246,6 +249,9 @@ and copies results back — all without allocating new arrays.
 """
 function _gpu_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K,D,T}
     N = total_nodes(prob)
+    N == ws.n || throw(DimensionMismatch(
+        "GPU workspace was allocated for $(ws.n) nodes but problem now has $N nodes. " *
+        "Call velocity! through evolve!() or manually evict stale workspaces after surgery!()."))
 
     # Fill CPU packing buffers (no allocation)
     _fill_segment_bufs!(ws.cpu_ax, ws.cpu_ay, ws.cpu_bx, ws.cpu_by, ws.cpu_pv, prob)

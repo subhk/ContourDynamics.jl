@@ -51,10 +51,10 @@ enstrophy(prob)
 
 ## Physics Kernels
 
-| Kernel | Green's function | Use case |
+| Kernel | Scalar kernel | Use case |
 |--------|-----------------|----------|
 | `EulerKernel()` | -1/(2pi) log(r) | 2D incompressible Euler |
-| `QGKernel(Ld)` | -1/(2pi) K_0(r/Ld) | Single-layer QG with deformation radius Ld |
+| `QGKernel(Ld)` | 1/(2pi) K_0(r/Ld) | Single-layer QG with deformation radius Ld |
 | `SQGKernel(delta)` | -1/(2pi sqrt(r^2 + delta^2)) | Surface QG (regularized fractional Laplacian) |
 | `MultiLayerQGKernel(Ld, C)` | Eigenmode decomposition | N-layer QG with coupling matrix C |
 
@@ -142,5 +142,3 @@ Full documentation is available at [subhk.github.io/ContourDynamics.jl](https://
 - Dritschel, D.G. (1988). Contour surgery: a topological reconnection scheme for extended integrations using contour dynamics. *J. Comput. Phys.* **77**(1), 240-266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)
 - Dritschel, D.G. (1989). Contour dynamics and contour surgery. *Comput. Phys. Rep.* **10**(3), 77-146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
 - Held, I.M., Pierrehumbert, R.T., Garner, S.T. & Swanson, K.L. (1995). Surface quasi-geostrophic dynamics. *J. Fluid Mech.* **282**, 1-20. [doi:10.1017/S0022112095000012](https://doi.org/10.1017/S0022112095000012)
-
-

@@ -200,10 +200,33 @@ function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
             old_N = total_nodes(prob)
             surgery!(prob, params)
             if total_nodes(prob) != old_N
+                _evict_gpu_workspace!(_gpu_ws_key(prob, old_N))
                 resize_buffers!(stepper, prob)
             end
         end
 
+        if callbacks !== nothing
+            for cb in callbacks
+                cb(prob, step)
+            end
+        end
+    end
+    return prob
+end
+
+# evolve! without surgery — just timestep + wrap + callbacks.
+function evolve!(prob::ContourProblem, stepper::AbstractTimeStepper,
+                 ::Nothing; nsteps::Int, callbacks=nothing)
+    if callbacks !== nothing
+        for cb in callbacks
+            cb(prob, 0)
+        end
+    end
+    for step in 1:nsteps
+        if total_nodes(prob) > 0
+            timestep!(prob, stepper)
+            _maybe_wrap_nodes!(prob)
+        end
         if callbacks !== nothing
             for cb in callbacks
                 cb(prob, step)
@@ -409,6 +432,27 @@ function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
             end
         end
 
+        if callbacks !== nothing
+            for cb in callbacks
+                cb(prob, step)
+            end
+        end
+    end
+    return prob
+end
+
+function evolve!(prob::MultiLayerContourProblem, stepper::AbstractTimeStepper,
+                 ::Nothing; nsteps::Int, callbacks=nothing)
+    if callbacks !== nothing
+        for cb in callbacks
+            cb(prob, 0)
+        end
+    end
+    for step in 1:nsteps
+        if total_nodes(prob) > 0
+            timestep!(prob, stepper)
+            _maybe_wrap_nodes!(prob)
+        end
         if callbacks !== nothing
             for cb in callbacks
                 cb(prob, step)

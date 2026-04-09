@@ -18,7 +18,9 @@ include("fmm/fmm.jl")
 include("gpu_kernels.jl")
 include("diagnostics.jl")
 include("timesteppers.jl")
+include("problem.jl")
 include("show.jl")
+include("shapes.jl")
 
 export AbstractDevice, CPU, GPU, device_array, device_zeros, to_cpu, to_device
 export AbstractKernel, EulerKernel, QGKernel, SQGKernel, MultiLayerQGKernel
@@ -32,6 +34,8 @@ export velocity!, velocity, segment_velocity
 export vortex_area, centroid, ellipse_moments
 export energy, enstrophy, circulation, angular_momentum
 export remesh, arc_lengths, surgery!
+export circular_patch, elliptical_patch, rankine_vortex
+export Problem, contours, kernel, domain
 export EwaldCache, build_ewald_cache, setup_ewald_cache!, clear_ewald_cache!
 export timestep!, resize_buffers!, evolve!
 

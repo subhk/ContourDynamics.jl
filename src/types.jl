@@ -222,9 +222,17 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
     function ContourProblem(kernel::K, domain::D, contours::Vector{PVContour{T}};
                             dev::Dev=CPU()) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
+        _check_gpu_support(kernel, domain, dev)
         new{K, D, T, Dev}(kernel, domain, contours, dev)
     end
 end
+
+# Error if GPU is used with an unsupported kernel/domain combination.
+_check_gpu_support(::AbstractKernel, ::AbstractDomain, ::CPU) = nothing
+_check_gpu_support(::EulerKernel, ::UnboundedDomain, ::GPU) = nothing
+_check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
+    "GPU velocity is only supported for EulerKernel on UnboundedDomain. " *
+    "Got $(typeof(kernel)) on $(typeof(domain)). Use dev=CPU()."))
 
 # Error if kernel's floating-point type doesn't match contour type
 _check_kernel_type(::AbstractKernel, ::Type) = nothing  # no-op for unparameterized kernels
@@ -250,7 +258,8 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
     function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}};
                                       dev::Dev=CPU()) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
-        dev isa GPU && @warn "MultiLayerContourProblem does not support GPU velocity — use dev=CPU()" maxlog=1
+        dev isa GPU && throw(ArgumentError(
+            "MultiLayerContourProblem does not support GPU velocity. Use dev=CPU()."))
         new{N, K, D, T, Dev}(kernel, domain, layers, dev)
     end
 end
