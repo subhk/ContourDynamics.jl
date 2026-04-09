@@ -52,7 +52,8 @@ This is **exact** — no quadrature error.
 
 #### QG Kernel
 
-For the QG kernel with ``G(r) = -\frac{1}{2\pi}K_0(r/L_d)``, we use **singular subtraction**:
+For the QG scalar kernel ``G(r) = \frac{1}{2\pi}K_0(r/L_d)`` used in the contour
+integral, we use **singular subtraction**:
 
 ```math
 K_0(r/L_d) = -\log(r) + \underbrace{\left[K_0(r/L_d) + \log(r)\right]}_{\text{smooth at } r=0}
@@ -121,7 +122,7 @@ The periodic segment velocity uses the same singular-subtraction approach: the l
 For the QG kernel on a periodic domain, we decompose:
 
 ```math
-G_{\text{QG,per}} = G_{\text{Euler,per}} + \underbrace{\frac{1}{A}\sum_{\mathbf{k}\neq 0} \frac{\kappa^2}{|\mathbf{k}|^2(|\mathbf{k}|^2 + \kappa^2)}\cos(\mathbf{k}\cdot\mathbf{r})}_{\text{smooth QG correction}}
+G_{\text{QG,per}} = G_{\text{Euler,per}} - \underbrace{\frac{1}{A}\sum_{\mathbf{k}\neq 0} \frac{\kappa^2}{|\mathbf{k}|^2(|\mathbf{k}|^2 + \kappa^2)}\cos(\mathbf{k}\cdot\mathbf{r})}_{\text{smooth QG correction}}
 ```
 
 where ``\kappa = 1/L_d``. The Euler periodic part uses the full Ewald machinery, and the QG correction is a smooth, rapidly convergent (``\sim 1/k^4``) Fourier series.

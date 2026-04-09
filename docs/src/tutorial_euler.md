@@ -20,55 +20,37 @@ Let's create a **Kirchhoff ellipse** — an elliptical vortex patch that rotates
 
 ```julia
 using ContourDynamics
-using StaticArrays
 
 # Kirchhoff ellipse: semi-axes a > b, uniform PV jump
 a, b = 2.0, 1.0   # aspect ratio = 2
 N = 128            # boundary nodes
 pv = 1.0           # potential vorticity jump
 
-nodes = [SVector(a*cos(2π*i/N), b*sin(2π*i/N)) for i in 0:N-1]
-contour = PVContour(nodes, pv)
+contour = elliptical_patch(a, b, N, pv)
 ```
 
-The `PVContour` stores the boundary nodes and the PV jump across the contour. Positive PV induces counterclockwise circulation.
+The `elliptical_patch` helper creates a `PVContour` with evenly spaced boundary nodes and the given PV jump. Positive PV induces counterclockwise circulation.
 
 ## Creating the Problem
 
-Combine a kernel, a domain, and one or more contours into a `ContourProblem`:
+Create a `Problem` by specifying contours and a time step:
 
 ```julia
-prob = ContourProblem(EulerKernel(), UnboundedDomain(), [contour])
+dt = 0.01
+prob = Problem(; contours=[contour], dt=dt)
 ```
 
 !!! tip "GPU Support"
-    To run this tutorial on GPU, add `using CUDA` and pass `dev=GPU()` when
-    constructing the problem and stepper. All other code remains the same.
+    To run this tutorial on GPU, add `using CUDA` and pass `dev=:gpu` when
+    constructing the `Problem`. All other code remains the same.
 
 You can check initial diagnostics right away:
 
 ```julia
-A = vortex_area(contour)       # should be ≈ π*a*b = 2π
-Γ = circulation(prob)          # should be ≈ pv * A = 2π
-λ, θ = ellipse_moments(contour)  # aspect ratio ≈ 2.0, angle ≈ 0
+A = vortex_area(contours(prob)[1])   # should be ≈ π*a*b = 2π
+Γ = circulation(prob)                # should be ≈ pv * A = 2π
+λ, θ = ellipse_moments(contours(prob)[1])  # aspect ratio ≈ 2.0, angle ≈ 0
 println("Area = $A, Circulation = $Γ, Aspect ratio = $λ")
-```
-
-## Time Integration
-
-Set up an RK4 time stepper and surgery parameters:
-
-```julia
-dt = 0.01
-stepper = RK4Stepper(dt, total_nodes(prob))
-
-# Surgery parameters:
-#   delta     = 0.01   proximity threshold for reconnection
-#   mu        = 0.005  minimum segment length
-#   Delta_max = 0.2    maximum segment length
-#   area_min  = 1e-6   filament removal threshold
-#   n_surgery = 50     steps between surgery passes
-params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 50)
 ```
 
 ## Tracking Conservation Laws
@@ -85,11 +67,11 @@ function diagnostics_callback(prob, step)
     push!(times, step * dt)
     push!(energies, energy(prob))
     push!(circulations, circulation(prob))
-    λ, _ = ellipse_moments(prob.contours[1])
+    λ, _ = ellipse_moments(contours(prob)[1])
     push!(aspect_ratios, λ)
 end
 
-evolve!(prob, stepper, params; nsteps=5000, callbacks=[diagnostics_callback])
+evolve!(prob; nsteps=5000, callbacks=[diagnostics_callback])
 ```
 
 ## Verifying the Kirchhoff Solution
@@ -121,6 +103,8 @@ println("Relative circulation change: $ΔΓ")
 You can evaluate the velocity field at any point, not just on contour nodes:
 
 ```julia
+using StaticArrays
+
 # Velocity at the origin (should be zero by symmetry for a centered patch)
 v_origin = velocity(prob, SVector(0.0, 0.0))
 println("Velocity at origin: $v_origin")
