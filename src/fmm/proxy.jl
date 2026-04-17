@@ -43,6 +43,43 @@ struct LevelOperators{T<:AbstractFloat}
     parent_to_child::NTuple{4, Matrix{T}}   # L2L: parent local → child local
 end
 
+"""
+    ProxySolveWorkspace{T}
+
+Per-thread scratch buffers reused by the leaf proxy solve.
+
+The proxy FMM solves one small least-squares problem per leaf. Reusing these
+buffers keeps the code readable while avoiding repeated allocation of check
+velocities and Euler-augmented right-hand sides inside threaded loops.
+"""
+mutable struct ProxySolveWorkspace{T<:AbstractFloat}
+    vel_check_x::Vector{T}
+    vel_check_y::Vector{T}
+    rhs_x::Vector{T}
+    rhs_y::Vector{T}
+end
+
+"""
+    _build_proxy_workspace(plan) -> Vector{ProxySolveWorkspace}
+
+Allocate one reusable scratch workspace per Julia thread, sized from the
+largest check surface present in `plan`.
+"""
+function _build_proxy_workspace(plan::TreeEvalPlan{T}) where {T}
+    max_check = 0
+    for check_pts in plan.leaf_check_points
+        max_check = max(max_check, length(check_pts))
+    end
+    rhs_len = max_check + 1
+    nwork = max(Threads.nthreads(), 1)
+    return [ProxySolveWorkspace(
+        Vector{T}(undef, max_check),
+        Vector{T}(undef, max_check),
+        Vector{T}(undef, rhs_len),
+        Vector{T}(undef, rhs_len),
+    ) for _ in 1:nwork]
+end
+
 # ── Point generation ────────────────────────────────────────
 
 """
@@ -235,6 +272,48 @@ function precompute_level_operators(
     return ops
 end
 
+"""
+    _solve_leaf_proxy_strengths!(equiv, plan, leaf, kernel, work, n_check; p)
+
+Convert the check-surface velocities stored in `work` into proxy strengths for
+one leaf. For Euler, the solve uses the augmented zero-net-circulation system;
+all other kernels use the plain `K(check, proxy)` least-squares operator.
+"""
+function _solve_leaf_proxy_strengths!(
+    equiv::Vector{SVector{2,T}},
+    plan::TreeEvalPlan{T},
+    leaf::Int,
+    kernel::AbstractKernel,
+    work::ProxySolveWorkspace{T},
+    n_check::Int;
+    p::Int = _FMM_PROXY_ORDER,
+) where {T}
+    vel_check_x = work.vel_check_x
+    vel_check_y = work.vel_check_y
+
+    if kernel isa EulerKernel
+        copyto!(work.rhs_x, 1, vel_check_x, 1, n_check)
+        copyto!(work.rhs_y, 1, vel_check_y, 1, n_check)
+        work.rhs_x[n_check + 1] = zero(T)
+        work.rhs_y[n_check + 1] = zero(T)
+        rhs_x = view(work.rhs_x, 1:(n_check + 1))
+        rhs_y = view(work.rhs_y, 1:(n_check + 1))
+        strengths_x = plan.leaf_augmented_check_to_proxy_qr[leaf] \ rhs_x
+        strengths_y = plan.leaf_augmented_check_to_proxy_qr[leaf] \ rhs_y
+    else
+        rhs_x = view(vel_check_x, 1:n_check)
+        rhs_y = view(vel_check_y, 1:n_check)
+        strengths_x = plan.leaf_check_to_proxy_qr[leaf] \ rhs_x
+        strengths_y = plan.leaf_check_to_proxy_qr[leaf] \ rhs_y
+    end
+
+    @inbounds for k in 1:p
+        equiv[k] = SVector{2,T}(strengths_x[k], strengths_y[k])
+    end
+
+    return nothing
+end
+
 # ── Source-to-Multipole (S2M) ──────────────────────────────
 
 """
@@ -261,6 +340,7 @@ function _s2m!(
     p_check::Int = _FMM_CHECK_ORDER,
 ) where {T}
     leaves = tree.leaf_indices
+    workspaces = _build_proxy_workspace(plan)
 
     # The least-squares solves below dispatch to LAPACK, which is itself
     # multithreaded.  Running LAPACK from multiple Julia threads causes
@@ -275,10 +355,11 @@ function _s2m!(
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
             check_pts = plan.leaf_check_points[leaf]
+            work = workspaces[Threads.threadid()]
 
             n_check = length(check_pts)
-            vel_check_x = Vector{T}(undef, n_check)
-            vel_check_y = Vector{T}(undef, n_check)
+            vel_check_x = work.vel_check_x
+            vel_check_y = work.vel_check_y
 
             seg_range = box.segment_range
             @inbounds for ic in 1:n_check
@@ -298,35 +379,19 @@ function _s2m!(
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = plan.leaf_proxy_points[leaf]
-            K_cp = plan.leaf_check_to_proxy[leaf]
-
-            if kernel isa EulerKernel
-                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-                rhs_x = vcat(vel_check_x, zero(T))
-                rhs_y = vcat(vel_check_y, zero(T))
-            else
-                K_aug = K_cp
-                rhs_x = vel_check_x
-                rhs_y = vel_check_y
-            end
-            strengths_x = K_aug \ rhs_x
-            strengths_y = K_aug \ rhs_y
-
             equiv = proxy_data[leaf].equiv_strengths
-            @inbounds for k in 1:p
-                equiv[k] = SVector{2,T}(strengths_x[k], strengths_y[k])
-            end
+            _solve_leaf_proxy_strengths!(equiv, plan, leaf, kernel, work, n_check; p)
         end
     else
         for li_idx in 1:length(leaves)
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
             check_pts = plan.leaf_check_points[leaf]
+            work = workspaces[1]
 
             n_check = length(check_pts)
-            vel_check_x = Vector{T}(undef, n_check)
-            vel_check_y = Vector{T}(undef, n_check)
+            vel_check_x = work.vel_check_x
+            vel_check_y = work.vel_check_y
 
             seg_range = box.segment_range
             @inbounds for ic in 1:n_check
@@ -346,25 +411,8 @@ function _s2m!(
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = plan.leaf_proxy_points[leaf]
-            K_cp = plan.leaf_check_to_proxy[leaf]
-
-            if kernel isa EulerKernel
-                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-                rhs_x = vcat(vel_check_x, zero(T))
-                rhs_y = vcat(vel_check_y, zero(T))
-            else
-                K_aug = K_cp
-                rhs_x = vel_check_x
-                rhs_y = vel_check_y
-            end
-            strengths_x = K_aug \ rhs_x
-            strengths_y = K_aug \ rhs_y
-
             equiv = proxy_data[leaf].equiv_strengths
-            @inbounds for k in 1:p
-                equiv[k] = SVector{2,T}(strengths_x[k], strengths_y[k])
-            end
+            _solve_leaf_proxy_strengths!(equiv, plan, leaf, kernel, work, n_check; p)
         end
     end
 

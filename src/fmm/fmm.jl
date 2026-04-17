@@ -73,6 +73,13 @@ function _build_treecode_worklists(tree::FMMTree{T}) where {T}
     return direct_lists, approx_lists
 end
 
+"""
+    _build_flat_indices(tree, contours) -> Vector{Int}
+
+Map each segment in `tree.sorted_segments` back to the flat node index used by
+the public velocity arrays. This lets the treecode and proxy paths accumulate
+directly into flat buffers without repeatedly reconstructing contour offsets.
+"""
 function _build_flat_indices(tree::FMMTree, contours)
     offsets = Vector{Int}(undef, length(contours) + 1)
     offsets[1] = 0
@@ -88,6 +95,13 @@ function _build_flat_indices(tree::FMMTree, contours)
     return flat_indices
 end
 
+"""
+    _build_segment_layers(tree, contour_layers) -> Vector{Int}
+
+Expand contour-level layer ids to one layer id per sorted segment. The modal
+multi-layer paths use this to avoid re-deriving a segment's source layer in the
+inner loops.
+"""
 function _build_segment_layers(tree::FMMTree, contour_layers::AbstractVector{Int})
     segment_layers = Vector{Int}(undef, length(tree.sorted_segments))
     for seg_idx in eachindex(tree.sorted_segments)
@@ -97,6 +111,13 @@ function _build_segment_layers(tree::FMMTree, contour_layers::AbstractVector{Int
     return segment_layers
 end
 
+"""
+    _build_leaf_proxy_geometry(tree; p, p_check, include_proxy_geometry)
+
+Precompute the per-leaf proxy and dual-check surfaces used by the proxy FMM.
+The treecode also carries the resulting arrays in `TreeEvalPlan`, but leaves
+them empty unless proxy geometry is explicitly requested.
+"""
 function _build_leaf_proxy_geometry(tree::FMMTree{T}; p::Int = _FMM_PROXY_ORDER,
                                     p_check::Int = _FMM_CHECK_ORDER,
                                     include_proxy_geometry::Bool = false) where {T}
@@ -120,6 +141,17 @@ function _build_leaf_proxy_geometry(tree::FMMTree{T}; p::Int = _FMM_PROXY_ORDER,
     return leaf_proxy_points, leaf_check_points
 end
 
+"""
+    _build_leaf_check_to_proxy(tree, kernel, domain, leaf_proxy_points, leaf_check_points;
+                               include_proxy_geometry)
+
+Precompute the dense leaf-local operators used by the proxy solve:
+
+- `K(check, proxy)` for general kernels
+- the Euler-augmented matrix with a final zero-sum row
+- QR factorizations for both systems so the runtime leaf solve is just
+  "fill the RHS, apply the cached least-squares operator"
+"""
 function _build_leaf_check_to_proxy(
     tree::FMMTree{T},
     kernel::AbstractKernel,
@@ -130,17 +162,48 @@ function _build_leaf_check_to_proxy(
 ) where {T}
     nboxes = length(tree.boxes)
     leaf_check_to_proxy = [Matrix{T}(undef, 0, 0) for _ in 1:nboxes]
-    include_proxy_geometry || return leaf_check_to_proxy
+    leaf_augmented_check_to_proxy = [Matrix{T}(undef, 0, 0) for _ in 1:nboxes]
+    empty_qr = qr(Matrix{T}(undef, 0, 0))
+    leaf_check_to_proxy_qr = [empty_qr for _ in 1:nboxes]
+    leaf_augmented_check_to_proxy_qr = [empty_qr for _ in 1:nboxes]
+    include_proxy_geometry || return leaf_check_to_proxy, leaf_augmented_check_to_proxy,
+                                    leaf_check_to_proxy_qr, leaf_augmented_check_to_proxy_qr
 
     for leaf_idx in tree.leaf_indices
         proxy_pts = leaf_proxy_points[leaf_idx]
         check_pts = leaf_check_points[leaf_idx]
-        leaf_check_to_proxy[leaf_idx] = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+        K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+        leaf_check_to_proxy[leaf_idx] = K_cp
+        leaf_check_to_proxy_qr[leaf_idx] = qr(K_cp)
+        if kernel isa EulerKernel
+            K_aug = Matrix{T}(undef, size(K_cp, 1) + 1, size(K_cp, 2))
+            copyto!(K_aug, 1, K_cp, 1, length(K_cp))
+            @inbounds for j in axes(K_aug, 2)
+                K_aug[end, j] = one(T)
+            end
+            leaf_augmented_check_to_proxy[leaf_idx] = K_aug
+            leaf_augmented_check_to_proxy_qr[leaf_idx] = qr(K_aug)
+        end
     end
 
-    return leaf_check_to_proxy
+    return leaf_check_to_proxy, leaf_augmented_check_to_proxy,
+           leaf_check_to_proxy_qr, leaf_augmented_check_to_proxy_qr
 end
 
+"""
+    _build_tree_eval_plan(tree, contours, contour_layers=fill(1, length(contours)); ...)
+
+Build the shared evaluation plan used by the treecode and proxy-FMM code.
+
+The plan intentionally groups together:
+- geometry-independent traversal metadata (`direct_lists`, `approx_lists`)
+- flat scatter/gather mappings (`flat_indices`, `node_to_leaf`)
+- multi-layer bookkeeping (`segment_layers`)
+- optional proxy-FMM geometry and dense operators
+
+Keeping these pieces together makes the hot evaluation paths read as a sequence
+of numerical stages instead of a mix of traversal setup and physics.
+"""
 function _build_tree_eval_plan(tree::FMMTree{T}, contours,
                                contour_layers::AbstractVector{Int}=fill(1, length(contours));
                                p::Int = _FMM_PROXY_ORDER,
@@ -154,12 +217,56 @@ function _build_tree_eval_plan(tree::FMMTree{T}, contours,
     segment_layers = _build_segment_layers(tree, contour_layers)
     leaf_proxy_points, leaf_check_points = _build_leaf_proxy_geometry(
         tree; p, p_check, include_proxy_geometry)
-    leaf_check_to_proxy = _build_leaf_check_to_proxy(
+    leaf_check_to_proxy, leaf_augmented_check_to_proxy,
+    leaf_check_to_proxy_qr, leaf_augmented_check_to_proxy_qr = _build_leaf_check_to_proxy(
         tree, kernel, domain, leaf_proxy_points, leaf_check_points;
         include_proxy_geometry)
     return TreeEvalPlan(flat_indices, direct_lists, approx_lists, node_to_leaf,
                         segment_layers, leaf_proxy_points, leaf_check_points,
-                        leaf_check_to_proxy)
+                        leaf_check_to_proxy, leaf_augmented_check_to_proxy,
+                        leaf_check_to_proxy_qr, leaf_augmented_check_to_proxy_qr)
+end
+
+"""
+    _apply_treecode_worklists!(vel, tree, contours, plan, kernel, domain, ewald_cache)
+
+Execute the production treecode using the preclassified worklists stored in
+`plan`. Each target leaf is processed independently, first by direct near-field
+boxes and then by accepted far-field boxes evaluated with the linearized model.
+"""
+function _apply_treecode_worklists!(
+    vel::Vector{SVector{2,T}},
+    tree::FMMTree{T},
+    contours::AbstractVector{PVContour{T}},
+    plan::TreeEvalPlan{T},
+    kernel::AbstractKernel,
+    domain::AbstractDomain,
+    ewald_cache,
+) where {T}
+    function process_leaf(li_idx::Int)
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        for source_box_idx in plan.direct_lists[li_idx]
+            _treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                      contours, plan, kernel, domain, ewald_cache)
+        end
+        for source_box_idx in plan.approx_lists[li_idx]
+            _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                          contours, plan, kernel, domain, ewald_cache)
+        end
+        return nothing
+    end
+
+    if _should_thread_accelerator(length(tree.leaf_indices))
+        Threads.@threads for li_idx in eachindex(tree.leaf_indices)
+            process_leaf(li_idx)
+        end
+    else
+        for li_idx in eachindex(tree.leaf_indices)
+            process_leaf(li_idx)
+        end
+    end
+
+    return nothing
 end
 
 function _box_direct_velocity(tree::FMMTree{T},
@@ -256,31 +363,7 @@ function _treecode_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wh
     domain = prob.domain
     ewald = _prefetch_ewald(domain, kernel)
 
-    if _should_thread_accelerator(length(tree.leaf_indices))
-        Threads.@threads for li_idx in eachindex(tree.leaf_indices)
-            target_leaf_idx = tree.leaf_indices[li_idx]
-            for source_box_idx in plan.direct_lists[li_idx]
-                _treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                          contours, plan, kernel, domain, ewald)
-            end
-            for source_box_idx in plan.approx_lists[li_idx]
-                _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                              contours, plan, kernel, domain, ewald)
-            end
-        end
-    else
-        for li_idx in eachindex(tree.leaf_indices)
-            target_leaf_idx = tree.leaf_indices[li_idx]
-            for source_box_idx in plan.direct_lists[li_idx]
-                _treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                          contours, plan, kernel, domain, ewald)
-            end
-            for source_box_idx in plan.approx_lists[li_idx]
-                _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                              contours, plan, kernel, domain, ewald)
-            end
-        end
-    end
+    _apply_treecode_worklists!(vel, tree, contours, plan, kernel, domain, ewald)
 
     return vel
 end
@@ -349,32 +432,7 @@ function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
 
         # Run treecode on weighted contours using the shared tree
         fill!(mode_vel, zero(SVector{2,T}))
-
-        if _should_thread_accelerator(length(tree.leaf_indices))
-            Threads.@threads for li_idx in eachindex(tree.leaf_indices)
-                target_leaf_idx = tree.leaf_indices[li_idx]
-                for source_box_idx in plan.direct_lists[li_idx]
-                    _treecode_direct_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                              weighted, plan, mode_kernel, domain, ewald)
-                end
-                for source_box_idx in plan.approx_lists[li_idx]
-                    _treecode_linearized_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                                  weighted, plan, mode_kernel, domain, ewald)
-                end
-            end
-        else
-            for li_idx in eachindex(tree.leaf_indices)
-                target_leaf_idx = tree.leaf_indices[li_idx]
-                for source_box_idx in plan.direct_lists[li_idx]
-                    _treecode_direct_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                              weighted, plan, mode_kernel, domain, ewald)
-                end
-                for source_box_idx in plan.approx_lists[li_idx]
-                    _treecode_linearized_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                                  weighted, plan, mode_kernel, domain, ewald)
-                end
-            end
-        end
+        _apply_treecode_worklists!(mode_vel, tree, weighted, plan, mode_kernel, domain, ewald)
 
         # Scatter mode velocity to per-layer arrays with projection weights
         for li in 1:NL
@@ -450,21 +508,14 @@ function _near_field!(vel::Vector{SVector{2,T}}, tree::FMMTree{T},
 end
 
 """
-    _fmm_velocity!(vel, prob::ContourProblem)
+    _experimental_fmm_velocity!(vel, prob::ContourProblem)
 
-Full FMM driver for computing velocity at all contour nodes.
+Experimental proxy FMM driver for computing velocity at all contour nodes.
 Orchestrates the complete FMM pipeline: tree construction, operator
 precomputation, upward pass (S2M, M2M), interaction pass (M2L),
 downward pass (L2L), local evaluation, and near-field correction.
 """
-function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
-    # The proxy-surface FMM pipeline is structurally complete but not yet
-    # numerically validated to production accuracy. Gate behind the
-    # _FMM_ACCELERATION_ENABLED flag; when disabled, delegate to direct.
-    if !_FMM_ACCELERATION_ENABLED
-        return _direct_velocity!(vel, prob)
-    end
-
+function _experimental_fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     contours = prob.contours
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
@@ -472,20 +523,18 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     isempty(contours) && return vel
 
     tree = build_fmm_tree(contours)
+    kernel = prob.kernel
+    domain = prob.domain
     # The current proxy-surface translation operators only handle same-level
     # M2L interactions. On an unbalanced adaptive tree, conservative fallback
     # to the production treecode is safer than silently dropping coarse-leaf
     # colleague contributions.
     _has_unhandled_coarse_leaf_interactions(tree) && return _treecode_velocity!(vel, prob)
-    plan = _build_tree_eval_plan(tree, contours; p, p_check, include_proxy_geometry=true,
-                                 kernel, domain)
-
-    kernel = prob.kernel
-    domain = prob.domain
-    ewald = _prefetch_ewald(domain, kernel)
-
     p = _FMM_PROXY_ORDER
     p_check = _FMM_CHECK_ORDER
+    plan = _build_tree_eval_plan(tree, contours; p, p_check, include_proxy_geometry=true,
+                                 kernel, domain)
+    ewald = _prefetch_ewald(domain, kernel)
     nboxes = length(tree.boxes)
 
     # Allocate proxy data for all boxes
@@ -504,6 +553,20 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     _near_field!(vel, tree, contours, kernel, domain, ewald, plan)
 
     return vel
+end
+
+"""
+    _fmm_velocity!(vel, prob::ContourProblem)
+
+Conservative public wrapper for the experimental proxy FMM. The runtime uses
+the proxy path only when explicitly enabled; otherwise it falls back to the
+validated direct evaluator.
+"""
+function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
+    if !_FMM_ACCELERATION_ENABLED
+        return _direct_velocity!(vel, prob)
+    end
+    return _experimental_fmm_velocity!(vel, prob)
 end
 
 # --- Periodic domain support ---
@@ -607,12 +670,15 @@ end
     _s2m_modal!(proxy_data, tree, all_contours, plan, P_inv, mode, kernel, domain, ops, NL)
 
 Like `_s2m!` but weights each segment's PV by `P_inv[mode, layer_of_segment]`.
+The actual least-squares solve is still delegated to `_solve_leaf_proxy_strengths!`,
+so the modal path and the single-layer path share the same cached leaf operators.
 """
 function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
                      P_inv, mode, kernel, domain, ops, NL;
                      p=_FMM_PROXY_ORDER, p_check=_FMM_CHECK_ORDER)
     T = eltype(tree.boxes[1].center)
     leaves = tree.leaf_indices
+    workspaces = _build_proxy_workspace(plan)
 
     # Pin BLAS to one thread to avoid nested threading with Julia's @threads
     # (the least-squares solves below dispatch to LAPACK).
@@ -624,12 +690,13 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
         Threads.@threads for li_idx in 1:length(leaves)
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
+            work = workspaces[Threads.threadid()]
 
             check_pts = plan.leaf_check_points[leaf]
             n_check = length(check_pts)
 
-            vel_check_x = Vector{T}(undef, n_check)
-            vel_check_y = Vector{T}(undef, n_check)
+            vel_check_x = work.vel_check_x
+            vel_check_y = work.vel_check_y
 
             @inbounds for ic in 1:n_check
                 xc = check_pts[ic]
@@ -652,36 +719,20 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = plan.leaf_proxy_points[leaf]
-            K_cp = plan.leaf_check_to_proxy[leaf]
-
-            if kernel isa EulerKernel
-                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-                rhs_x = vcat(vel_check_x, zero(T))
-                rhs_y = vcat(vel_check_y, zero(T))
-            else
-                K_aug = K_cp
-                rhs_x = vel_check_x
-                rhs_y = vel_check_y
-            end
-            str_x = K_aug \ rhs_x
-            str_y = K_aug \ rhs_y
-
             equiv = proxy_data[leaf].equiv_strengths
-            for k in 1:p
-                equiv[k] = SVector{2,T}(str_x[k], str_y[k])
-            end
+            _solve_leaf_proxy_strengths!(equiv, plan, leaf, kernel, work, n_check; p)
         end
     else
         for li_idx in 1:length(leaves)
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
+            work = workspaces[1]
 
             check_pts = plan.leaf_check_points[leaf]
             n_check = length(check_pts)
 
-            vel_check_x = Vector{T}(undef, n_check)
-            vel_check_y = Vector{T}(undef, n_check)
+            vel_check_x = work.vel_check_x
+            vel_check_y = work.vel_check_y
 
             @inbounds for ic in 1:n_check
                 xc = check_pts[ic]
@@ -704,25 +755,8 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = plan.leaf_proxy_points[leaf]
-            K_cp = plan.leaf_check_to_proxy[leaf]
-
-            if kernel isa EulerKernel
-                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-                rhs_x = vcat(vel_check_x, zero(T))
-                rhs_y = vcat(vel_check_y, zero(T))
-            else
-                K_aug = K_cp
-                rhs_x = vel_check_x
-                rhs_y = vel_check_y
-            end
-            str_x = K_aug \ rhs_x
-            str_y = K_aug \ rhs_y
-
             equiv = proxy_data[leaf].equiv_strengths
-            for k in 1:p
-                equiv[k] = SVector{2,T}(str_x[k], str_y[k])
-            end
+            _solve_leaf_proxy_strengths!(equiv, plan, leaf, kernel, work, n_check; p)
         end
     end
 

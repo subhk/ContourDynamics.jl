@@ -37,6 +37,27 @@ struct FMMTree{T<:AbstractFloat}
     max_level::Int
 end
 
+"""
+    TreeEvalPlan{T}
+
+Precomputed geometry and worklists shared by the treecode and proxy-FMM paths.
+
+The plan separates the adaptive tree construction phase from the hot evaluation
+loops so the runtime code can iterate over flat arrays and preclassified leaf
+worklists instead of rebuilding topology-dependent metadata on every call.
+
+- `flat_indices`: map each entry in `tree.sorted_segments` to its flat node index.
+- `direct_lists`: per-target-leaf source boxes handled by direct summation.
+- `approx_lists`: per-target-leaf source boxes handled by the treecode far field.
+- `node_to_leaf`: lookup from `(contour_idx, node_idx)` to the owning leaf box.
+- `segment_layers`: layer id for each sorted segment in multi-layer modal paths.
+- `leaf_proxy_points`: per-leaf proxy-surface points for the proxy FMM.
+- `leaf_check_points`: per-leaf dual check surfaces used by the proxy solve.
+- `leaf_check_to_proxy`: dense `K(check, proxy)` matrices for each leaf.
+- `leaf_augmented_check_to_proxy`: Euler-specific matrices with the zero-sum row.
+- `leaf_check_to_proxy_qr`: cached least-squares operators for non-Euler kernels.
+- `leaf_augmented_check_to_proxy_qr`: cached least-squares operators for Euler.
+"""
 struct TreeEvalPlan{T<:AbstractFloat}
     flat_indices::Vector{Int}
     direct_lists::Vector{Vector{Int}}
@@ -46,6 +67,9 @@ struct TreeEvalPlan{T<:AbstractFloat}
     leaf_proxy_points::Vector{Vector{SVector{2,T}}}
     leaf_check_points::Vector{Vector{SVector{2,T}}}
     leaf_check_to_proxy::Vector{Matrix{T}}
+    leaf_augmented_check_to_proxy::Vector{Matrix{T}}
+    leaf_check_to_proxy_qr::Vector{LinearAlgebra.QRCompactWY{T, Matrix{T}, Matrix{T}}}
+    leaf_augmented_check_to_proxy_qr::Vector{LinearAlgebra.QRCompactWY{T, Matrix{T}, Matrix{T}}}
 end
 
 # ── Helper functions ────────────────────────────────────────

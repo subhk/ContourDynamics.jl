@@ -134,36 +134,32 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         end
     end
 
-    # Proxy FMM vs Direct — only runs when proxy FMM is enabled
+    # Proxy FMM vs Direct — exercise the experimental implementation directly.
     @testset "Proxy FMM vs Direct Accuracy" begin
-        if !ContourDynamics._FMM_ACCELERATION_ENABLED
-            @test_skip "Proxy FMM disabled (_FMM_ACCELERATION_ENABLED = false)"
-        else
-            @testset "Euler Unbounded" begin
-                c = circular_patch(1.0, 128, 1.0)
-                prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
-                N = total_nodes(prob)
-                vel_direct = zeros(SVector{2,Float64}, N)
-                vel_fmm = zeros(SVector{2,Float64}, N)
-                ContourDynamics._direct_velocity!(vel_direct, prob)
-                ContourDynamics._fmm_velocity!(vel_fmm, prob)
-                max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
-                                  max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
-                @test max_err < 1e-10
-            end
+        @testset "Euler Unbounded" begin
+            c = circular_patch(1.0, 128, 1.0)
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_fmm = zeros(SVector{2,Float64}, N)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-10
+        end
 
-            @testset "QG Unbounded" begin
-                c = circular_patch(1.0, 128, 1.0)
-                prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
-                N = total_nodes(prob)
-                vel_direct = zeros(SVector{2,Float64}, N)
-                vel_fmm = zeros(SVector{2,Float64}, N)
-                ContourDynamics._direct_velocity!(vel_direct, prob)
-                ContourDynamics._fmm_velocity!(vel_fmm, prob)
-                max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
-                                  max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
-                @test max_err < 1e-10
-            end
+        @testset "QG Unbounded" begin
+            c = circular_patch(1.0, 128, 1.0)
+            prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_fmm = zeros(SVector{2,Float64}, N)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-10
         end
     end
 
