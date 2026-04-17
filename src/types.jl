@@ -352,6 +352,7 @@ struct RK4Stepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: Abstract
     k4::A
     nodes_buf::A  # pre-allocated buffer for original node positions
     vel_bufs::Vector{Vector{SVector{2, T}}}  # stays CPU (multi-layer scratch)
+    node_ranges::Vector{Vector{UnitRange{Int}}}  # cached flat node ranges
 end
 
 function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:AbstractFloat}
@@ -359,7 +360,7 @@ function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:Abstract
     # device allocation internally. This ensures resize! works after surgery.
     z = zero(SVector{2, T})
     RK4Stepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), fill(z, n),
-               Vector{Vector{SVector{2, T}}}())
+               Vector{Vector{SVector{2, T}}}(), Vector{Vector{UnitRange{Int}}}())
 end
 
 """
@@ -378,6 +379,7 @@ mutable struct LeapfrogStepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}
     initialized::Bool
     ra_coeff::T  # Robert-Asselin filter coefficient (0 = no filter)
     vel_bufs::Vector{Vector{SVector{2, T}}}  # stays CPU (multi-layer scratch)
+    node_ranges::Vector{Vector{UnitRange{Int}}}  # cached flat node ranges
 end
 
 function LeapfrogStepper(dt::T, n::Int; dev::AbstractDevice=CPU(), ra_coeff::Real=0.05) where {T<:AbstractFloat}
@@ -385,5 +387,5 @@ function LeapfrogStepper(dt::T, n::Int; dev::AbstractDevice=CPU(), ra_coeff::Rea
     # device allocation internally. This ensures resize! works after surgery.
     z = zero(SVector{2, T})
     LeapfrogStepper(dt, fill(z, n), fill(z, n), fill(z, n), fill(z, n), false, T(ra_coeff),
-                    Vector{Vector{SVector{2, T}}}())
+                    Vector{Vector{SVector{2, T}}}(), Vector{Vector{UnitRange{Int}}}())
 end
