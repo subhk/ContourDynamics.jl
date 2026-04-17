@@ -328,7 +328,7 @@ struct SurgeryParams{T<:AbstractFloat}
         area_min > zero(T) || throw(ArgumentError("area_min must be positive"))
         n_surgery > 0 || throw(ArgumentError("n_surgery must be positive"))
         if delta > mu / 4
-            @warn "SurgeryParams: delta ($delta) > mu/4 = $(mu/4); typically delta ≤ mu/4 for correct Dritschel surgery" maxlog=1
+            @warn "SurgeryParams: δ ($delta) > μ/4 = $(mu/4); δ should usually be <= μ/4 for Dritschel surgery" maxlog=1
         end
         new{T}(delta, mu, Delta_max, area_min, n_surgery)
     end

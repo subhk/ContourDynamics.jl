@@ -1,5 +1,17 @@
 # API Reference
 
+This page lists the public API by topic.
+
+If you are new to the package, the most common entry points are:
+
+- `Problem` for the high-level convenience interface
+- `ContourProblem` and `MultiLayerContourProblem` for lower-level setup
+- `evolve!` to run a simulation
+- `energy`, `circulation`, and `vortex_area` for diagnostics
+
+If you want a worked example before diving into the full reference, start with
+the [Euler tutorial](/tutorial_euler).
+
 ## Types
 
 ### Kernels
@@ -60,6 +72,10 @@ resize_buffers!
 ```
 
 ## Surgery
+
+The surgery API handles remeshing, reconnection, and filament removal. Most
+users only need `SurgeryParams` and `surgery!`; the lower-level functions are
+mainly useful if you want to customize the surgery pipeline.
 
 ```@docs
 surgery!
@@ -126,6 +142,9 @@ device_array
 ```
 
 ## Internals
+
+These functions are documented for developers and advanced users. They are not
+part of the stable high-level API.
 
 ```@docs
 ContourDynamics._collect_all_nodes!

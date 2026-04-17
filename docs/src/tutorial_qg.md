@@ -1,10 +1,10 @@
 # Tutorial: Quasi-Geostrophic Dynamics
 
-This tutorial covers single-layer QG, periodic domains with beta-plane PV staircases, and multi-layer QG dynamics.
+This tutorial introduces the main quasi-geostrophic workflows in ContourDynamics.jl: single-layer QG, periodic domains with beta-plane staircases, and multi-layer QG.
 
 ## Physical Background
 
-Quasi-geostrophic (QG) dynamics describes rotating stratified flows where the Rossby number is small. The key difference from 2D Euler is the **Rossby deformation radius** ``L_d``, which sets the scale at which rotation effects become important.
+Quasi-geostrophic (QG) dynamics describes rotating stratified flows at small Rossby number. Compared with 2D Euler, the main extra parameter is the **Rossby deformation radius** ``L_d``, which sets the scale where rotation and stratification matter.
 
 With the sign convention used by `ContourDynamics.jl`, the QG scalar kernel in
 the contour integral is:
@@ -13,9 +13,9 @@ the contour integral is:
 G(r) = \frac{1}{2\pi} K_0\!\left(\frac{r}{L_d}\right)
 ```
 
-where ``K_0`` is the modified Bessel function of the second kind. Key properties:
-- For ``r \ll L_d``: ``K_0(r/L_d) \approx -\log(r/L_d)`` — matches the Euler Green's function up to an additive constant
-- For ``r \gg L_d``: ``K_0(r/L_d) \sim \sqrt{\pi L_d/(2r)} \, e^{-r/L_d}`` — exponential decay
+where ``K_0`` is the modified Bessel function of the second kind. Two useful limits are:
+- For ``r \ll L_d``: ``K_0(r/L_d) \approx -\log(r/L_d)``, so the kernel behaves like Euler at small scales
+- For ``r \gg L_d``: ``K_0(r/L_d)`` decays exponentially, so interactions are screened at large scales
 
 This means vortices smaller than ``L_d`` behave like Euler vortices, while larger vortices are screened by rotation.
 
@@ -95,7 +95,7 @@ setup_ewald_cache!(domain(prob), kernel(prob); n_fourier=16, n_images=4)
 
 ### Beta-Plane PV Staircase
 
-The background PV gradient ``\beta y`` on a beta plane can be represented as a **PV staircase** — a set of horizontal spanning contours that discretize the continuous gradient:
+The background PV gradient ``\beta y`` on a beta plane can be represented as a **PV staircase**, a set of horizontal spanning contours that discretize the continuous gradient:
 
 ```julia
 T = Float64
@@ -111,7 +111,7 @@ println("PV jump per contour: $(staircase[1].pv)")
 println("Is spanning: $(is_spanning(staircase[1]))")
 ```
 
-Each spanning contour has a `wrap` vector that connects the last node back to the first node shifted by one period — this encodes the cross-domain topology.
+Each spanning contour has a `wrap` vector that connects the last node back to the first node shifted by one period. That is how the package represents contours that cross the periodic boundary.
 
 ### Beta Drift of a Cyclone
 
@@ -135,7 +135,7 @@ vortex_final = argmax(
     contours(prob)
 )
 cf = centroid(contours(prob)[vortex_final])
-println("Vortex drift: Δx=$(cf[1] - c0[1]), Δy=$(cf[2] - c0[2])")
+println("Vortex drift: dx=$(cf[1] - c0[1]), dy=$(cf[2] - c0[2])")
 println("(Cyclones drift north-westward on a beta plane)")
 ```
 
@@ -151,7 +151,8 @@ using StaticArrays   # needed for SVector/SMatrix coupling matrix
 
 # Deformation radius of the baroclinic mode
 Ld = SVector(1.5)
-# Stretching operator with one barotropic (λ = 0) and one baroclinic mode
+# Stretching operator with one barotropic mode (eigenvalue 0)
+# and one baroclinic mode
 F = 1.0 / (2 * Ld[1]^2)
 coupling = SMatrix{2,2}(-F, F, F, -F)
 
@@ -181,13 +182,13 @@ println("Layers: $(nlayers(prob))")
 ### Evolving the Multi-Layer System
 
 ```julia
-E0 = energy(prob)
-Γ0 = circulation(prob)
+energy0 = energy(prob)
+circulation0 = circulation(prob)
 
 evolve!(prob; nsteps=500)
 
-println("Energy change: $(abs(energy(prob) - E0) / abs(E0))")
-println("Circulation change: $(abs(circulation(prob) - Γ0) / abs(Γ0))")
+println("Energy change: $(abs(energy(prob) - energy0) / abs(energy0))")
+println("Circulation change: $(abs(circulation(prob) - circulation0) / abs(circulation0))")
 ```
 
 ## Next Steps

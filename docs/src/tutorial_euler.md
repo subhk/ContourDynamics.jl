@@ -1,10 +1,10 @@
 # Tutorial: 2D Euler Vortex Dynamics
 
-This tutorial walks through simulating a 2D Euler vortex patch — from setup to diagnostics. By the end you'll understand how to create contour problems, evolve them in time, and verify conservation laws.
+This tutorial shows the basic ContourDynamics.jl workflow on a 2D Euler vortex patch. You will create a contour, build a problem, evolve it in time, and check a few diagnostics.
 
 ## Physical Background
 
-In 2D Euler dynamics, an inviscid, incompressible fluid has its velocity determined entirely by the vorticity field. For a **vortex patch** — a region of uniform vorticity ``q`` surrounded by irrotational flow — the velocity at any point can be computed as a contour integral around the patch boundary.
+In 2D Euler flow, the velocity is determined by the vorticity field. For a **vortex patch**, a region of uniform vorticity surrounded by irrotational flow, that velocity can be written as a contour integral around the patch boundary.
 
 The Green's function is ``G(r) = -\frac{1}{2\pi} \log r``, and the velocity at a boundary node is:
 
@@ -12,11 +12,11 @@ The Green's function is ``G(r) = -\frac{1}{2\pi} \log r``, and the velocity at a
 \mathbf{u}(\mathbf{x}) = -\frac{q}{4\pi} \oint_C \log|\mathbf{x} - \mathbf{x}'|^2 \, d\mathbf{x}'
 ```
 
-Each segment of this integral is computed **analytically** — no quadrature error.
+Each segment contribution is computed analytically, so this part of the method does not introduce quadrature error.
 
 ## Setting Up a Vortex Patch
 
-Let's create a **Kirchhoff ellipse** — an elliptical vortex patch that rotates steadily in 2D Euler flow without changing shape.
+We will start with a **Kirchhoff ellipse**, a standard test case that rotates steadily without changing shape.
 
 ```julia
 using ContourDynamics
@@ -47,10 +47,10 @@ prob = Problem(; contours=[contour], dt=dt)
 You can check initial diagnostics right away:
 
 ```julia
-A = vortex_area(contours(prob)[1])   # should be ≈ π*a*b = 2π
-Γ = circulation(prob)                # should be ≈ pv * A = 2π
-λ, θ = ellipse_moments(contours(prob)[1])  # aspect ratio ≈ 2.0, angle ≈ 0
-println("Area = $A, Circulation = $Γ, Aspect ratio = $λ")
+area0 = vortex_area(contours(prob)[1])          # should be about π*a*b = 2π
+circulation0 = circulation(prob)                # should be about pv * area0 = 2π
+aspect_ratio0, angle0 = ellipse_moments(contours(prob)[1])
+println("Area = $area0, Circulation = $circulation0, Aspect ratio = $aspect_ratio0")
 ```
 
 ## Tracking Conservation Laws
@@ -67,8 +67,8 @@ function diagnostics_callback(prob, step)
     push!(times, step * dt)
     push!(energies, energy(prob))
     push!(circulations, circulation(prob))
-    λ, _ = ellipse_moments(contours(prob)[1])
-    push!(aspect_ratios, λ)
+    aspect_ratio, _ = ellipse_moments(contours(prob)[1])
+    push!(aspect_ratios, aspect_ratio)
 end
 
 evolve!(prob; nsteps=5000, callbacks=[diagnostics_callback])
@@ -76,13 +76,13 @@ evolve!(prob; nsteps=5000, callbacks=[diagnostics_callback])
 
 ## Verifying the Kirchhoff Solution
 
-The Kirchhoff ellipse is a key validation case. An elliptical vortex patch with semi-axes ``a`` and ``b`` and PV jump ``q`` rotates rigidly at angular velocity:
+The Kirchhoff ellipse is a standard validation case. An elliptical vortex patch with semi-axes ``a`` and ``b`` and PV jump ``q`` rotates rigidly at angular velocity:
 
 ```math
 \Omega = \frac{ab}{(a+b)^2} \, q
 ```
 
-For our parameters (``a=2, b=1, q=1``): ``\Omega = 2/9 \approx 0.222``.
+For our parameters (``a=2, b=1, q=1``), the predicted angular velocity is ``2/9 \approx 0.222``.
 
 After evolution, you can verify:
 
@@ -91,11 +91,11 @@ After evolution, you can verify:
 println("Final aspect ratio: $(aspect_ratios[end])")
 println("Aspect ratio drift: $(abs(aspect_ratios[end] - 2.0))")
 
-# Energy and circulation should be conserved
-ΔE = abs(energies[end] - energies[1]) / abs(energies[1])
-ΔΓ = abs(circulations[end] - circulations[1]) / abs(circulations[1])
-println("Relative energy change: $ΔE")
-println("Relative circulation change: $ΔΓ")
+# Energy and circulation should stay nearly constant
+rel_energy_change = abs(energies[end] - energies[1]) / abs(energies[1])
+rel_circulation_change = abs(circulations[end] - circulations[1]) / abs(circulations[1])
+println("Relative energy change: $rel_energy_change")
+println("Relative circulation change: $rel_circulation_change")
 ```
 
 ## Computing Velocity at Arbitrary Points

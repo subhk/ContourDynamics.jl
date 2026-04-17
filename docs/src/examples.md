@@ -1,6 +1,17 @@
 # Examples
 
-Complete runnable scripts demonstrating ContourDynamics.jl capabilities. Full scripts with JLD2 output are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory.
+This page collects short, runnable examples. Each one focuses on one idea and
+keeps the setup small enough to read in one pass.
+
+If you are new to the package, read these in roughly this order:
+
+1. `Vortex Merger`
+2. `Filamentation`
+3. `Beta-Plane Vortex Drift`
+4. `SQG Elliptical Vortex`
+5. `Two-Layer QG`
+
+Full scripts with JLD2 output are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory.
 
 ::: tip GPU Acceleration
 The vortex merger and filamentation examples support GPU acceleration.
@@ -12,7 +23,14 @@ GPU velocity is currently available for the Euler kernel on unbounded domains.
 
 ## Vortex Merger
 
-Two co-rotating circular vortex patches placed close enough to merge via contour surgery. When the separation is less than about 3.3 radii, the patches exchange filaments and eventually merge into a single elliptical vortex.
+Two co-rotating circular vortex patches are placed close enough to merge. This
+is one of the clearest examples of why contour surgery matters.
+
+What to look for:
+
+- the two contours exchange filaments
+- surgery reconnects nearby segments
+- the final state has fewer contours than the initial state
 
 The critical merger distance and the topological reconnection that enables it are described in [Dritschel (1988)](https://doi.org/10.1016/0021-9991(88)90165-9) and [Dritschel (1989)](https://doi.org/10.1016/0167-7977(89)90004-X).
 
@@ -35,11 +53,11 @@ c2 = circular_patch(R, N, pv; cx=+sep / 2)
 
 prob = Problem(; contours=[c1, c2], dt=0.01)
 
-Γ0 = circulation(prob)
+circulation0 = circulation(prob)
 evolve!(prob; nsteps=500)
 
 println("Final: $(length(contours(prob))) contour(s), $(total_nodes(prob)) nodes")
-println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
+println("Relative circulation change: $(abs(circulation(prob) - circulation0) / abs(circulation0))")
 ```
 
 **References:**
@@ -50,7 +68,15 @@ println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / 
 
 ## Filamentation
 
-An elliptical vortex patch with high aspect ratio sheds thin filaments that are automatically removed by surgery. The Kirchhoff elliptic vortex is an exact rotating solution of the 2D Euler equations; [Love (1893)](https://doi.org/10.1112/plms/s1-25.1.18) showed it becomes unstable for aspect ratios above approximately 3, leading to filamentation.
+An elongated elliptical vortex patch sheds thin filaments. This example shows
+how surgery keeps the contour manageable once those filaments become too thin to
+resolve well.
+
+What to look for:
+
+- thin filaments appear as the ellipse destabilizes
+- small features are removed by surgery
+- the core vortex remains well resolved
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
@@ -83,7 +109,15 @@ println("Original area: $A0")
 
 ## Beta-Plane Vortex Drift
 
-A cyclonic vortex on a beta plane drifts north-westward due to the planetary vorticity gradient. The background gradient ``\beta y`` is represented as a PV staircase of spanning contours on a periodic domain — a technique introduced by [Dritschel (1988)](https://doi.org/10.1016/0021-9991(88)90165-9) that avoids explicit beta terms in the equations.
+A cyclonic vortex on a beta plane drifts north-westward due to the background
+PV gradient. The gradient ``\beta y`` is represented by a PV staircase in a
+periodic domain.
+
+What to look for:
+
+- the vortex is embedded in a set of spanning contours
+- the vortex center moves over time
+- the reported drift should be north-westward
 
 <!-- TODO: Replace with actual figure after running the example -->
 ::: info Figure placeholder
@@ -120,7 +154,7 @@ evolve!(prob; nsteps=400)
 # Find vortex (largest non-spanning contour)
 idx = argmax(c -> is_spanning(c) ? 0.0 : abs(vortex_area(c)), contours(prob))
 cf = centroid(contours(prob)[idx])
-println("Vortex drift: Δx=$(round(cf[1]-c0[1]; digits=4)), Δy=$(round(cf[2]-c0[2]; digits=4))")
+println("Vortex drift: dx=$(round(cf[1]-c0[1]; digits=4)), dy=$(round(cf[2]-c0[2]; digits=4))")
 println("(Cyclones drift north-westward on a beta plane)")
 ```
 
@@ -132,7 +166,14 @@ println("(Cyclones drift north-westward on a beta plane)")
 
 ## SQG Elliptical Vortex
 
-An elliptical surface buoyancy patch evolving under SQG dynamics. The fractional Laplacian Green's function ``G(r) = -1/(2\pi r)`` produces sharper fronts and stronger filamentation than the Euler kernel. The regularization parameter `delta` smooths the velocity singularity at the patch boundary.
+An elliptical surface buoyancy patch evolving under SQG dynamics. Compared with
+Euler, SQG usually produces sharper fronts and more aggressive filamentation.
+
+What to look for:
+
+- stronger small-scale structure than in the Euler examples
+- the role of the regularization parameter `delta`
+- circulation staying nearly constant
 
 SQG dynamics and their role in atmospheric front formation are described in [Held et al. (1995)](https://doi.org/10.1017/S0022112095000012) and [Constantin, Majda & Tabak (1994)](https://doi.org/10.1088/0951-7715/7/6/001). Filament cascades in contour SQG are studied by [Scott & Dritschel (2014)](https://doi.org/10.1103/PhysRevLett.112.144505).
 
@@ -152,11 +193,11 @@ delta = 0.01          # regularization length ≈ segment spacing
 c = elliptical_patch(a, b_ax, N, pv)
 prob = Problem(; contours=[c], dt=0.002, kernel=:sqg, delta_sqg=delta)
 
-Γ0 = circulation(prob)
+circulation0 = circulation(prob)
 evolve!(prob; nsteps=500)
 
 println("Final: $(length(contours(prob))) contour(s), $(total_nodes(prob)) nodes")
-println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / abs(Γ0))")
+println("Relative circulation change: $(abs(circulation(prob) - circulation0) / abs(circulation0))")
 ```
 
 **References:**
@@ -168,7 +209,15 @@ println("Circulation conserved: |ΔΓ/Γ₀| = $(abs(circulation(prob) - Γ0) / 
 
 ## Two-Layer QG
 
-A vortex patch in the upper layer of a two-layer quasi-geostrophic system with baroclinic coupling. The coupling matrix connects the PV in each layer to the streamfunction, and the solver uses eigenmode decomposition for efficient computation.
+A vortex patch in the upper layer of a two-layer quasi-geostrophic system with
+baroclinic coupling. This is the simplest example that shows the multi-layer
+API.
+
+What to look for:
+
+- how the coupling matrix is defined
+- how a multi-layer problem is constructed
+- energy and circulation staying nearly constant over the run
 
 Multi-layer contour dynamics and the modal decomposition are described in [Dritschel (1989)](https://doi.org/10.1016/0167-7977(89)90004-X). Two-layer vortex dynamics, including upper-layer V-states and merger, are studied by [Polvani, Zabusky & Flierl (1989)](https://doi.org/10.1017/S0022112089002016).
 
@@ -201,12 +250,12 @@ prob = Problem(;
     layers    = 2,
 )
 
-E0 = energy(prob)
-Γ0 = circulation(prob)
+energy0 = energy(prob)
+circulation0 = circulation(prob)
 evolve!(prob; nsteps=200)
 
-println("Energy: $(energy(prob))  (change: $(abs(energy(prob)-E0)/abs(E0)))")
-println("Circulation: $(circulation(prob))  (change: $(abs(circulation(prob)-Γ0)/abs(Γ0)))")
+println("Energy: $(energy(prob))  (change: $(abs(energy(prob)-energy0)/abs(energy0)))")
+println("Circulation: $(circulation(prob))  (change: $(abs(circulation(prob)-circulation0)/abs(circulation0)))")
 ```
 
 **References:**
