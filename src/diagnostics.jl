@@ -145,6 +145,12 @@ function circulation(prob::ContourProblem{K, D, T}) where {K, D, T}
     return s
 end
 
+vortex_area(prob::ContourProblem) = vortex_area.(prob.contours)
+
+function vortex_area(prob::MultiLayerContourProblem{N}) where {N}
+    ntuple(i -> vortex_area.(prob.layers[i]), Val(N))
+end
+
 """
     enstrophy(prob)
 

@@ -64,31 +64,72 @@ struct _WSEntry{T, DA<:AbstractVector{T}}
     ws::_GPUWorkspace{T, DA}
     lock::ReentrantLock
 end
-const _gpu_ws_cache = Dict{Tuple{DataType, Int, DataType}, _WSEntry}()
+const _gpu_ws_cache = Dict{Tuple{DataType, DataType}, Any}()
+const _gpu_ws_key_order = Dict{Tuple{DataType, DataType}, Any}()
 const _gpu_ws_cache_lock = ReentrantLock()
+const _GPU_WS_CACHE_MAX = 8
+
+function _gpu_ws_dict(::Type{T}, ::Type{Dev}) where {T, Dev<:AbstractDevice}
+    key = (T, Dev)
+    cache = get!(_gpu_ws_cache, key) do
+        Dict{Int, _WSEntry{T}}()
+    end
+    return cache::Dict{Int, _WSEntry{T}}
+end
+
+function _gpu_ws_order(::Type{T}, ::Type{Dev}) where {T, Dev<:AbstractDevice}
+    key = (T, Dev)
+    order = get!(_gpu_ws_key_order, key) do
+        Int[]
+    end
+    return order::Vector{Int}
+end
 
 function _get_gpu_workspace!(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
-    key = (T, N, typeof(dev))
-    entry = lock(_gpu_ws_cache_lock) do
-        get!(_gpu_ws_cache, key) do
-            _WSEntry(_create_gpu_workspace(dev, T, N), ReentrantLock())
-        end
+    Dev = typeof(dev)
+    caches = _gpu_ws_dict(T, Dev)
+    order = _gpu_ws_order(T, Dev)
+
+    cached = lock(_gpu_ws_cache_lock) do
+        get(caches, N, nothing)
     end
-    return entry
+    cached !== nothing && return cached::_WSEntry{T}
+
+    new_entry = _WSEntry(_create_gpu_workspace(dev, T, N), ReentrantLock())
+
+    lock(_gpu_ws_cache_lock) do
+        existing = get(caches, N, nothing)
+        if existing !== nothing
+            return existing::_WSEntry{T}
+        end
+        while length(caches) >= _GPU_WS_CACHE_MAX && !isempty(order)
+            old_n = popfirst!(order)
+            delete!(caches, old_n)
+        end
+        caches[N] = new_entry
+        push!(order, N)
+        return new_entry
+    end
 end
 
 """Build the cache key for a ContourProblem's workspace."""
-_gpu_ws_key(prob::ContourProblem{K,D,T,Dev}, N::Int) where {K,D,T,Dev} = (T, N, Dev)
+_gpu_ws_key(prob::ContourProblem{K,D,T,Dev}, N::Int) where {K,D,T,Dev} = (T, Dev, N)
 
 """
-    _evict_gpu_workspace!(key::Tuple{DataType, Int, DataType})
+    _evict_gpu_workspace!(key::Tuple{DataType, DataType, Int})
 
-Remove a specific cached workspace entry by its exact key `(T, N, DevType)`.
+Remove a specific cached workspace entry by its exact key `(T, DevType, N)`.
 Called after surgery changes the node count so stale entries don't leak memory.
 """
-function _evict_gpu_workspace!(key::Tuple{DataType, Int, DataType})
+function _evict_gpu_workspace!(key::Tuple{DataType, DataType, Int})
+    T, Dev, N = key
     lock(_gpu_ws_cache_lock) do
-        delete!(_gpu_ws_cache, key)
+        caches = get(_gpu_ws_cache, (T, Dev), nothing)
+        order = get(_gpu_ws_key_order, (T, Dev), nothing)
+        caches === nothing || delete!(caches, N)
+        if order !== nothing
+            filter!(!=(N), order)
+        end
     end
     return nothing
 end
