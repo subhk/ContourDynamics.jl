@@ -312,7 +312,7 @@ function _local_eval!(
     contours::AbstractVector{PVContour{T}},
     kernel::AbstractKernel,
     domain::AbstractDomain,
-    flat_indices::Vector{Int};
+    plan::TreeEvalPlan;
     p::Int = _FMM_PROXY_ORDER,
 ) where {T}
     boxes = tree.boxes
@@ -344,7 +344,7 @@ function _local_eval!(
             end
 
             # Add to velocity at the correct flat index
-            flat_idx = flat_indices[si]
+            flat_idx = plan.flat_indices[si]
             vel[flat_idx] = vel[flat_idx] + SVector{2,T}(vx, vy)
         end
     end

@@ -17,6 +17,13 @@ relaxing theta, significantly improving performance for large problems.
 """
 const _TREECODE_THETA = 0.15
 
+struct TreeEvalPlan
+    flat_indices::Vector{Int}
+    direct_lists::Vector{Vector{Int}}
+    approx_lists::Vector{Vector{Int}}
+    node_to_leaf::Dict{Tuple{Int,Int}, Int}
+end
+
 @inline function _treecode_accepts(target_box::FMMBox{T}, source_box::FMMBox{T},
                                    theta::T = T(_TREECODE_THETA)) where {T}
     dx = source_box.center[1] - target_box.center[1]
@@ -24,6 +31,75 @@ const _TREECODE_THETA = 0.15
     dist = sqrt(dx * dx + dy * dy)
     dist <= eps(T) && return false
     return (target_box.half_width + source_box.half_width) / dist <= theta
+end
+
+"""
+    _build_treecode_worklists(tree) -> (direct_lists, approx_lists)
+
+Precompute the source-box worklists for each target leaf used by the production
+treecode. `direct_lists[i]` contains source boxes that must be evaluated by
+direct segment summation for target leaf `tree.leaf_indices[i]`; `approx_lists[i]`
+contains accepted source boxes handled by the linearized far-field model.
+
+This moves the adaptive DFS traversal out of the hot velocity loop and turns the
+runtime treecode path into regular iteration over preclassified source-box lists.
+"""
+function _build_treecode_worklists(tree::FMMTree{T}) where {T}
+    nleaves = length(tree.leaf_indices)
+    direct_lists = [Int[] for _ in 1:nleaves]
+    approx_lists = [Int[] for _ in 1:nleaves]
+
+    for li_idx in 1:nleaves
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        target_box = tree.boxes[target_leaf_idx]
+        near = tree.near_lists[target_leaf_idx]
+        direct = direct_lists[li_idx]
+        approx = approx_lists[li_idx]
+
+        stack = Int[1]
+        while !isempty(stack)
+            source_box_idx = pop!(stack)
+            source_box = tree.boxes[source_box_idx]
+            is_near = source_box_idx in near
+            accepted = !is_near && _treecode_accepts(target_box, source_box)
+
+            if source_box.is_leaf || is_near || accepted
+                if is_near || !accepted
+                    push!(direct, source_box_idx)
+                else
+                    push!(approx, source_box_idx)
+                end
+            else
+                for child_idx in source_box.children
+                    child_idx == 0 || push!(stack, child_idx)
+                end
+            end
+        end
+    end
+
+    return direct_lists, approx_lists
+end
+
+function _build_flat_indices(tree::FMMTree, contours)
+    offsets = Vector{Int}(undef, length(contours) + 1)
+    offsets[1] = 0
+    for ci in eachindex(contours)
+        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+    end
+
+    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
+    for seg_idx in eachindex(tree.sorted_segments)
+        ci, ni = tree.sorted_segments[seg_idx]
+        flat_indices[seg_idx] = offsets[ci] + ni
+    end
+    return flat_indices
+end
+
+function _build_tree_eval_plan(tree::FMMTree, contours)
+    direct_lists, approx_lists = _build_treecode_worklists(tree)
+    flat_indices = _build_flat_indices(tree, contours)
+    node_to_leaf = _build_node_to_leaf(tree)
+    return TreeEvalPlan(flat_indices, direct_lists, approx_lists, node_to_leaf)
 end
 
 function _box_direct_velocity(tree::FMMTree{T},
@@ -44,29 +120,39 @@ function _box_direct_velocity(tree::FMMTree{T},
     return v
 end
 
-function _treecode_box_to_leaf!(vel::Vector{SVector{2,T}},
-                                tree::FMMTree{T},
-                                target_leaf_idx::Int,
-                                source_box_idx::Int,
-                                contours::AbstractVector{PVContour{T}},
-                                flat_indices::Vector{Int},
-                                kernel::AbstractKernel,
-                                domain::AbstractDomain,
-                                ewald_cache) where {T}
+function _treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
+                                   tree::FMMTree{T},
+                                   target_leaf_idx::Int,
+                                   source_box_idx::Int,
+                                   contours::AbstractVector{PVContour{T}},
+                                   plan::TreeEvalPlan,
+                                   kernel::AbstractKernel,
+                                   domain::AbstractDomain,
+                                   ewald_cache) where {T}
+    target_box = tree.boxes[target_leaf_idx]
+    source_box = tree.boxes[source_box_idx]
+    for target_seg_idx in target_box.segment_range
+        flat_idx = plan.flat_indices[target_seg_idx]
+        ci_t, ni_t = tree.sorted_segments[target_seg_idx]
+        x = contours[ci_t].nodes[ni_t]
+        vel[flat_idx] = vel[flat_idx] + _box_direct_velocity(
+            tree, contours, source_box, kernel, domain, x, ewald_cache)
+    end
+    return nothing
+end
+
+function _treecode_linearized_to_leaf!(vel::Vector{SVector{2,T}},
+                                       tree::FMMTree{T},
+                                       target_leaf_idx::Int,
+                                       source_box_idx::Int,
+                                       contours::AbstractVector{PVContour{T}},
+                                       plan::TreeEvalPlan,
+                                       kernel::AbstractKernel,
+                                       domain::AbstractDomain,
+                                       ewald_cache) where {T}
     target_box = tree.boxes[target_leaf_idx]
     source_box = tree.boxes[source_box_idx]
     center = target_box.center
-
-    if source_box_idx in tree.near_lists[target_leaf_idx] || !_treecode_accepts(target_box, source_box)
-        for target_seg_idx in target_box.segment_range
-            flat_idx = flat_indices[target_seg_idx]
-            ci_t, ni_t = tree.sorted_segments[target_seg_idx]
-            x = contours[ci_t].nodes[ni_t]
-            vel[flat_idx] = vel[flat_idx] + _box_direct_velocity(
-                tree, contours, source_box, kernel, domain, x, ewald_cache)
-        end
-        return nothing
-    end
 
     h = max(target_box.half_width / 2, sqrt(eps(T)))
     ex = SVector{2,T}(h, zero(T))
@@ -84,7 +170,7 @@ function _treecode_box_to_leaf!(vel::Vector{SVector{2,T}},
     j22 = (vyp[2] - vym[2]) / (2h)
 
     for target_seg_idx in target_box.segment_range
-        flat_idx = flat_indices[target_seg_idx]
+        flat_idx = plan.flat_indices[target_seg_idx]
         ci_t, ni_t = tree.sorted_segments[target_seg_idx]
         x = contours[ci_t].nodes[ni_t]
         dx = x - center
@@ -105,56 +191,33 @@ function _treecode_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wh
     isempty(contours) && return vel
 
     tree = build_fmm_tree(contours)
+    plan = _build_tree_eval_plan(tree, contours)
     kernel = prob.kernel
     domain = prob.domain
     ewald = _prefetch_ewald(domain, kernel)
 
-    offsets = Vector{Int}(undef, length(contours) + 1)
-    offsets[1] = 0
-    for ci in eachindex(contours)
-        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
-    end
-
-    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
-    for seg_idx in eachindex(tree.sorted_segments)
-        ci, ni = tree.sorted_segments[seg_idx]
-        flat_indices[seg_idx] = offsets[ci] + ni
-    end
-
     if _should_thread_accelerator(length(tree.leaf_indices))
         Threads.@threads for li_idx in eachindex(tree.leaf_indices)
             target_leaf_idx = tree.leaf_indices[li_idx]
-            stack = Int[1]
-            while !isempty(stack)
-                source_box_idx = pop!(stack)
-                source_box = tree.boxes[source_box_idx]
-                if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
-                   _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
-                    _treecode_box_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                           contours, flat_indices, kernel, domain, ewald)
-                else
-                    for child_idx in source_box.children
-                        child_idx == 0 || push!(stack, child_idx)
-                    end
-                end
+            for source_box_idx in plan.direct_lists[li_idx]
+                _treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                          contours, plan, kernel, domain, ewald)
+            end
+            for source_box_idx in plan.approx_lists[li_idx]
+                _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                              contours, plan, kernel, domain, ewald)
             end
         end
     else
         for li_idx in eachindex(tree.leaf_indices)
             target_leaf_idx = tree.leaf_indices[li_idx]
-            stack = Int[1]
-            while !isempty(stack)
-                source_box_idx = pop!(stack)
-                source_box = tree.boxes[source_box_idx]
-                if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
-                   _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
-                    _treecode_box_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                           contours, flat_indices, kernel, domain, ewald)
-                else
-                    for child_idx in source_box.children
-                        child_idx == 0 || push!(stack, child_idx)
-                    end
-                end
+            for source_box_idx in plan.direct_lists[li_idx]
+                _treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                          contours, plan, kernel, domain, ewald)
+            end
+            for source_box_idx in plan.approx_lists[li_idx]
+                _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                              contours, plan, kernel, domain, ewald)
             end
         end
     end
@@ -198,18 +261,7 @@ function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
 
     # Build tree once — geometry is identical for all modes
     tree = build_fmm_tree(all_contours)
-
-    # Flat index mapping (shared across modes)
-    offsets = Vector{Int}(undef, length(all_contours) + 1)
-    offsets[1] = 0
-    for ci in eachindex(all_contours)
-        offsets[ci + 1] = offsets[ci] + nnodes(all_contours[ci])
-    end
-    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
-    for seg_idx in eachindex(tree.sorted_segments)
-        ci, ni = tree.sorted_segments[seg_idx]
-        flat_indices[seg_idx] = offsets[ci] + ni
-    end
+    plan = _build_tree_eval_plan(tree, all_contours)
 
     # Per-layer flat offsets for scattering results back
     layer_flat_offset = Vector{Int}(undef, NL)
@@ -241,37 +293,25 @@ function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
         if _should_thread_accelerator(length(tree.leaf_indices))
             Threads.@threads for li_idx in eachindex(tree.leaf_indices)
                 target_leaf_idx = tree.leaf_indices[li_idx]
-                stack = Int[1]
-                while !isempty(stack)
-                    source_box_idx = pop!(stack)
-                    source_box = tree.boxes[source_box_idx]
-                    if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
-                       _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
-                        _treecode_box_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                               weighted, flat_indices, mode_kernel, domain, ewald)
-                    else
-                        for child_idx in source_box.children
-                            child_idx == 0 || push!(stack, child_idx)
-                        end
-                    end
+                for source_box_idx in plan.direct_lists[li_idx]
+                    _treecode_direct_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                              weighted, plan, mode_kernel, domain, ewald)
+                end
+                for source_box_idx in plan.approx_lists[li_idx]
+                    _treecode_linearized_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                                  weighted, plan, mode_kernel, domain, ewald)
                 end
             end
         else
             for li_idx in eachindex(tree.leaf_indices)
                 target_leaf_idx = tree.leaf_indices[li_idx]
-                stack = Int[1]
-                while !isempty(stack)
-                    source_box_idx = pop!(stack)
-                    source_box = tree.boxes[source_box_idx]
-                    if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
-                       _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
-                        _treecode_box_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                               weighted, flat_indices, mode_kernel, domain, ewald)
-                    else
-                        for child_idx in source_box.children
-                            child_idx == 0 || push!(stack, child_idx)
-                        end
-                    end
+                for source_box_idx in plan.direct_lists[li_idx]
+                    _treecode_direct_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                              weighted, plan, mode_kernel, domain, ewald)
+                end
+                for source_box_idx in plan.approx_lists[li_idx]
+                    _treecode_linearized_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                                  weighted, plan, mode_kernel, domain, ewald)
                 end
             end
         end
@@ -301,7 +341,7 @@ segments in the near-list boxes via `segment_velocity`.
 function _near_field!(vel::Vector{SVector{2,T}}, tree::FMMTree{T},
                       contours::AbstractVector{PVContour{T}}, kernel::AbstractKernel,
                       domain::AbstractDomain, ewald_cache,
-                      flat_indices::Vector{Int}) where {T}
+                      plan::TreeEvalPlan) where {T}
     if _should_thread_accelerator(length(tree.leaf_indices))
         Threads.@threads for li_idx in 1:length(tree.leaf_indices)
             leaf = tree.leaf_indices[li_idx]
@@ -309,7 +349,7 @@ function _near_field!(vel::Vector{SVector{2,T}}, tree::FMMTree{T},
             for seg_idx in box.segment_range
                 ci_t, ni_t = tree.sorted_segments[seg_idx]
                 xi = contours[ci_t].nodes[ni_t]
-                flat_idx = flat_indices[seg_idx]
+                flat_idx = plan.flat_indices[seg_idx]
                 v = zero(SVector{2,T})
                 for near_bi in tree.near_lists[leaf]
                     near_box = tree.boxes[near_bi]
@@ -331,7 +371,7 @@ function _near_field!(vel::Vector{SVector{2,T}}, tree::FMMTree{T},
             for seg_idx in box.segment_range
                 ci_t, ni_t = tree.sorted_segments[seg_idx]
                 xi = contours[ci_t].nodes[ni_t]
-                flat_idx = flat_indices[seg_idx]
+                flat_idx = plan.flat_indices[seg_idx]
                 v = zero(SVector{2,T})
                 for near_bi in tree.near_lists[leaf]
                     near_box = tree.boxes[near_bi]
@@ -377,6 +417,7 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     # to the production treecode is safer than silently dropping coarse-leaf
     # colleague contributions.
     _has_unhandled_coarse_leaf_interactions(tree) && return _treecode_velocity!(vel, prob)
+    plan = _build_tree_eval_plan(tree, contours)
 
     kernel = prob.kernel
     domain = prob.domain
@@ -393,25 +434,13 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     ops = precompute_level_operators(tree, kernel, domain; p, p_check)
     m2l_op = precompute_m2l_operators(tree, kernel, domain, ops; p, p_check)
 
-    # Precompute flat indices for O(1) velocity writes
-    offsets = Vector{Int}(undef, length(contours) + 1)
-    offsets[1] = 0
-    for ci in eachindex(contours)
-        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
-    end
-    flat_indices = Vector{Int}(undef, length(tree.sorted_segments))
-    for seg_idx in eachindex(tree.sorted_segments)
-        ci, ni = tree.sorted_segments[seg_idx]
-        flat_indices[seg_idx] = offsets[ci] + ni
-    end
-
     # Full FMM pipeline
     _s2m!(proxy_data, tree, contours, kernel, domain, ops, ewald; p, p_check)
     _m2m_upward!(proxy_data, tree, ops; p)
     _m2l!(proxy_data, tree, m2l_op; p)
     _l2l_downward!(proxy_data, tree, ops; p)
-    _local_eval!(vel, tree, proxy_data, contours, kernel, domain, flat_indices; p)
-    _near_field!(vel, tree, contours, kernel, domain, ewald, flat_indices)
+    _local_eval!(vel, tree, proxy_data, contours, kernel, domain, plan; p)
+    _near_field!(vel, tree, contours, kernel, domain, ewald, plan)
 
     return vel
 end
@@ -665,7 +694,7 @@ velocity arrays with modal projection weights.
 """
 function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
                             prob, P, mode, kernel, domain, NL,
-                            node_to_leaf::Dict{Tuple{Int,Int}, Int};
+                            plan::TreeEvalPlan;
                             p=_FMM_PROXY_ORDER)
     T = eltype(tree.boxes[1].center)
 
@@ -691,7 +720,7 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
                 v_near = zero(SVector{2,T})
 
                 # Find the leaf containing this target point via precomputed mapping
-                li = get(node_to_leaf, (global_ci, ti), 0)
+                li = get(plan.node_to_leaf, (global_ci, ti), 0)
                 if li > 0
                     box = tree.boxes[li]
 
