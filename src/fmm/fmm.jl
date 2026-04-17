@@ -121,19 +121,39 @@ function _treecode_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wh
         flat_indices[seg_idx] = offsets[ci] + ni
     end
 
-    Threads.@threads for li_idx in eachindex(tree.leaf_indices)
-        target_leaf_idx = tree.leaf_indices[li_idx]
-        stack = Int[1]
-        while !isempty(stack)
-            source_box_idx = pop!(stack)
-            source_box = tree.boxes[source_box_idx]
-            if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
-               _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
-                _treecode_box_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                       contours, flat_indices, kernel, domain, ewald)
-            else
-                for child_idx in source_box.children
-                    child_idx == 0 || push!(stack, child_idx)
+    if _should_thread_accelerator(length(tree.leaf_indices))
+        Threads.@threads for li_idx in eachindex(tree.leaf_indices)
+            target_leaf_idx = tree.leaf_indices[li_idx]
+            stack = Int[1]
+            while !isempty(stack)
+                source_box_idx = pop!(stack)
+                source_box = tree.boxes[source_box_idx]
+                if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
+                   _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
+                    _treecode_box_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                           contours, flat_indices, kernel, domain, ewald)
+                else
+                    for child_idx in source_box.children
+                        child_idx == 0 || push!(stack, child_idx)
+                    end
+                end
+            end
+        end
+    else
+        for li_idx in eachindex(tree.leaf_indices)
+            target_leaf_idx = tree.leaf_indices[li_idx]
+            stack = Int[1]
+            while !isempty(stack)
+                source_box_idx = pop!(stack)
+                source_box = tree.boxes[source_box_idx]
+                if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
+                   _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
+                    _treecode_box_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                           contours, flat_indices, kernel, domain, ewald)
+                else
+                    for child_idx in source_box.children
+                        child_idx == 0 || push!(stack, child_idx)
+                    end
                 end
             end
         end
@@ -218,19 +238,39 @@ function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
         # Run treecode on weighted contours using the shared tree
         fill!(mode_vel, zero(SVector{2,T}))
 
-        Threads.@threads for li_idx in eachindex(tree.leaf_indices)
-            target_leaf_idx = tree.leaf_indices[li_idx]
-            stack = Int[1]
-            while !isempty(stack)
-                source_box_idx = pop!(stack)
-                source_box = tree.boxes[source_box_idx]
-                if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
-                   _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
-                    _treecode_box_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
-                                           weighted, flat_indices, mode_kernel, domain, ewald)
-                else
-                    for child_idx in source_box.children
-                        child_idx == 0 || push!(stack, child_idx)
+        if _should_thread_accelerator(length(tree.leaf_indices))
+            Threads.@threads for li_idx in eachindex(tree.leaf_indices)
+                target_leaf_idx = tree.leaf_indices[li_idx]
+                stack = Int[1]
+                while !isempty(stack)
+                    source_box_idx = pop!(stack)
+                    source_box = tree.boxes[source_box_idx]
+                    if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
+                       _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
+                        _treecode_box_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                               weighted, flat_indices, mode_kernel, domain, ewald)
+                    else
+                        for child_idx in source_box.children
+                            child_idx == 0 || push!(stack, child_idx)
+                        end
+                    end
+                end
+            end
+        else
+            for li_idx in eachindex(tree.leaf_indices)
+                target_leaf_idx = tree.leaf_indices[li_idx]
+                stack = Int[1]
+                while !isempty(stack)
+                    source_box_idx = pop!(stack)
+                    source_box = tree.boxes[source_box_idx]
+                    if source_box.is_leaf || source_box_idx in tree.near_lists[target_leaf_idx] ||
+                       _treecode_accepts(tree.boxes[target_leaf_idx], source_box)
+                        _treecode_box_to_leaf!(mode_vel, tree, target_leaf_idx, source_box_idx,
+                                               weighted, flat_indices, mode_kernel, domain, ewald)
+                    else
+                        for child_idx in source_box.children
+                            child_idx == 0 || push!(stack, child_idx)
+                        end
                     end
                 end
             end
@@ -262,25 +302,49 @@ function _near_field!(vel::Vector{SVector{2,T}}, tree::FMMTree{T},
                       contours::AbstractVector{PVContour{T}}, kernel::AbstractKernel,
                       domain::AbstractDomain, ewald_cache,
                       flat_indices::Vector{Int}) where {T}
-    Threads.@threads for li_idx in 1:length(tree.leaf_indices)
-        leaf = tree.leaf_indices[li_idx]
-        box = tree.boxes[leaf]
-        for seg_idx in box.segment_range
-            ci_t, ni_t = tree.sorted_segments[seg_idx]
-            xi = contours[ci_t].nodes[ni_t]
-            flat_idx = flat_indices[seg_idx]
-            v = zero(SVector{2,T})
-            for near_bi in tree.near_lists[leaf]
-                near_box = tree.boxes[near_bi]
-                for near_seg_idx in near_box.segment_range
-                    ci_s, ni_s = tree.sorted_segments[near_seg_idx]
-                    c = contours[ci_s]
-                    a = c.nodes[ni_s]
-                    b = next_node(c, ni_s)
-                    v = v + c.pv * segment_velocity(kernel, domain, xi, a, b, ewald_cache)
+    if _should_thread_accelerator(length(tree.leaf_indices))
+        Threads.@threads for li_idx in 1:length(tree.leaf_indices)
+            leaf = tree.leaf_indices[li_idx]
+            box = tree.boxes[leaf]
+            for seg_idx in box.segment_range
+                ci_t, ni_t = tree.sorted_segments[seg_idx]
+                xi = contours[ci_t].nodes[ni_t]
+                flat_idx = flat_indices[seg_idx]
+                v = zero(SVector{2,T})
+                for near_bi in tree.near_lists[leaf]
+                    near_box = tree.boxes[near_bi]
+                    for near_seg_idx in near_box.segment_range
+                        ci_s, ni_s = tree.sorted_segments[near_seg_idx]
+                        c = contours[ci_s]
+                        a = c.nodes[ni_s]
+                        b = next_node(c, ni_s)
+                        v = v + c.pv * segment_velocity(kernel, domain, xi, a, b, ewald_cache)
+                    end
                 end
+                vel[flat_idx] += v
             end
-            vel[flat_idx] += v
+        end
+    else
+        for li_idx in 1:length(tree.leaf_indices)
+            leaf = tree.leaf_indices[li_idx]
+            box = tree.boxes[leaf]
+            for seg_idx in box.segment_range
+                ci_t, ni_t = tree.sorted_segments[seg_idx]
+                xi = contours[ci_t].nodes[ni_t]
+                flat_idx = flat_indices[seg_idx]
+                v = zero(SVector{2,T})
+                for near_bi in tree.near_lists[leaf]
+                    near_box = tree.boxes[near_bi]
+                    for near_seg_idx in near_box.segment_range
+                        ci_s, ni_s = tree.sorted_segments[near_seg_idx]
+                        c = contours[ci_s]
+                        a = c.nodes[ni_s]
+                        b = next_node(c, ni_s)
+                        v = v + c.pv * segment_velocity(kernel, domain, xi, a, b, ewald_cache)
+                    end
+                end
+                vel[flat_idx] += v
+            end
         end
     end
 end
@@ -308,6 +372,12 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     isempty(contours) && return vel
 
     tree = build_fmm_tree(contours)
+    # The current proxy-surface translation operators only handle same-level
+    # M2L interactions. On an unbalanced adaptive tree, conservative fallback
+    # to the production treecode is safer than silently dropping coarse-leaf
+    # colleague contributions.
+    _has_unhandled_coarse_leaf_interactions(tree) && return _treecode_velocity!(vel, prob)
+
     kernel = prob.kernel
     domain = prob.domain
     ewald = _prefetch_ewald(domain, kernel)
@@ -385,25 +455,48 @@ function _periodic_correction!(vel::Vector{SVector{2,T}},
         offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
     end
 
-    @inbounds Threads.@threads for i in 1:N
-        ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
-        ci = clamp(ci, 1, n_contours)
-        local_i = i - offsets[ci]
-        xi = contours[ci].nodes[local_i]
+    if _should_thread_velocity(N)
+        @inbounds Threads.@threads for i in 1:N
+            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
+            ci = clamp(ci, 1, n_contours)
+            local_i = i - offsets[ci]
+            xi = contours[ci].nodes[local_i]
 
-        v_corr = zero(SVector{2,T})
-        for c in contours
-            nc = nnodes(c)
-            nc < 2 && continue
-            for j in 1:nc
-                a = c.nodes[j]
-                b = next_node(c, j)
-                v_per = c.pv * segment_velocity(kernel, domain, xi, a, b, ewald_cache)
-                v_unb = c.pv * segment_velocity(kernel, UnboundedDomain(), xi, a, b)
-                v_corr = v_corr + (v_per - v_unb)
+            v_corr = zero(SVector{2,T})
+            for c in contours
+                nc = nnodes(c)
+                nc < 2 && continue
+                for j in 1:nc
+                    a = c.nodes[j]
+                    b = next_node(c, j)
+                    v_per = c.pv * segment_velocity(kernel, domain, xi, a, b, ewald_cache)
+                    v_unb = c.pv * segment_velocity(kernel, UnboundedDomain(), xi, a, b)
+                    v_corr = v_corr + (v_per - v_unb)
+                end
             end
+            vel[i] += v_corr
         end
-        vel[i] += v_corr
+    else
+        @inbounds for i in 1:N
+            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
+            ci = clamp(ci, 1, n_contours)
+            local_i = i - offsets[ci]
+            xi = contours[ci].nodes[local_i]
+
+            v_corr = zero(SVector{2,T})
+            for c in contours
+                nc = nnodes(c)
+                nc < 2 && continue
+                for j in 1:nc
+                    a = c.nodes[j]
+                    b = next_node(c, j)
+                    v_per = c.pv * segment_velocity(kernel, domain, xi, a, b, ewald_cache)
+                    v_unb = c.pv * segment_velocity(kernel, UnboundedDomain(), xi, a, b)
+                    v_corr = v_corr + (v_per - v_unb)
+                end
+            end
+            vel[i] += v_corr
+        end
     end
 end
 
@@ -437,66 +530,125 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
     BLAS.set_num_threads(1)
     try
 
-    Threads.@threads for li_idx in 1:length(leaves)
-        leaf = leaves[li_idx]
-        box = tree.boxes[leaf]
+    if _should_thread_accelerator(length(leaves))
+        Threads.@threads for li_idx in 1:length(leaves)
+            leaf = leaves[li_idx]
+            box = tree.boxes[leaf]
 
-        # Dual check surfaces (consistent with _s2m!)
-        check_pts_inner = _check_points(box.center, box.half_width, p_check)
-        check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
-        check_pts = vcat(check_pts_inner, check_pts_outer)
-        n_check = length(check_pts)
+            check_pts_inner = _check_points(box.center, box.half_width, p_check)
+            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+            check_pts = vcat(check_pts_inner, check_pts_outer)
+            n_check = length(check_pts)
 
-        vel_check_x = Vector{T}(undef, n_check)
-        vel_check_y = Vector{T}(undef, n_check)
+            vel_check_x = Vector{T}(undef, n_check)
+            vel_check_y = Vector{T}(undef, n_check)
 
-        @inbounds for ic in 1:n_check
-            xc = check_pts[ic]
-            vx = zero(T)
-            vy = zero(T)
-            for seg_idx in box.segment_range
-                ci, ni = tree.sorted_segments[seg_idx]
-                # Determine which layer this contour belongs to
-                layer = 1
-                for l in 1:NL
-                    if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
-                        layer = l
-                        break
+            @inbounds for ic in 1:n_check
+                xc = check_pts[ic]
+                vx = zero(T)
+                vy = zero(T)
+                for seg_idx in box.segment_range
+                    ci, ni = tree.sorted_segments[seg_idx]
+                    layer = 1
+                    for l in 1:NL
+                        if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
+                            layer = l
+                            break
+                        end
                     end
+                    source_weight = P_inv[mode, layer]
+                    abs(source_weight) < eps(T) && continue
+
+                    c = all_contours[ci]
+                    a = c.nodes[ni]
+                    b = next_node(c, ni)
+                    v = source_weight * c.pv * segment_velocity(kernel, domain, xc, a, b, nothing)
+                    vx += v[1]
+                    vy += v[2]
                 end
-                source_weight = P_inv[mode, layer]
-                abs(source_weight) < eps(T) && continue
-
-                c = all_contours[ci]
-                a = c.nodes[ni]
-                b = next_node(c, ni)
-                v = source_weight * c.pv * segment_velocity(kernel, domain, xc, a, b, nothing)
-                vx += v[1]
-                vy += v[2]
+                vel_check_x[ic] = vx
+                vel_check_y[ic] = vy
             end
-            vel_check_x[ic] = vx
-            vel_check_y[ic] = vy
+
+            proxy_pts = _proxy_points(box.center, box.half_width, p)
+            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+
+            if kernel isa EulerKernel
+                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+                rhs_x = vcat(vel_check_x, zero(T))
+                rhs_y = vcat(vel_check_y, zero(T))
+            else
+                K_aug = K_cp
+                rhs_x = vel_check_x
+                rhs_y = vel_check_y
+            end
+            str_x = K_aug \ rhs_x
+            str_y = K_aug \ rhs_y
+
+            equiv = proxy_data[leaf].equiv_strengths
+            for k in 1:p
+                equiv[k] = SVector{2,T}(str_x[k], str_y[k])
+            end
         end
+    else
+        for li_idx in 1:length(leaves)
+            leaf = leaves[li_idx]
+            box = tree.boxes[leaf]
 
-        # Fit equivalent-source strengths (same approach as _s2m!)
-        proxy_pts = _proxy_points(box.center, box.half_width, p)
-        K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+            check_pts_inner = _check_points(box.center, box.half_width, p_check)
+            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+            check_pts = vcat(check_pts_inner, check_pts_outer)
+            n_check = length(check_pts)
 
-        if kernel isa EulerKernel
-            K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-            rhs_x = vcat(vel_check_x, zero(T))
-            rhs_y = vcat(vel_check_y, zero(T))
-        else
-            K_aug = K_cp
-            rhs_x = vel_check_x
-            rhs_y = vel_check_y
-        end
-        str_x = K_aug \ rhs_x
-        str_y = K_aug \ rhs_y
+            vel_check_x = Vector{T}(undef, n_check)
+            vel_check_y = Vector{T}(undef, n_check)
 
-        equiv = proxy_data[leaf].equiv_strengths
-        for k in 1:p
-            equiv[k] = SVector{2,T}(str_x[k], str_y[k])
+            @inbounds for ic in 1:n_check
+                xc = check_pts[ic]
+                vx = zero(T)
+                vy = zero(T)
+                for seg_idx in box.segment_range
+                    ci, ni = tree.sorted_segments[seg_idx]
+                    layer = 1
+                    for l in 1:NL
+                        if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
+                            layer = l
+                            break
+                        end
+                    end
+                    source_weight = P_inv[mode, layer]
+                    abs(source_weight) < eps(T) && continue
+
+                    c = all_contours[ci]
+                    a = c.nodes[ni]
+                    b = next_node(c, ni)
+                    v = source_weight * c.pv * segment_velocity(kernel, domain, xc, a, b, nothing)
+                    vx += v[1]
+                    vy += v[2]
+                end
+                vel_check_x[ic] = vx
+                vel_check_y[ic] = vy
+            end
+
+            proxy_pts = _proxy_points(box.center, box.half_width, p)
+            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+
+            if kernel isa EulerKernel
+                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+                rhs_x = vcat(vel_check_x, zero(T))
+                rhs_y = vcat(vel_check_y, zero(T))
+            else
+                K_aug = K_cp
+                rhs_x = vel_check_x
+                rhs_y = vel_check_y
+            end
+            str_x = K_aug \ rhs_x
+            str_y = K_aug \ rhs_y
+
+            equiv = proxy_data[leaf].equiv_strengths
+            for k in 1:p
+                equiv[k] = SVector{2,T}(str_x[k], str_y[k])
+            end
         end
     end
 

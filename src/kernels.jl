@@ -12,6 +12,18 @@
 #
 # Each segment contribution is integrated analytically.
 
+"""Minimum target count before CPU velocity loops use `Threads.@threads`."""
+const _VELOCITY_THREADING_THRESHOLD = 128
+
+"""Minimum leaf/check-point work size before FMM/treecode loops use threading."""
+const _ACCELERATOR_THREADING_THRESHOLD = 16
+
+@inline _should_thread_velocity(n::Integer) =
+    Threads.nthreads() > 1 && n >= _VELOCITY_THREADING_THRESHOLD
+
+@inline _should_thread_accelerator(n::Integer) =
+    Threads.nthreads() > 1 && n >= _ACCELERATOR_THREADING_THRESHOLD
+
 # 5-point Gauss-Legendre nodes and weights on [-1,1].
 # Precomputed for Float64 and Float32 to avoid repeated sqrt/division in
 # the innermost velocity loop. Generic fallback for BigFloat etc.
@@ -150,27 +162,49 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
         offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
     end
 
-    # Thread over target nodes — each node accumulates its velocity independently.
-    Threads.@threads for i in 1:N
-        # Binary search to map flat index i → (contour index, local index)
-        ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
-        ci = clamp(ci, 1, n_contours)
-        local_i = i - offsets[ci]
-        (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
-        xi = contours[ci].nodes[local_i]
+    # Thread over target nodes only once the workload is large enough to pay for it.
+    if _should_thread_velocity(N)
+        Threads.@threads for i in 1:N
+            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
+            ci = clamp(ci, 1, n_contours)
+            local_i = i - offsets[ci]
+            (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
+            xi = contours[ci].nodes[local_i]
 
-        v = zero(SVector{2,T})
-        for c in contours
-            local nc = nnodes(c)
-            nc < 2 && continue
-            pv = c.pv
-            @inbounds for j in 1:nc
-                a = c.nodes[j]
-                b = next_node(c, j)
-                v = v + pv * segment_velocity(kernel, domain, xi, a, b, ewald)
+            v = zero(SVector{2,T})
+            for c in contours
+                local nc = nnodes(c)
+                nc < 2 && continue
+                pv = c.pv
+                @inbounds for j in 1:nc
+                    a = c.nodes[j]
+                    b = next_node(c, j)
+                    v = v + pv * segment_velocity(kernel, domain, xi, a, b, ewald)
+                end
             end
+            vel[i] = v
         end
-        vel[i] = v
+    else
+        for i in 1:N
+            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
+            ci = clamp(ci, 1, n_contours)
+            local_i = i - offsets[ci]
+            (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
+            xi = contours[ci].nodes[local_i]
+
+            v = zero(SVector{2,T})
+            for c in contours
+                local nc = nnodes(c)
+                nc < 2 && continue
+                pv = c.pv
+                @inbounds for j in 1:nc
+                    a = c.nodes[j]
+                    b = next_node(c, j)
+                    v = v + pv * segment_velocity(kernel, domain, xi, a, b, ewald)
+                end
+            end
+            vel[i] = v
+        end
     end
 
     return vel
@@ -464,24 +498,46 @@ function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
             end
         end
 
-        @inbounds Threads.@threads for ti in 1:n_target
-            x = target_nodes[ti]
-            v_mode = zero(SVector{2,T})
-            for source_layer in 1:N
-                source_weight = P_inv[mode, source_layer]
-                abs(source_weight) < eps(T) && continue
-                for sc in prob.layers[source_layer]
-                    nsc = nnodes(sc)
-                    nsc < 2 && continue
-                    for sj in 1:nsc
-                        a = sc.nodes[sj]
-                        b = next_node(sc, sj)
-                        v_mode = v_mode + source_weight * sc.pv *
-                            segment_velocity(mode_kernel, domain, x, a, b, ewald)
+        if _should_thread_velocity(n_target)
+            @inbounds Threads.@threads for ti in 1:n_target
+                x = target_nodes[ti]
+                v_mode = zero(SVector{2,T})
+                for source_layer in 1:N
+                    source_weight = P_inv[mode, source_layer]
+                    abs(source_weight) < eps(T) && continue
+                    for sc in prob.layers[source_layer]
+                        nsc = nnodes(sc)
+                        nsc < 2 && continue
+                        for sj in 1:nsc
+                            a = sc.nodes[sj]
+                            b = next_node(sc, sj)
+                            v_mode = v_mode + source_weight * sc.pv *
+                                segment_velocity(mode_kernel, domain, x, a, b, ewald)
+                        end
                     end
                 end
+                mode_vel[ti] = v_mode
             end
-            mode_vel[ti] = v_mode
+        else
+            @inbounds for ti in 1:n_target
+                x = target_nodes[ti]
+                v_mode = zero(SVector{2,T})
+                for source_layer in 1:N
+                    source_weight = P_inv[mode, source_layer]
+                    abs(source_weight) < eps(T) && continue
+                    for sc in prob.layers[source_layer]
+                        nsc = nnodes(sc)
+                        nsc < 2 && continue
+                        for sj in 1:nsc
+                            a = sc.nodes[sj]
+                            b = next_node(sc, sj)
+                            v_mode = v_mode + source_weight * sc.pv *
+                                segment_velocity(mode_kernel, domain, x, a, b, ewald)
+                        end
+                    end
+                end
+                mode_vel[ti] = v_mode
+            end
         end
 
         for ti in 1:n_target

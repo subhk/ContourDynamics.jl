@@ -416,3 +416,39 @@ function _build_lists(boxes::Vector{FMMBox{T}}, max_level::Int) where {T}
 
     return interaction_lists, near_lists
 end
+
+"""
+    _has_unhandled_coarse_leaf_interactions(tree) -> Bool
+
+Return `true` when a leaf box has a well-separated colleague source that is a
+coarser leaf rather than a same-level child box.
+
+The current proxy-surface FMM translation operators only support same-level M2L
+translations. On an unbalanced adaptive tree, a parent-level neighbor can be a
+leaf itself; in that case there is no child box to put in the target leaf's
+interaction list, and the contribution would be dropped unless the caller
+falls back to a more conservative accelerator.
+"""
+function _has_unhandled_coarse_leaf_interactions(tree::FMMTree{T}) where {T}
+    boxes = tree.boxes
+    level_boxes = tree.level_boxes
+
+    for leaf_idx in tree.leaf_indices
+        leaf = boxes[leaf_idx]
+        p_idx = leaf.parent
+        p_idx == 0 && continue
+
+        parent = boxes[p_idx]
+        for candidate_idx in level_boxes[parent.level + 1]
+            _are_adjacent_or_self(parent, boxes[candidate_idx]) || continue
+            candidate_idx == p_idx && continue
+
+            candidate = boxes[candidate_idx]
+            if candidate.is_leaf && !_are_adjacent_or_self(leaf, candidate)
+                return true
+            end
+        end
+    end
+
+    return false
+end

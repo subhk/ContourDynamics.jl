@@ -269,68 +269,109 @@ function _s2m!(
     BLAS.set_num_threads(1)
     try
 
-    Threads.@threads for li_idx in 1:length(leaves)
-        leaf = leaves[li_idx]
-        box = tree.boxes[leaf]
-        level = box.level
+    if _should_thread_accelerator(length(leaves))
+        Threads.@threads for li_idx in 1:length(leaves)
+            leaf = leaves[li_idx]
+            box = tree.boxes[leaf]
+            level = box.level
 
-        # Check surfaces for this leaf. Using two radii constrains the exterior
-        # harmonic continuation much better than a single collocation circle.
-        check_pts_inner = _check_points(box.center, box.half_width, p_check)
-        check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
-        check_pts = vcat(check_pts_inner, check_pts_outer)
+            check_pts_inner = _check_points(box.center, box.half_width, p_check)
+            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+            check_pts = vcat(check_pts_inner, check_pts_outer)
 
-        # Evaluate velocity from all segments in this box at the check points
-        n_check = length(check_pts)
-        vel_check_x = Vector{T}(undef, n_check)
-        vel_check_y = Vector{T}(undef, n_check)
+            n_check = length(check_pts)
+            vel_check_x = Vector{T}(undef, n_check)
+            vel_check_y = Vector{T}(undef, n_check)
 
-        seg_range = box.segment_range
-        @inbounds for ic in 1:n_check
-            xc = check_pts[ic]
-            vx = zero(T)
-            vy = zero(T)
-            for si in seg_range
-                ci, nj = tree.sorted_segments[si]
-                c = contours[ci]
-                a = c.nodes[nj]
-                b = next_node(c, nj)
-                v = c.pv * segment_velocity(kernel, domain, xc, a, b, ewald_cache)
-                vx += v[1]
-                vy += v[2]
+            seg_range = box.segment_range
+            @inbounds for ic in 1:n_check
+                xc = check_pts[ic]
+                vx = zero(T)
+                vy = zero(T)
+                for si in seg_range
+                    ci, nj = tree.sorted_segments[si]
+                    c = contours[ci]
+                    a = c.nodes[nj]
+                    b = next_node(c, nj)
+                    v = c.pv * segment_velocity(kernel, domain, xc, a, b, ewald_cache)
+                    vx += v[1]
+                    vy += v[2]
+                end
+                vel_check_x[ic] = vx
+                vel_check_y[ic] = vy
             end
-            vel_check_x[ic] = vx
-            vel_check_y[ic] = vy
+
+            proxy_pts = _proxy_points(box.center, box.half_width, p)
+            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+
+            if kernel isa EulerKernel
+                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+                rhs_x = vcat(vel_check_x, zero(T))
+                rhs_y = vcat(vel_check_y, zero(T))
+            else
+                K_aug = K_cp
+                rhs_x = vel_check_x
+                rhs_y = vel_check_y
+            end
+            strengths_x = K_aug \ rhs_x
+            strengths_y = K_aug \ rhs_y
+
+            equiv = proxy_data[leaf].equiv_strengths
+            @inbounds for k in 1:p
+                equiv[k] = SVector{2,T}(strengths_x[k], strengths_y[k])
+            end
         end
+    else
+        for li_idx in 1:length(leaves)
+            leaf = leaves[li_idx]
+            box = tree.boxes[leaf]
+            level = box.level
 
-        # Fit the equivalent-source strengths directly for this leaf.
-        # The precomputed truncated pseudoinverse proved too fragile for the
-        # current proxy setup and significantly degraded even single-box S2M
-        # accuracy.
-        proxy_pts = _proxy_points(box.center, box.half_width, p)
-        K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+            check_pts_inner = _check_points(box.center, box.half_width, p_check)
+            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+            check_pts = vcat(check_pts_inner, check_pts_outer)
 
-        # For Euler kernel (log singularity), the equivalent source strengths
-        # must have zero net charge to avoid polluting the far field with an
-        # unphysical logarithmic monopole. For QG/SQG kernels the Green's function
-        # decays at infinity, so the constraint is unnecessary and would
-        # overconstrain the fit.
-        if kernel isa EulerKernel
-            K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
-            rhs_x = vcat(vel_check_x, zero(T))
-            rhs_y = vcat(vel_check_y, zero(T))
-        else
-            K_aug = K_cp
-            rhs_x = vel_check_x
-            rhs_y = vel_check_y
-        end
-        strengths_x = K_aug \ rhs_x
-        strengths_y = K_aug \ rhs_y
+            n_check = length(check_pts)
+            vel_check_x = Vector{T}(undef, n_check)
+            vel_check_y = Vector{T}(undef, n_check)
 
-        # Store as vector of SVector{2,T}
-        equiv = proxy_data[leaf].equiv_strengths
-        @inbounds for k in 1:p
-            equiv[k] = SVector{2,T}(strengths_x[k], strengths_y[k])
+            seg_range = box.segment_range
+            @inbounds for ic in 1:n_check
+                xc = check_pts[ic]
+                vx = zero(T)
+                vy = zero(T)
+                for si in seg_range
+                    ci, nj = tree.sorted_segments[si]
+                    c = contours[ci]
+                    a = c.nodes[nj]
+                    b = next_node(c, nj)
+                    v = c.pv * segment_velocity(kernel, domain, xc, a, b, ewald_cache)
+                    vx += v[1]
+                    vy += v[2]
+                end
+                vel_check_x[ic] = vx
+                vel_check_y[ic] = vy
+            end
+
+            proxy_pts = _proxy_points(box.center, box.half_width, p)
+            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+
+            if kernel isa EulerKernel
+                K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
+                rhs_x = vcat(vel_check_x, zero(T))
+                rhs_y = vcat(vel_check_y, zero(T))
+            else
+                K_aug = K_cp
+                rhs_x = vel_check_x
+                rhs_y = vel_check_y
+            end
+            strengths_x = K_aug \ rhs_x
+            strengths_y = K_aug \ rhs_y
+
+            equiv = proxy_data[leaf].equiv_strengths
+            @inbounds for k in 1:p
+                equiv[k] = SVector{2,T}(strengths_x[k], strengths_y[k])
+            end
         end
     end
 

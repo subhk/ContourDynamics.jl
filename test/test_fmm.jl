@@ -41,6 +41,16 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         @test root.half_width >= 2.5
     end
 
+    @testset "Adaptive Proxy Guard" begin
+        dense_nodes = [SVector(-1.0 + 0.15*cos(2*pi*i/127), -1.0 + 0.15*sin(2*pi*i/127)) for i in 0:127]
+        sparse_nodes = [SVector(1.0 + 0.2*cos(2*pi*i/11), -1.0 + 0.2*sin(2*pi*i/11)) for i in 0:11]
+        dense = PVContour(dense_nodes, 1.0)
+        sparse = PVContour(sparse_nodes, -0.5)
+        tree = ContourDynamics.build_fmm_tree([dense, sparse]; max_per_leaf=16)
+
+        @test ContourDynamics._has_unhandled_coarse_leaf_interactions(tree)
+    end
+
     @testset "Proxy Surfaces" begin
         @testset "Point Generation" begin
             center = SVector(0.0, 0.0)
@@ -252,7 +262,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         end
     end
 
-    @testset "FMM Conservation" begin
+    @testset "Conservation Baseline" begin
         @testset "Kirchhoff Ellipse" begin
             e = elliptical_patch(2.0, 1.0, 128, 1.0)
             prob = ContourProblem(EulerKernel(), UnboundedDomain(), [e])
@@ -269,7 +279,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         end
     end
 
-    @testset "FMM Periodic" begin
+    @testset "Periodic Accelerator Paths" begin
         @testset "Euler Periodic" begin
             domain = PeriodicDomain(Float64(pi), Float64(pi))
             N_per = extended ? 300 : 100
@@ -285,7 +295,11 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
             max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
                               max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
-            @test max_err < 1e-8
+            if ContourDynamics._FMM_ACCELERATION_ENABLED
+                @test max_err < 1e-8
+            else
+                @test max_err == 0.0
+            end
         end
 
         @testset "QG Periodic" begin
