@@ -42,6 +42,7 @@ struct TreeEvalPlan
     direct_lists::Vector{Vector{Int}}
     approx_lists::Vector{Vector{Int}}
     node_to_leaf::Dict{Tuple{Int,Int}, Int}
+    segment_layers::Vector{Int}
 end
 
 # ── Helper functions ────────────────────────────────────────

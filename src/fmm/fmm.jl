@@ -88,11 +88,21 @@ function _build_flat_indices(tree::FMMTree, contours)
     return flat_indices
 end
 
-function _build_tree_eval_plan(tree::FMMTree, contours)
+function _build_segment_layers(tree::FMMTree, contour_layers::AbstractVector{Int})
+    segment_layers = Vector{Int}(undef, length(tree.sorted_segments))
+    for seg_idx in eachindex(tree.sorted_segments)
+        ci, _ = tree.sorted_segments[seg_idx]
+        segment_layers[seg_idx] = contour_layers[ci]
+    end
+    return segment_layers
+end
+
+function _build_tree_eval_plan(tree::FMMTree, contours, contour_layers::AbstractVector{Int}=fill(1, length(contours)))
     direct_lists, approx_lists = _build_treecode_worklists(tree)
     flat_indices = _build_flat_indices(tree, contours)
     node_to_leaf = _build_node_to_leaf(tree)
-    return TreeEvalPlan(flat_indices, direct_lists, approx_lists, node_to_leaf)
+    segment_layers = _build_segment_layers(tree, contour_layers)
+    return TreeEvalPlan(flat_indices, direct_lists, approx_lists, node_to_leaf, segment_layers)
 end
 
 function _box_direct_velocity(tree::FMMTree{T},
@@ -254,7 +264,7 @@ function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
 
     # Build tree once — geometry is identical for all modes
     tree = build_fmm_tree(all_contours)
-    plan = _build_tree_eval_plan(tree, all_contours)
+    plan = _build_tree_eval_plan(tree, all_contours, contour_layer)
 
     # Per-layer flat offsets for scattering results back
     layer_flat_offset = Vector{Int}(undef, NL)
@@ -536,11 +546,11 @@ function _fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
 end
 
 """
-    _s2m_modal!(proxy_data, tree, all_contours, layer_offsets, P_inv, mode, kernel, domain, ops, NL)
+    _s2m_modal!(proxy_data, tree, all_contours, plan, P_inv, mode, kernel, domain, ops, NL)
 
 Like `_s2m!` but weights each segment's PV by `P_inv[mode, layer_of_segment]`.
 """
-function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
+function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
                      P_inv, mode, kernel, domain, ops, NL;
                      p=_FMM_PROXY_ORDER, p_check=_FMM_CHECK_ORDER)
     T = eltype(tree.boxes[1].center)
@@ -571,13 +581,7 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
                 vy = zero(T)
                 for seg_idx in box.segment_range
                     ci, ni = tree.sorted_segments[seg_idx]
-                    layer = 1
-                    for l in 1:NL
-                        if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
-                            layer = l
-                            break
-                        end
-                    end
+                    layer = plan.segment_layers[seg_idx]
                     source_weight = P_inv[mode, layer]
                     abs(source_weight) < eps(T) && continue
 
@@ -631,13 +635,7 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
                 vy = zero(T)
                 for seg_idx in box.segment_range
                     ci, ni = tree.sorted_segments[seg_idx]
-                    layer = 1
-                    for l in 1:NL
-                        if ci > layer_offsets[l] && ci <= layer_offsets[l+1]
-                            layer = l
-                            break
-                        end
-                    end
+                    layer = plan.segment_layers[seg_idx]
                     source_weight = P_inv[mode, layer]
                     abs(source_weight) < eps(T) && continue
 
@@ -680,7 +678,7 @@ function _s2m_modal!(proxy_data, tree, all_contours, layer_offsets,
 end
 
 """
-    _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets, prob, P, mode, kernel, domain, NL)
+    _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets, prob, P, mode, kernel, domain, NL, plan)
 
 Evaluate local expansion + near field for one mode and accumulate into per-layer
 velocity arrays with modal projection weights.
@@ -732,13 +730,7 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
                         for seg_idx in near_box.segment_range
                             ci_s, ni_s = tree.sorted_segments[seg_idx]
                             # Weight by P_inv[mode, source_layer]
-                            s_layer = 1
-                            for l in 1:NL
-                                if ci_s > layer_offsets[l] && ci_s <= layer_offsets[l+1]
-                                    s_layer = l
-                                    break
-                                end
-                            end
+                            s_layer = plan.segment_layers[seg_idx]
                             src_w = prob.kernel.eigenvectors_inv[mode, s_layer]
                             abs(src_w) < eps(T) && continue
                             c = all_contours[ci_s]
