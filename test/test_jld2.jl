@@ -88,4 +88,30 @@ using Test, ContourDynamics, StaticArrays, JLD2
             rm(fname; force=true)
         end
     end
+
+    @testset "Multi-Layer Round-Trip" begin
+        Ld = SVector(1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
+        kernel = MultiLayerQGKernel(Ld, coupling)
+        layers = ([circular_patch(0.5, 24, 1.0)], [circular_patch(0.3, 12, -0.5)])
+        prob = MultiLayerContourProblem(kernel, UnboundedDomain(), layers)
+
+        fname = tempname() * ".jld2"
+        try
+            save_snapshot(fname, prob, 3; dt=0.02)
+            data = load_snapshot(fname, 3)
+
+            @test data.step == 3
+            @test data.time ≈ 0.06
+            @test length(data.layers) == 2
+            @test data.layers isa Tuple{Vector{PVContour{Float64}}, Vector{PVContour{Float64}}}
+            @test nnodes(data.layers[1][1]) == nnodes(prob.layers[1][1])
+            @test nnodes(data.layers[2][1]) == nnodes(prob.layers[2][1])
+            @test data.layers[1][1].pv ≈ prob.layers[1][1].pv
+            @test data.layers[2][1].pv ≈ prob.layers[2][1].pv
+        finally
+            rm(fname; force=true)
+        end
+    end
 end

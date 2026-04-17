@@ -219,6 +219,54 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
     return v
 end
 
+"""
+    velocity(prob::MultiLayerContourProblem, x)
+
+Compute the velocity induced at point `x` in each layer of a multi-layer
+problem. Returns an `NTuple` with one velocity vector per target layer.
+"""
+function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
+                  x::SVector{2,T}) where {N, T}
+    kernel = prob.kernel
+    domain = prob.domain
+    evals = kernel.eigenvalues
+    P = kernel.eigenvectors
+    P_inv = kernel.eigenvectors_inv
+    ewald = _prefetch_ewald(domain, EulerKernel())
+
+    vel = MVector{N, SVector{2,T}}(ntuple(_ -> zero(SVector{2,T}), Val(N)))
+
+    for mode in 1:N
+        lam = evals[mode]
+        mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
+                      QGKernel(one(T) / sqrt(abs(lam)))
+
+        v_mode = zero(SVector{2,T})
+        for source_layer in 1:N
+            source_weight = P_inv[mode, source_layer]
+            abs(source_weight) < eps(T) && continue
+            for sc in prob.layers[source_layer]
+                nsc = nnodes(sc)
+                nsc < 2 && continue
+                for sj in 1:nsc
+                    a = sc.nodes[sj]
+                    b = next_node(sc, sj)
+                    v_mode = v_mode + source_weight * sc.pv *
+                        segment_velocity(mode_kernel, domain, x, a, b, ewald)
+                end
+            end
+        end
+
+        for target_layer in 1:N
+            projection_weight = P[target_layer, mode]
+            abs(projection_weight) < eps(T) && continue
+            vel[target_layer] = vel[target_layer] + projection_weight * v_mode
+        end
+    end
+
+    return Tuple(vel)
+end
+
 # Compute K₀(z) + log(z/2) + γ without catastrophic cancellation for small z.
 # Uses the identity: K₀(z) = -(log(z/2) + γ)I₀(z) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
 # so K₀(z) + log(z/2) + γ = -(log(z/2) + γ)(I₀(z) - 1) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
