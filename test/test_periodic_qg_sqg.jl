@@ -42,6 +42,18 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         @test qg_speed < euler_speed
     end
 
+    @testset "QG periodic segment kernel stays allocation-light after warm-up" begin
+        domain = PeriodicDomain(5.0, 5.0)
+        kernel = QGKernel(1.5)
+        x = SVector(0.3, -0.2)
+        a = SVector(-0.5, 0.1)
+        b = SVector(0.7, 0.4)
+
+        ContourDynamics.segment_velocity(kernel, domain, x, a, b)
+        alloc = @allocated ContourDynamics.segment_velocity(kernel, domain, x, a, b)
+        @test alloc <= 256
+    end
+
     @testset "SQG velocity: periodic ≈ unbounded" begin
         N = 32
         delta = 0.01

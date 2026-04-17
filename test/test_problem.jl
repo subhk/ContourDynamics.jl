@@ -42,6 +42,26 @@ using Test
         @test prob_nosurg.surgery_params === nothing
     end
 
+    @testset "Problem struct and accessors — multi-layer" begin
+        Ld = SVector(1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
+        kernel_ml = MultiLayerQGKernel(Ld, coupling)
+        layers = ([circular_patch(0.5, 32, 1.0)], [circular_patch(0.25, 16, -1.0)])
+        cp = MultiLayerContourProblem(kernel_ml, UnboundedDomain(), layers)
+        st = RK4Stepper(0.01, total_nodes(cp))
+        prob = Problem(cp, st, nothing)
+
+        @test contours(prob) === cp.layers
+        @test kernel(prob) === cp.kernel
+        @test domain(prob) === cp.domain
+        @test total_nodes(prob) == total_nodes(cp)
+        @test vortex_area(prob) == vortex_area(cp)
+
+        x = SVector(0.1, -0.2)
+        @test velocity(prob, x) == velocity(cp, x)
+    end
+
     @testset "Problem evolve!" begin
         c = circular_patch(1.0, 64, 1.0)
         cp = ContourProblem(EulerKernel(), UnboundedDomain(), [c])

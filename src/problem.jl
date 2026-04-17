@@ -23,7 +23,7 @@ end
 # ── Forwarded accessors ─────────────────────────────────
 
 """Return the contours of the underlying problem."""
-contours(prob::Problem) = prob.contour_problem.contours
+contours(prob::Problem) = contours(prob.contour_problem)
 
 """Return the kernel of the underlying problem."""
 kernel(prob::Problem) = prob.contour_problem.kernel
@@ -38,7 +38,7 @@ enstrophy(prob::Problem) = enstrophy(prob.contour_problem)
 angular_momentum(prob::Problem) = angular_momentum(prob.contour_problem)
 velocity!(vel, prob::Problem) = velocity!(vel, prob.contour_problem)
 velocity(prob::Problem, x) = velocity(prob.contour_problem, x)
-vortex_area(prob::Problem) = vortex_area.(contours(prob))
+vortex_area(prob::Problem) = vortex_area(prob.contour_problem)
 nlayers(prob::Problem) = nlayers(prob.contour_problem)
 
 # ── evolve! overload ────────────────────────────────────

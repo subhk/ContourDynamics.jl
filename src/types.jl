@@ -227,6 +227,8 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
     end
 end
 
+contours(prob::ContourProblem) = prob.contours
+
 # Error if GPU is used with an unsupported kernel/domain combination.
 _check_gpu_support(::AbstractKernel, ::AbstractDomain, ::CPU) = nothing
 _check_gpu_support(::EulerKernel, ::UnboundedDomain, ::GPU) = nothing
@@ -263,6 +265,8 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
         new{N, K, D, T, Dev}(kernel, domain, layers, dev)
     end
 end
+
+contours(prob::MultiLayerContourProblem) = prob.layers
 
 nlayers(::MultiLayerContourProblem{N}) where {N} = N
 
