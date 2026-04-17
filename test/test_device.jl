@@ -36,6 +36,12 @@ end
         @test_throws ArgumentError ContourProblem(EulerKernel(), PeriodicDomain(1.0, 1.0), [c]; dev=GPU())
     end
 
+    @testset "GPU() accepts SQG on unbounded domains" begin
+        c = circular_patch(0.5, 32, 1.0)
+        prob = ContourProblem(SQGKernel(0.01), UnboundedDomain(), [c]; dev=GPU())
+        @test prob.dev === GPU()
+    end
+
     @testset "CPU device_array returns Array" begin
         @test device_array(CPU()) === Array
     end
@@ -113,6 +119,22 @@ end
         for i in 1:N
             @test isapprox(vel[i][1], vel_ref[i][1]; atol=1e-12)
             @test isapprox(vel[i][2], vel_ref[i][2]; atol=1e-12)
+        end
+    end
+
+    @testset "KA SQG velocity matches direct CPU" begin
+        c = circular_patch(0.5, 32, 1.0)
+        prob = ContourProblem(SQGKernel(0.02), UnboundedDomain(), [c])
+        N = total_nodes(prob)
+
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = similar(vel_ref)
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
+
+        for i in 1:N
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12)
         end
     end
 end

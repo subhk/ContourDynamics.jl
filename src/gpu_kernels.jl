@@ -264,6 +264,47 @@ end
     vel_y[i] = vy
 end
 
+@kernel function _sqg_velocity_ka!(vel_x, vel_y,
+                                   target_x, target_y,
+                                   seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
+                                   delta, n_seg)
+    i = @index(Global)
+    T = eltype(vel_x)
+    xi = target_x[i]
+    yi = target_y[i]
+    vx = zero(T)
+    vy = zero(T)
+    inv2pi = one(T) / (2 * T(pi))
+
+    @inbounds for j in 1:n_seg
+        dsx = seg_bx[j] - seg_ax[j]
+        dsy = seg_by[j] - seg_ay[j]
+        ds_len_sq = dsx^2 + dsy^2
+        ds_len = sqrt(ds_len_sq)
+        ds_len < eps(T) && continue
+
+        tx = dsx / ds_len
+        ty = dsy / ds_len
+        nx = -ty
+        ny = tx
+
+        r0x = xi - seg_ax[j]
+        r0y = yi - seg_ay[j]
+        u_a = r0x * tx + r0y * ty
+        h = r0x * nx + r0y * ny
+        u_b = u_a - ds_len
+
+        h_eff = sqrt(h * h + delta * delta)
+        F_diff = asinh(u_a / h_eff) - asinh(u_b / h_eff)
+        contrib = -inv2pi * seg_pv[j] * F_diff
+        vx += contrib * tx
+        vy += contrib * ty
+    end
+
+    vel_x[i] = vx
+    vel_y[i] = vy
+end
+
 """
     _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData, dev)
 
@@ -282,13 +323,33 @@ function _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
 end
 
 """
+    _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData, delta, dev)
+
+Launch the KA SQG velocity kernel on the given device.
+"""
+function _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
+                           delta, dev::AbstractDevice)
+    backend = _ka_backend(dev)
+    n_targets = length(target_x)
+    n_seg = length(seg.ax)
+    kernel = _sqg_velocity_ka!(backend)
+    kernel(vel_x, vel_y, target_x, target_y,
+           seg.ax, seg.ay, seg.bx, seg.by, seg.pv,
+           delta, Int32(n_seg); ndrange=n_targets)
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
+"""
     _ka_velocity_ws!(ws::_GPUWorkspace, prob::ContourProblem, dev::AbstractDevice)
 
-KernelAbstractions-based Euler velocity evaluation using pre-allocated
-workspace buffers. This supports both CPU and GPU backends through the same
-packing and launch path.
+KernelAbstractions-based velocity evaluation using pre-allocated workspace
+buffers. This supports both CPU and GPU backends through the same packing and
+launch path for the kernels that already have flat direct evaluators.
 """
-function _ka_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K,D,T}
+function _ka_velocity_ws!(ws::_GPUWorkspace{T},
+                          prob::ContourProblem{EulerKernel,D,T},
+                          dev::AbstractDevice) where {D,T}
     N = total_nodes(prob)
     N == ws.n || throw(DimensionMismatch(
         "GPU workspace was allocated for $(ws.n) nodes but problem now has $N nodes. " *
@@ -310,6 +371,36 @@ function _ka_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev
     # Launch kernel (no allocation)
     seg = SegmentData(ws.dev_ax, ws.dev_ay, ws.dev_bx, ws.dev_by, ws.dev_pv)
     _ka_euler_velocity!(ws.dev_vel_x, ws.dev_vel_y, ws.dev_tx, ws.dev_ty, seg, dev)
+ 
+    # Copy results back to CPU (no allocation)
+    copyto!(ws.cpu_vx, ws.dev_vel_x)
+    copyto!(ws.cpu_vy, ws.dev_vel_y)
+
+    return nothing
+end
+
+function _ka_velocity_ws!(ws::_GPUWorkspace{T},
+                          prob::ContourProblem{SQGKernel{T},UnboundedDomain,T},
+                          dev::AbstractDevice) where {T}
+    N = total_nodes(prob)
+    N == ws.n || throw(DimensionMismatch(
+        "GPU workspace was allocated for $(ws.n) nodes but problem now has $N nodes. " *
+        "Call velocity! through evolve!() or manually evict stale workspaces after surgery!()."))
+
+    _fill_segment_bufs!(ws.cpu_ax, ws.cpu_ay, ws.cpu_bx, ws.cpu_by, ws.cpu_pv, prob)
+    _fill_target_bufs!(ws.cpu_tx, ws.cpu_ty, prob)
+
+    copyto!(ws.dev_ax, ws.cpu_ax)
+    copyto!(ws.dev_ay, ws.cpu_ay)
+    copyto!(ws.dev_bx, ws.cpu_bx)
+    copyto!(ws.dev_by, ws.cpu_by)
+    copyto!(ws.dev_pv, ws.cpu_pv)
+    copyto!(ws.dev_tx, ws.cpu_tx)
+    copyto!(ws.dev_ty, ws.cpu_ty)
+
+    seg = SegmentData(ws.dev_ax, ws.dev_ay, ws.dev_bx, ws.dev_by, ws.dev_pv)
+    _ka_sqg_velocity!(ws.dev_vel_x, ws.dev_vel_y, ws.dev_tx, ws.dev_ty,
+                      seg, prob.kernel.delta, dev)
 
     # Copy results back to CPU (no allocation)
     copyto!(ws.cpu_vx, ws.dev_vel_x)
@@ -319,14 +410,14 @@ function _ka_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev
 end
 
 """
-    _ka_velocity!(vel, prob::ContourProblem{EulerKernel,UnboundedDomain}, dev)
+    _ka_velocity!(vel, prob::ContourProblem{<:Union{EulerKernel,SQGKernel},UnboundedDomain}, dev)
 
-Evaluate single-layer unbounded Euler velocity through the KernelAbstractions
+Evaluate single-layer unbounded direct velocity through the KernelAbstractions
 backend selected by `dev`, then repack the flat result into `vel`.
 """
 function _ka_velocity!(vel::Vector{SVector{2,T}},
-                       prob::ContourProblem{EulerKernel, UnboundedDomain, T, Dev},
-                       dev::Dev) where {T, Dev<:AbstractDevice}
+                       prob::ContourProblem{K, UnboundedDomain, T, Dev},
+                       dev::Dev) where {K<:Union{EulerKernel,SQGKernel{T}}, T, Dev<:AbstractDevice}
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
     N == 0 && return vel

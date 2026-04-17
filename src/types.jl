@@ -232,8 +232,9 @@ contours(prob::ContourProblem) = prob.contours
 # Error if GPU is used with an unsupported kernel/domain combination.
 _check_gpu_support(::AbstractKernel, ::AbstractDomain, ::CPU) = nothing
 _check_gpu_support(::EulerKernel, ::UnboundedDomain, ::GPU) = nothing
+_check_gpu_support(::SQGKernel, ::UnboundedDomain, ::GPU) = nothing
 _check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
-    "GPU velocity is only supported for EulerKernel on UnboundedDomain. " *
+    "GPU velocity is only supported for EulerKernel and SQGKernel on UnboundedDomain. " *
     "Got $(typeof(kernel)) on $(typeof(domain)). Use dev=CPU()."))
 
 # Error if kernel's floating-point type doesn't match contour type

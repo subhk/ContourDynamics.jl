@@ -12,6 +12,20 @@ If you are new to the package, the most common entry points are:
 If you want a worked example before diving into the full reference, start with
 the [Euler tutorial](/tutorial_euler).
 
+## Accelerator Status
+
+Current large-problem behavior is:
+
+- single-layer unbounded CPU: direct for small problems, treecode for large problems
+- single-layer unbounded CPU with experimental proxy FMM enabled: optional experimental FMM path
+- single-layer periodic CPU: treecode for large problems in normal use; the current periodic `_fmm_velocity!` method is still a direct fallback
+- multi-layer CPU: treecode for large problems in normal use; the current multi-layer `_fmm_velocity!` method is still a direct fallback
+- GPU: supported only for the Euler kernel on unbounded domains
+
+So, at the moment, the production accelerator story is treecode plus the direct
+GPU Euler path. The proxy FMM remains experimental and is not the active
+production path for periodic or multi-layer problems.
+
 ## Types
 
 ### Kernels

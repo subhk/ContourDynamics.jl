@@ -214,9 +214,16 @@ end
     velocity!(vel, prob::ContourProblem)
 
 Compute velocity at every contour node of `prob`, storing results in `vel`.
-Uses the proxy-FMM path only when that experimental accelerator is explicitly
-enabled. Otherwise, large single-layer problems use the production treecode
-path and small problems fall back to the validated direct evaluator.
+
+Current large-problem policy for single-layer CPU problems:
+
+- small problems: direct evaluator
+- large problems: production treecode
+- large problems with `_FMM_ACCELERATION_ENABLED = true`: experimental proxy FMM
+
+Periodic single-layer problems and multi-layer problems do **not** currently
+have a production FMM path. Even when `_FMM_ACCELERATION_ENABLED` is true,
+those cases still route to treecode or direct evaluation.
 """
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{EulerKernel, UnboundedDomain, T, CPU}) where {T}
@@ -608,8 +615,15 @@ end
     velocity!(vel, prob::MultiLayerContourProblem)
 
 Compute velocity at all nodes across all layers using modal decomposition.
-Uses the treecode for large problems, the proxy FMM when explicitly enabled,
-and direct O(N²) evaluation for small problems.
+
+Current large-problem policy for multi-layer CPU problems:
+
+- small problems: direct evaluator
+- large problems: production treecode
+- `_FMM_ACCELERATION_ENABLED = true`: still falls back to the current direct
+  multi-layer `_fmm_velocity!` stub, so there is no production multi-layer FMM
+
+In other words, multi-layer acceleration currently means treecode, not FMM.
 """
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                    prob::MultiLayerContourProblem{N, <:Any, <:Any, T, CPU}) where {N, T}
@@ -633,7 +647,7 @@ end
 # Uses a cached workspace to avoid repeated GPU/CPU allocations across
 # the 4 velocity evaluations per RK4 step.
 function velocity!(vel::Vector{SVector{2,T}},
-                   prob::ContourProblem{EulerKernel, UnboundedDomain, T, GPU}) where {T}
+                   prob::ContourProblem{K, UnboundedDomain, T, GPU}) where {K<:Union{EulerKernel,SQGKernel}, T}
     return _ka_velocity!(vel, prob, prob.dev)
 end
 
@@ -641,7 +655,7 @@ end
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
     throw(ArgumentError(
-        "GPU velocity is only implemented for EulerKernel on UnboundedDomain. " *
+        "GPU velocity is only implemented for EulerKernel and SQGKernel on UnboundedDomain. " *
         "Got $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
         "Use dev=CPU() for other kernel/domain combinations."))
 end

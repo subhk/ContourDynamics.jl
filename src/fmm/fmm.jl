@@ -559,8 +559,12 @@ end
     _fmm_velocity!(vel, prob::ContourProblem)
 
 Conservative public wrapper for the experimental proxy FMM. The runtime uses
-the proxy path only when explicitly enabled; otherwise it falls back to the
-validated direct evaluator.
+the proxy path only for unbounded single-layer problems when explicitly
+enabled. Otherwise it falls back to the validated direct evaluator.
+
+This wrapper should not be read as "full FMM support for all `ContourProblem`
+variants". Periodic and multi-layer `_fmm_velocity!` methods below are still
+conservative fallbacks, not production FMM implementations.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     if !_FMM_ACCELERATION_ENABLED
@@ -578,9 +582,11 @@ _to_unbounded_kernel(k::SQGKernel) = k
 """
     _fmm_velocity!(vel, prob::ContourProblem{K, PeriodicDomain{T}, T})
 
-FMM driver for periodic domains. Runs the unbounded FMM on the primary cell,
-then adds the periodic correction (G_periodic - G_unbounded) per node via
-direct evaluation of the difference using Ewald summation.
+Conservative periodic fallback.
+
+Periodic proxy FMM is not implemented yet. This method currently delegates to
+the validated direct periodic evaluator, even if `_FMM_ACCELERATION_ENABLED` is
+true elsewhere.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}},
                         prob::ContourProblem{K, PeriodicDomain{T}, T}) where {K, T}
@@ -658,8 +664,11 @@ end
 """
     _fmm_velocity!(vel, prob::MultiLayerContourProblem)
 
-FMM velocity for multi-layer QG problems. Builds one tree over all contours
-from all layers, then runs one FMM pass per mode with modal source/target weights.
+Conservative multi-layer fallback.
+
+Multi-layer proxy FMM is not implemented as a public production path yet. This
+method currently delegates to the validated direct multi-layer evaluator, even
+if `_FMM_ACCELERATION_ENABLED` is true elsewhere.
 """
 function _fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
                         prob::MultiLayerContourProblem{NL}) where {NL, T}
