@@ -282,13 +282,13 @@ function _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
 end
 
 """
-    _gpu_velocity_ws!(ws::_GPUWorkspace, prob::ContourProblem, dev::AbstractDevice)
+    _ka_velocity_ws!(ws::_GPUWorkspace, prob::ContourProblem, dev::AbstractDevice)
 
-GPU velocity evaluation using pre-allocated workspace buffers.
-Fills CPU packing buffers, copies to device via `copyto!`, launches kernel,
-and copies results back — all without allocating new arrays.
+KernelAbstractions-based Euler velocity evaluation using pre-allocated
+workspace buffers. This supports both CPU and GPU backends through the same
+packing and launch path.
 """
-function _gpu_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K,D,T}
+function _ka_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K,D,T}
     N = total_nodes(prob)
     N == ws.n || throw(DimensionMismatch(
         "GPU workspace was allocated for $(ws.n) nodes but problem now has $N nodes. " *
@@ -316,4 +316,32 @@ function _gpu_velocity_ws!(ws::_GPUWorkspace{T}, prob::ContourProblem{K,D,T}, de
     copyto!(ws.cpu_vy, ws.dev_vel_y)
 
     return nothing
+end
+
+"""
+    _ka_velocity!(vel, prob::ContourProblem{EulerKernel,UnboundedDomain}, dev)
+
+Evaluate single-layer unbounded Euler velocity through the KernelAbstractions
+backend selected by `dev`, then repack the flat result into `vel`.
+"""
+function _ka_velocity!(vel::Vector{SVector{2,T}},
+                       prob::ContourProblem{EulerKernel, UnboundedDomain, T, Dev},
+                       dev::Dev) where {T, Dev<:AbstractDevice}
+    N = total_nodes(prob)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    N == 0 && return vel
+
+    entry = _get_gpu_workspace!(dev, T, N)
+    lock(entry.lock) do
+        ws = entry.ws::_GPUWorkspace{T}
+        _ka_velocity_ws!(ws, prob, dev)
+
+        vx = ws.cpu_vx
+        vy = ws.cpu_vy
+        @inbounds for i in 1:N
+            vel[i] = SVector{2,T}(vx[i], vy[i])
+        end
+    end
+
+    return vel
 end

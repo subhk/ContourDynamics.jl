@@ -84,7 +84,7 @@ end
 
         # CPU reference
         vel_cpu = zeros(SVector{2,Float64}, N)
-        velocity!(vel_cpu, prob)
+        ContourDynamics._direct_velocity!(vel_cpu, prob)
 
         # KA CPU kernel path
         vel_ka_x = zeros(Float64, N)
@@ -97,6 +97,22 @@ end
         for i in 1:N
             @test isapprox(vel_ka_x[i], vel_cpu[i][1]; atol=1e-12)
             @test isapprox(vel_ka_y[i], vel_cpu[i][2]; atol=1e-12)
+        end
+    end
+
+    @testset "CPU velocity! uses KA path without changing results" begin
+        c = circular_patch(0.5, 32, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c]; dev=CPU())
+        N = total_nodes(prob)
+
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel = similar(vel_ref)
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        velocity!(vel, prob)
+
+        for i in 1:N
+            @test isapprox(vel[i][1], vel_ref[i][1]; atol=1e-12)
+            @test isapprox(vel[i][2], vel_ref[i][2]; atol=1e-12)
         end
     end
 end

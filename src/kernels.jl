@@ -184,6 +184,22 @@ Uses the proxy-FMM path only when that experimental accelerator is explicitly
 enabled. Otherwise, large single-layer problems use the production treecode
 path and small problems fall back to the validated direct evaluator.
 """
+function velocity!(vel::Vector{SVector{2,T}},
+                   prob::ContourProblem{EulerKernel, UnboundedDomain, T, CPU}) where {T}
+    N = total_nodes(prob)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+
+    if _FMM_ACCELERATION_ENABLED && N >= _FMM_THRESHOLD
+        _fmm_velocity!(vel, prob)
+    elseif N >= _FMM_THRESHOLD
+        _treecode_velocity!(vel, prob)
+    else
+        _ka_velocity!(vel, prob, prob.dev)
+    end
+
+    return vel
+end
+
 function velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T, CPU}) where {T}
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
@@ -562,25 +578,7 @@ end
 # the 4 velocity evaluations per RK4 step.
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{EulerKernel, UnboundedDomain, T, GPU}) where {T}
-    N = total_nodes(prob)
-    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
-    N == 0 && return vel
-
-    dev = prob.dev
-    entry = _get_gpu_workspace!(dev, T, N)
-    lock(entry.lock) do
-        ws = entry.ws::_GPUWorkspace{T}
-        _gpu_velocity_ws!(ws, prob, dev)
-
-        # Pack CPU results into SVector format
-        vx = ws.cpu_vx
-        vy = ws.cpu_vy
-        @inbounds for i in 1:N
-            vel[i] = SVector{2,T}(vx[i], vy[i])
-        end
-    end
-
-    return vel
+    return _ka_velocity!(vel, prob, prob.dev)
 end
 
 # Fallback for unsupported GPU kernel/domain combinations

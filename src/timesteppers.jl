@@ -51,6 +51,33 @@ function _scatter_shifted!(prob::ContourProblem, base::Vector{SVector{2,T}},
     end
 end
 
+@kernel function _rk4_update_ka!(nodes, k1, k2, k3, k4, dt)
+    i = @index(Global)
+    nodes[i] = nodes[i] + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+end
+
+@kernel function _leapfrog_bootstrap_ka!(nodes_prev, nodes_current, vel_mid, dt)
+    i = @index(Global)
+    nodes_prev[i] = nodes_current[i]
+    nodes_current[i] = nodes_current[i] + dt * vel_mid[i]
+end
+
+@kernel function _leapfrog_step_ka!(nodes_prev, nodes_current, vel, dt, nu)
+    i = @index(Global)
+    y_next = nodes_prev[i] + 2 * dt * vel[i]
+    y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + nodes_prev[i])
+    nodes_prev[i] = y_filtered
+    nodes_current[i] = y_next
+end
+
+function _ka_stepper_update!(kernel!, ndrange::Int, args...)
+    backend = _ka_backend(CPU())
+    kernel = kernel!(backend)
+    kernel(args...; ndrange=ndrange)
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
 """
     timestep!(prob::ContourProblem, stepper::RK4Stepper)
 
@@ -82,9 +109,7 @@ function timestep!(prob::ContourProblem, stepper::RK4Stepper{T}) where {T}
     velocity!(k4, prob)
 
     # Update: y_{n+1} = y_n + dt/6 * (k1 + 2k2 + 2k3 + k4)
-    @inbounds for i in 1:N
-        nodes_orig[i] = nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i])
-    end
+    _ka_stepper_update!(_rk4_update_ka!, N, nodes_orig, k1, k2, k3, k4, dt)
     _scatter_nodes!(prob, nodes_orig)
 
     return prob
@@ -113,23 +138,15 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
         _scatter_shifted!(prob, nodes_current, vel, dt / 2)
         velocity!(stepper.vel_mid, prob)
         # Full step: y_{n+1} = y_n + dt * v(y_mid)
-        @inbounds for i in 1:N
-            stepper.nodes_prev[i] = nodes_current[i]  # save y_n into nodes_prev
-            nodes_current[i] = nodes_current[i] + dt * stepper.vel_mid[i]
-        end
+        _ka_stepper_update!(_leapfrog_bootstrap_ka!, N,
+                            stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
         _scatter_nodes!(prob, nodes_current)
         stepper.initialized = true
     else
         # Leapfrog: y_{n+1} = y_{n-1} + 2*dt * v(y_n)
         nu = stepper.ra_coeff
-        @inbounds for i in 1:N
-            y_next = stepper.nodes_prev[i] + 2 * dt * vel[i]
-            # Robert-Asselin filter: damp the computational mode by nudging
-            # y_n toward the mean of y_{n-1} and y_{n+1}.
-            y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + stepper.nodes_prev[i])
-            stepper.nodes_prev[i] = y_filtered
-            nodes_current[i] = y_next
-        end
+        _ka_stepper_update!(_leapfrog_step_ka!, N,
+                            stepper.nodes_prev, nodes_current, vel, dt, nu)
         _scatter_nodes!(prob, nodes_current)
     end
 
@@ -344,9 +361,7 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
     _collect_velocities!(k4, vel_tuple)
 
     # Update: y_{n+1} = y_n + dt/6 * (k1 + 2k2 + 2k3 + k4)
-    @inbounds for i in 1:Ntot
-        nodes_orig[i] = nodes_orig[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i])
-    end
+    _ka_stepper_update!(_rk4_update_ka!, Ntot, nodes_orig, k1, k2, k3, k4, dt)
     _scatter_nodes!(prob, nodes_orig)
     return prob
 end
@@ -491,20 +506,14 @@ function timestep!(prob::MultiLayerContourProblem{NL}, stepper::LeapfrogStepper{
         # vel_tuple is still valid — _scatter_shifted! only changes positions, not node counts
         velocity!(vel_tuple, prob)
         _collect_velocities!(stepper.vel_mid, vel_tuple)
-        @inbounds for i in 1:Ntot
-            stepper.nodes_prev[i] = nodes_current[i]
-            nodes_current[i] = nodes_current[i] + dt * stepper.vel_mid[i]
-        end
+        _ka_stepper_update!(_leapfrog_bootstrap_ka!, Ntot,
+                            stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
         _scatter_nodes!(prob, nodes_current)
         stepper.initialized = true
     else
         nu = stepper.ra_coeff
-        @inbounds for i in 1:Ntot
-            y_next = stepper.nodes_prev[i] + 2 * dt * flat_vel[i]
-            y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + stepper.nodes_prev[i])
-            stepper.nodes_prev[i] = y_filtered
-            nodes_current[i] = y_next
-        end
+        _ka_stepper_update!(_leapfrog_step_ka!, Ntot,
+                            stepper.nodes_prev, nodes_current, flat_vel, dt, nu)
         _scatter_nodes!(prob, nodes_current)
     end
     return prob
