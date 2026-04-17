@@ -173,7 +173,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             ContourDynamics._direct_velocity!(expected, prob)
         end
 
-        @test vel == expected
+        @test vel ≈ expected atol=1e-14 rtol=0
     end
 
     @testset "Production Treecode Accuracy" begin

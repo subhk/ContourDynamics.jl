@@ -372,12 +372,10 @@ function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourP
                              all_ranges::Vector{Vector{UnitRange{Int}}}) where {N, T}
     Ntot = total_nodes(prob)
     length(buf) >= Ntot || throw(DimensionMismatch("buffer length ($(length(buf))) must be >= total nodes ($Ntot)"))
-    offset = 0
     for i in 1:N
         for (c, r) in zip(prob.layers[i], all_ranges[i])
-            _ka_copy_nodes_to_flat!(buf, c.nodes, offset + first(r) - 1)
+            _ka_copy_nodes_to_flat!(buf, c.nodes, first(r) - 1)
         end
-        offset += sum(nnodes(c) for c in prob.layers[i]; init=0)
     end
 end
 
@@ -398,12 +396,10 @@ function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SV
                          all_ranges::Vector{Vector{UnitRange{Int}}}) where {N, T}
     Ntot = total_nodes(prob)
     length(all_nodes) >= Ntot || throw(DimensionMismatch("all_nodes length ($(length(all_nodes))) must be >= total nodes ($Ntot)"))
-    offset = 0
     for i in 1:N
         for (c, r) in zip(prob.layers[i], all_ranges[i])
-            _ka_copy_flat_to_nodes!(c.nodes, all_nodes, offset + first(r) - 1)
+            _ka_copy_flat_to_nodes!(c.nodes, all_nodes, first(r) - 1)
         end
-        offset += sum(nnodes(c) for c in prob.layers[i]; init=0)
     end
 end
 
@@ -460,12 +456,10 @@ function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVect
     Ntot = total_nodes(prob)
     length(base) >= Ntot || throw(DimensionMismatch("base length ($(length(base))) must be >= total nodes ($Ntot)"))
     length(delta) >= Ntot || throw(DimensionMismatch("delta length ($(length(delta))) must be >= total nodes ($Ntot)"))
-    offset = 0
     for i in 1:N
         for (c, r) in zip(prob.layers[i], all_ranges[i])
-            _ka_scatter_shifted_slice!(c.nodes, base, delta, offset + first(r) - 1, scale)
+            _ka_scatter_shifted_slice!(c.nodes, base, delta, first(r) - 1, scale)
         end
-        offset += sum(nnodes(c) for c in prob.layers[i]; init=0)
     end
 end
 
