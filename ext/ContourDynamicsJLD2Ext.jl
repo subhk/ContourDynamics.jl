@@ -185,7 +185,6 @@ function _load_snapshot_from_group(g, step::Int)
 
     if is_multilayer
         nlyr = g["nlayers"]::Int
-        all_layers = Vector{Any}(undef, nlyr)
         # Infer float type from the first non-empty layer
         inferred_T = Float64
         for li in 1:nlyr
@@ -197,13 +196,17 @@ function _load_snapshot_from_group(g, step::Int)
                 break
             end
         end
-        for li in 1:nlyr
-            lg = g["layer_" * lpad(li, 2, '0')]
-            nc = lg["ncontours"]::Int
-            all_layers[li] = _load_contours(lg, nc; fallback_T=inferred_T)
+        layers = let T = inferred_T
+            all_layers = Vector{Vector{PVContour{T}}}(undef, nlyr)
+            for li in 1:nlyr
+                lg = g["layer_" * lpad(li, 2, '0')]
+                nc = lg["ncontours"]::Int
+                all_layers[li] = _load_contours(lg, nc; fallback_T=T)
+            end
+            Tuple(all_layers)
         end
         diag = _load_diagnostics(g)
-        return (layers=Tuple(all_layers), diagnostics=diag, step=step, time=time)
+        return (layers=layers, diagnostics=diag, step=step, time=time)
     else
         nc = g["ncontours"]::Int
         contours = _load_contours(g, nc)
