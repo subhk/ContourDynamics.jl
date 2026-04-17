@@ -17,13 +17,6 @@ relaxing theta, significantly improving performance for large problems.
 """
 const _TREECODE_THETA = 0.15
 
-struct TreeEvalPlan
-    flat_indices::Vector{Int}
-    direct_lists::Vector{Vector{Int}}
-    approx_lists::Vector{Vector{Int}}
-    node_to_leaf::Dict{Tuple{Int,Int}, Int}
-end
-
 @inline function _treecode_accepts(target_box::FMMBox{T}, source_box::FMMBox{T},
                                    theta::T = T(_TREECODE_THETA)) where {T}
     dx = source_box.center[1] - target_box.center[1]
