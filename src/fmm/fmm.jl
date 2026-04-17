@@ -97,12 +97,69 @@ function _build_segment_layers(tree::FMMTree, contour_layers::AbstractVector{Int
     return segment_layers
 end
 
-function _build_tree_eval_plan(tree::FMMTree, contours, contour_layers::AbstractVector{Int}=fill(1, length(contours)))
+function _build_leaf_proxy_geometry(tree::FMMTree{T}; p::Int = _FMM_PROXY_ORDER,
+                                    p_check::Int = _FMM_CHECK_ORDER,
+                                    include_proxy_geometry::Bool = false) where {T}
+    nboxes = length(tree.boxes)
+    leaf_proxy_points = [SVector{2,T}[] for _ in 1:nboxes]
+    leaf_check_points = [SVector{2,T}[] for _ in 1:nboxes]
+    include_proxy_geometry || return leaf_proxy_points, leaf_check_points
+
+    for leaf_idx in tree.leaf_indices
+        box = tree.boxes[leaf_idx]
+        proxy_pts = _proxy_points(box.center, box.half_width, p)
+        check_pts_inner = _check_points(box.center, box.half_width, p_check)
+        check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
+        check_pts = Vector{SVector{2,T}}(undef, length(check_pts_inner) + length(check_pts_outer))
+        copyto!(check_pts, 1, check_pts_inner, 1, length(check_pts_inner))
+        copyto!(check_pts, length(check_pts_inner) + 1, check_pts_outer, 1, length(check_pts_outer))
+        leaf_proxy_points[leaf_idx] = proxy_pts
+        leaf_check_points[leaf_idx] = check_pts
+    end
+
+    return leaf_proxy_points, leaf_check_points
+end
+
+function _build_leaf_check_to_proxy(
+    tree::FMMTree{T},
+    kernel::AbstractKernel,
+    domain::AbstractDomain,
+    leaf_proxy_points::Vector{Vector{SVector{2,T}}},
+    leaf_check_points::Vector{Vector{SVector{2,T}}};
+    include_proxy_geometry::Bool = false,
+) where {T}
+    nboxes = length(tree.boxes)
+    leaf_check_to_proxy = [Matrix{T}(undef, 0, 0) for _ in 1:nboxes]
+    include_proxy_geometry || return leaf_check_to_proxy
+
+    for leaf_idx in tree.leaf_indices
+        proxy_pts = leaf_proxy_points[leaf_idx]
+        check_pts = leaf_check_points[leaf_idx]
+        leaf_check_to_proxy[leaf_idx] = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+    end
+
+    return leaf_check_to_proxy
+end
+
+function _build_tree_eval_plan(tree::FMMTree{T}, contours,
+                               contour_layers::AbstractVector{Int}=fill(1, length(contours));
+                               p::Int = _FMM_PROXY_ORDER,
+                               p_check::Int = _FMM_CHECK_ORDER,
+                               include_proxy_geometry::Bool = false,
+                               kernel::AbstractKernel = EulerKernel(),
+                               domain::AbstractDomain = UnboundedDomain()) where {T}
     direct_lists, approx_lists = _build_treecode_worklists(tree)
     flat_indices = _build_flat_indices(tree, contours)
     node_to_leaf = _build_node_to_leaf(tree)
     segment_layers = _build_segment_layers(tree, contour_layers)
-    return TreeEvalPlan(flat_indices, direct_lists, approx_lists, node_to_leaf, segment_layers)
+    leaf_proxy_points, leaf_check_points = _build_leaf_proxy_geometry(
+        tree; p, p_check, include_proxy_geometry)
+    leaf_check_to_proxy = _build_leaf_check_to_proxy(
+        tree, kernel, domain, leaf_proxy_points, leaf_check_points;
+        include_proxy_geometry)
+    return TreeEvalPlan(flat_indices, direct_lists, approx_lists, node_to_leaf,
+                        segment_layers, leaf_proxy_points, leaf_check_points,
+                        leaf_check_to_proxy)
 end
 
 function _box_direct_velocity(tree::FMMTree{T},
@@ -420,7 +477,8 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     # to the production treecode is safer than silently dropping coarse-leaf
     # colleague contributions.
     _has_unhandled_coarse_leaf_interactions(tree) && return _treecode_velocity!(vel, prob)
-    plan = _build_tree_eval_plan(tree, contours)
+    plan = _build_tree_eval_plan(tree, contours; p, p_check, include_proxy_geometry=true,
+                                 kernel, domain)
 
     kernel = prob.kernel
     domain = prob.domain
@@ -438,7 +496,7 @@ function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {
     m2l_op = precompute_m2l_operators(tree, kernel, domain, ops; p, p_check)
 
     # Full FMM pipeline
-    _s2m!(proxy_data, tree, contours, kernel, domain, ops, ewald; p, p_check)
+    _s2m!(proxy_data, tree, contours, plan, kernel, domain, ops, ewald; p, p_check)
     _m2m_upward!(proxy_data, tree, ops; p)
     _m2l!(proxy_data, tree, m2l_op; p)
     _l2l_downward!(proxy_data, tree, ops; p)
@@ -567,9 +625,7 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
 
-            check_pts_inner = _check_points(box.center, box.half_width, p_check)
-            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
-            check_pts = vcat(check_pts_inner, check_pts_outer)
+            check_pts = plan.leaf_check_points[leaf]
             n_check = length(check_pts)
 
             vel_check_x = Vector{T}(undef, n_check)
@@ -596,8 +652,8 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = _proxy_points(box.center, box.half_width, p)
-            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+            proxy_pts = plan.leaf_proxy_points[leaf]
+            K_cp = plan.leaf_check_to_proxy[leaf]
 
             if kernel isa EulerKernel
                 K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
@@ -621,9 +677,7 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
 
-            check_pts_inner = _check_points(box.center, box.half_width, p_check)
-            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
-            check_pts = vcat(check_pts_inner, check_pts_outer)
+            check_pts = plan.leaf_check_points[leaf]
             n_check = length(check_pts)
 
             vel_check_x = Vector{T}(undef, n_check)
@@ -650,8 +704,8 @@ function _s2m_modal!(proxy_data, tree, all_contours, plan::TreeEvalPlan,
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = _proxy_points(box.center, box.half_width, p)
-            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+            proxy_pts = plan.leaf_proxy_points[leaf]
+            K_cp = plan.leaf_check_to_proxy[leaf]
 
             if kernel isa EulerKernel
                 K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
@@ -717,7 +771,7 @@ function _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets,
 
                     # Local expansion evaluation
                     if length(proxy_data[li].local_strengths) > 0
-                        proxy_pts = _proxy_points(box.center, box.half_width, p)
+                        proxy_pts = plan.leaf_proxy_points[li]
                         for k in 1:p
                             G = _kernel_value(kernel, domain, xi, proxy_pts[k])
                             v_local += G * proxy_data[li].local_strengths[k]

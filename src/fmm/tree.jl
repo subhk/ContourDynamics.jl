@@ -37,12 +37,15 @@ struct FMMTree{T<:AbstractFloat}
     max_level::Int
 end
 
-struct TreeEvalPlan
+struct TreeEvalPlan{T<:AbstractFloat}
     flat_indices::Vector{Int}
     direct_lists::Vector{Vector{Int}}
     approx_lists::Vector{Vector{Int}}
     node_to_leaf::Dict{Tuple{Int,Int}, Int}
     segment_layers::Vector{Int}
+    leaf_proxy_points::Vector{Vector{SVector{2,T}}}
+    leaf_check_points::Vector{Vector{SVector{2,T}}}
+    leaf_check_to_proxy::Vector{Matrix{T}}
 end
 
 # ── Helper functions ────────────────────────────────────────

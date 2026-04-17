@@ -324,8 +324,7 @@ function _local_eval!(
         # Skip leaves with no local strengths
         (length(local_s) == 0 || all(s -> s == zero(SVector{2,T}), local_s)) && continue
 
-        # Compute proxy points for this leaf
-        proxy_pts = _proxy_points(box.center, box.half_width, p)
+        proxy_pts = plan.leaf_proxy_points[leaf_idx]
 
         # For each segment (target node) in this leaf
         for si in box.segment_range

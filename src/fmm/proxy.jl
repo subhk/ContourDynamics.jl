@@ -252,6 +252,7 @@ function _s2m!(
     proxy_data::Vector{ProxyData{T}},
     tree::FMMTree{T},
     contours::AbstractVector{PVContour{T}},
+    plan::TreeEvalPlan{T},
     kernel::AbstractKernel,
     domain::AbstractDomain,
     ops::Vector{LevelOperators{T}},
@@ -273,11 +274,7 @@ function _s2m!(
         Threads.@threads for li_idx in 1:length(leaves)
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
-            level = box.level
-
-            check_pts_inner = _check_points(box.center, box.half_width, p_check)
-            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
-            check_pts = vcat(check_pts_inner, check_pts_outer)
+            check_pts = plan.leaf_check_points[leaf]
 
             n_check = length(check_pts)
             vel_check_x = Vector{T}(undef, n_check)
@@ -301,8 +298,8 @@ function _s2m!(
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = _proxy_points(box.center, box.half_width, p)
-            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+            proxy_pts = plan.leaf_proxy_points[leaf]
+            K_cp = plan.leaf_check_to_proxy[leaf]
 
             if kernel isa EulerKernel
                 K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
@@ -325,11 +322,7 @@ function _s2m!(
         for li_idx in 1:length(leaves)
             leaf = leaves[li_idx]
             box = tree.boxes[leaf]
-            level = box.level
-
-            check_pts_inner = _check_points(box.center, box.half_width, p_check)
-            check_pts_outer = _check_points(box.center, box.half_width, p_check; radius_ratio=T(4))
-            check_pts = vcat(check_pts_inner, check_pts_outer)
+            check_pts = plan.leaf_check_points[leaf]
 
             n_check = length(check_pts)
             vel_check_x = Vector{T}(undef, n_check)
@@ -353,8 +346,8 @@ function _s2m!(
                 vel_check_y[ic] = vy
             end
 
-            proxy_pts = _proxy_points(box.center, box.half_width, p)
-            K_cp = _build_kernel_matrix(kernel, domain, check_pts, proxy_pts)
+            proxy_pts = plan.leaf_proxy_points[leaf]
+            K_cp = plan.leaf_check_to_proxy[leaf]
 
             if kernel isa EulerKernel
                 K_aug = vcat(K_cp, reshape(fill(one(T), p), 1, p))
