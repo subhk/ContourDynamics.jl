@@ -109,7 +109,8 @@ See the [`examples/`](examples/) directory for complete scripts with JLD2 output
 
 ## GPU Acceleration
 
-GPU velocity evaluation for the Euler kernel on unbounded domains. Pass `dev=GPU()` — no other code changes needed:
+GPU velocity evaluation is currently available for the Euler and SQG kernels on
+unbounded domains. Pass `dev=GPU()` — no other code changes needed:
 
 ```julia
 using ContourDynamics, CUDA

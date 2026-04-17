@@ -33,8 +33,9 @@ prob = Problem(; contours=[contour], dt=0.05, kernel=:qg, Ld=Ld)
 ```
 
 !!! note "GPU Support"
-    GPU velocity evaluation is currently limited to the Euler kernel on
-    unbounded domains. QG examples should use the default CPU path.
+    GPU velocity evaluation is currently available for the Euler and SQG
+    kernels on unbounded domains. QG examples should still use the default CPU
+    path.
 
 ### Comparing Euler and QG
 

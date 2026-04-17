@@ -191,10 +191,12 @@ using Test
         prob = Problem(; contours=[c], dt=0.01, dev=:cpu)
         @test prob.contour_problem.dev === CPU()
 
-        # GPU with EulerKernel+UnboundedDomain constructs successfully
+        # GPU with supported unbounded single-layer kernels constructs successfully
         # (error only at velocity! time when CUDA is not loaded)
         prob_gpu = Problem(; contours=[c], dt=0.01, dev=:gpu)
         @test prob_gpu.contour_problem.dev === GPU()
+        prob_sqg_gpu = Problem(; kernel=:sqg, delta_sqg=0.01, contours=[c], dt=0.01, dev=:gpu)
+        @test prob_sqg_gpu.contour_problem.dev === GPU()
 
         # GPU with unsupported kernel/domain errors at construction
         @test_throws ArgumentError Problem(; kernel=:qg, Ld=1.0, contours=[c], dt=0.01, dev=:gpu)

@@ -417,7 +417,7 @@ backend selected by `dev`, then repack the flat result into `vel`.
 """
 function _ka_velocity!(vel::Vector{SVector{2,T}},
                        prob::ContourProblem{K, UnboundedDomain, T, Dev},
-                       dev::Dev) where {K<:Union{EulerKernel,SQGKernel{T}}, T, Dev<:AbstractDevice}
+                       dev::Dev) where {K<:Union{EulerKernel,SQGKernel}, T, Dev<:AbstractDevice}
     N = total_nodes(prob)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
     N == 0 && return vel
