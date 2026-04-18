@@ -2,6 +2,23 @@
 
 This section describes the mathematical foundations of the contour dynamics method as implemented in ContourDynamics.jl.
 
+The goal here is to explain the method without assuming too much notation up
+front. Each page keeps the equations, but also introduces the symbols in plain
+language. For example:
+
+- ``\psi`` is the streamfunction
+- ``\mathbf{u}`` is the velocity field
+- ``q`` is potential vorticity (or vorticity in the Euler case)
+- ``G`` is the Green's function for the inversion operator
+- ``\mathbf{x}`` is the point where you want the velocity
+- ``\mathbf{x}'`` is an integration point on a contour or in an area integral
+- ``C`` is a contour boundary
+
+If you mainly want to know how the package computes things, start with
+[Contour Dynamics](/theory/contour_dynamics). If you want the numerical details
+for periodic domains, surgery, or multi-layer QG, use the more specific pages
+in the sidebar.
+
 Use the left sidebar to jump directly to the topic you want:
 
 - [Contour Dynamics](/theory/contour_dynamics)

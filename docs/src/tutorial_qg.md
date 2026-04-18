@@ -2,6 +2,19 @@
 
 This tutorial introduces the main quasi-geostrophic workflows in ContourDynamics.jl: single-layer QG, periodic domains with beta-plane staircases, and multi-layer QG.
 
+The easiest way to read it is in three passes:
+
+1. start with the single-layer QG example
+2. then look at the periodic-domain example
+3. finally move to the multi-layer example
+
+Each section uses the same overall workflow:
+
+- build contours
+- construct a `Problem`
+- evolve it in time
+- inspect diagnostics or geometry
+
 ## Physical Background
 
 Quasi-geostrophic (QG) dynamics describes rotating stratified flows at small Rossby number. Compared with 2D Euler, the main extra parameter is the **Rossby deformation radius** ``L_d``, which sets the scale where rotation and stratification matter.
@@ -33,9 +46,16 @@ prob = Problem(; contours=[contour], dt=0.05, kernel=:qg, Ld=Ld)
 ```
 
 !!! note "GPU Support"
+    To run these QG workflows on GPU, add `using CUDA` and pass `dev=GPU()`
+    when constructing the `Problem`.
+    
     GPU velocity evaluation is currently available for single-layer Euler, QG,
     and SQG on unbounded or periodic domains, and for direct multi-layer QG on
     unbounded or periodic domains.
+
+At this stage, the only new ingredient compared with the Euler tutorial is the
+deformation radius `Ld`. Everything else about the high-level workflow is the
+same.
 
 ### Comparing Euler and QG
 
@@ -61,6 +81,11 @@ println("Euler speed: $speed_euler")
 println("QG speed (Ld=$Ld): $speed_qg")
 println("Ratio: $(speed_qg / speed_euler)")
 ```
+
+This comparison is useful because it builds intuition for `Ld`:
+
+- large `Ld` means weak screening, so QG looks close to Euler
+- smaller `Ld` means stronger screening, so distant interactions weaken
 
 ### Evolving a QG Vortex
 
@@ -94,6 +119,11 @@ The Ewald cache is built automatically on first use. For custom accuracy, pre-bu
 setup_ewald_cache!(domain(prob), kernel(prob); n_fourier=16, n_images=4)
 ```
 
+Most users do not need to call `setup_ewald_cache!` explicitly. The default
+cache settings are fine for typical tutorial-scale problems. This function is
+mainly useful when you want to trade more setup cost for higher periodic-kernel
+accuracy.
+
 ### Beta-Plane PV Staircase
 
 The background PV gradient ``\beta y`` on a beta plane can be represented as a **PV staircase**, a set of horizontal spanning contours that discretize the continuous gradient:
@@ -113,6 +143,9 @@ println("Is spanning: $(is_spanning(staircase[1]))")
 ```
 
 Each spanning contour has a `wrap` vector that connects the last node back to the first node shifted by one period. That is how the package represents contours that cross the periodic boundary.
+
+That means the staircase contours are not ordinary closed loops sitting inside
+the box. They represent interfaces that continue across the periodic boundary.
 
 ### Beta Drift of a Cyclone
 
@@ -140,6 +173,13 @@ println("Vortex drift: dx=$(cf[1] - c0[1]), dy=$(cf[2] - c0[2])")
 println("(Cyclones drift north-westward on a beta plane)")
 ```
 
+This example shows how the package handles two ideas at once:
+
+- a periodic Green's function through the Ewald machinery
+- a background PV gradient represented by spanning contours
+
+That is why the setup is a little more elaborate than the single-layer QG case.
+
 ## Multi-Layer QG
 
 For ``N``-layer QG dynamics, the layers are coupled through interface deformation. The coupling is encoded in a **coupling matrix** that relates PV in each layer to the streamfunction.
@@ -163,6 +203,9 @@ println("Number of layers: $(nlayers(kernel))")
 
 The constructor automatically eigen-decomposes the coupling matrix. Each eigenmode is evolved independently using either the Euler kernel (barotropic mode) or a QG kernel with the appropriate modal deformation radius.
 
+You do not need to build those modal problems yourself. The package handles the
+eigen-decomposition and the projection back to physical layers internally.
+
 ### Creating a Multi-Layer Problem
 
 ```julia
@@ -179,6 +222,9 @@ prob = Problem(; layers=(layer1_contours, layer2_contours),
 println("Total nodes: $(total_nodes(prob))")
 println("Layers: $(nlayers(prob))")
 ```
+
+This is the multi-layer analogue of the earlier single-layer `Problem` call:
+the only extra pieces are the `layers` tuple, `Ld`, and the coupling matrix.
 
 ### Evolving the Multi-Layer System
 

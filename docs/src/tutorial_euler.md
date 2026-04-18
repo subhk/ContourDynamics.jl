@@ -40,6 +40,18 @@ dt = 0.01
 prob = Problem(; contours=[contour], dt=dt)
 ```
 
+This high-level constructor chooses sensible defaults for the rest of the
+simulation:
+
+- `kernel=:euler`
+- `domain=:unbounded`
+- `stepper=:RK4`
+- `surgery=:standard`
+
+That is enough for many first runs. You only need to specify more options when
+you want a different physical model, a periodic domain, or different surgery
+settings.
+
 !!! tip "GPU Support"
     To run this tutorial on GPU, add `using CUDA` and pass `dev=GPU()` when
     constructing the `Problem`. All other code remains the same.
@@ -73,6 +85,9 @@ end
 
 evolve!(prob; nsteps=5000, callbacks=[diagnostics_callback])
 ```
+
+This callback receives the current `prob` and the current step number. It is a
+convenient way to build time series without changing the solver itself.
 
 ## Verifying the Kirchhoff Solution
 
