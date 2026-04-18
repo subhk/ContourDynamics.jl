@@ -17,7 +17,10 @@ When two contour segments approach within distance ``\delta``:
 - **Same contour**: the contour is **split** (pinched) into two daughter contours
 - **Different contours with same PV**: the contours are **merged** (stitched together)
 
-Reconnection uses a **spatial index** (hash-map binned by ``\delta``-sized grid) for ``O(N \log C)`` candidate detection, where ``N`` is the total node count and ``C`` is the number of contours.
+Reconnection uses a **spatial index** (a hash-map binned by a ``\delta``-sized
+grid) to filter candidate segment pairs before exact distance checks. In
+practice this gives near-linear candidate lookup for well-resolved contours,
+while still handling long segments by sampling each segment into multiple bins.
 
 ## Filament Removal
 
@@ -33,4 +36,8 @@ After reconnection, contours with ``|A| < A_{\min}`` (where ``A`` is the signed 
 | `area_min` | ``A_{\min}`` | Minimum contour area; smaller contours are removed |
 | `n_surgery` | — | Number of time steps between surgery passes |
 
-Typical choices: ``\delta \approx \mu``, ``\Delta_{\max} \approx 10\text{–}40\mu``, ``A_{\min} \approx \delta^2``.
+Typical choices in this implementation are ``\delta \lesssim \mu/4``,
+``\Delta_{\max} \approx 10\text{–}40\mu``, and ``A_{\min} \approx \delta^2``.
+Choosing ``\delta`` too large relative to ``\mu`` increases the chance of
+spurious reconnections and is warned about by the constructor for
+[`SurgeryParams`](@ref).

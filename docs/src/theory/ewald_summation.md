@@ -14,7 +14,7 @@ G_{\text{per}}(\mathbf{r}) = G_{\text{real}}(\mathbf{r}) + G_{\text{Fourier}}(\m
 G_{\text{real}}(\mathbf{r}) = \frac{1}{4\pi} \sum_{\mathbf{n}} E_1(\alpha^2|\mathbf{r} - \mathbf{L}_\mathbf{n}|^2)
 ```
 
-where ``E_1`` is the exponential integral, ``\alpha = \sqrt{\pi}/\min(L_x, L_y)`` is the splitting parameter, and the sum runs over periodic images ``\mathbf{L}_\mathbf{n} = (2nL_x, 2mL_y)``. The Gaussian damping ensures rapid convergence (typically 2 images suffice).
+where ``E_1`` is the exponential integral, ``\alpha = \sqrt{\pi}/\sqrt{L_xL_y}`` is the splitting parameter used by the implementation, and the sum runs over periodic images ``\mathbf{L}_\mathbf{n} = (2nL_x, 2mL_y)``. The Gaussian damping ensures rapid convergence (typically 2 images suffice).
 
 ### Fourier-Space Sum
 

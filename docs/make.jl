@@ -17,7 +17,14 @@ makedocs(;
             "2D Euler Vortex Patch" => "tutorial_euler.md",
             "Quasi-Geostrophic" => "tutorial_qg.md",
         ],
-        "Examples" => "examples.md",
+        "Examples" => [
+            "Overview" => "examples.md",
+            "Vortex Merger" => "examples/vortex_merger.md",
+            "Filamentation" => "examples/filamentation.md",
+            "Beta-Plane Vortex Drift" => "examples/beta_plane_vortex_drift.md",
+            "SQG Elliptical Vortex" => "examples/sqg_elliptical_vortex.md",
+            "Two-Layer QG" => "examples/two_layer_qg.md",
+        ],
         "Theory & Method" => [
             "Overview" => "theory.md",
             "Contour Dynamics" => "theory/contour_dynamics.md",
