@@ -31,23 +31,22 @@ Requires Julia 1.10 or later.
 ## Quick Start
 
 ```julia
-using ContourDynamics, StaticArrays
+using ContourDynamics
 
-# Circular vortex patch: 128 nodes, radius 1, PV jump 2pi
-R, N, pv = 1.0, 128, 2pi
-nodes = [SVector(R * cos(2pi * k / N), R * sin(2pi * k / N)) for k in 0:N-1]
+# Circular vortex patch with sensible defaults:
+# RK4 time stepping + standard contour surgery
+prob = Problem(; contours=[circular_patch(1.0, 128, 2pi)], dt=0.01)
 
-prob = ContourProblem(EulerKernel(), UnboundedDomain(), [PVContour(nodes, pv)])
-stepper = RK4Stepper(0.01, total_nodes(prob))
-params = SurgeryParams(0.002, 0.01, 0.2, 1e-6, 10)
-
-evolve!(prob, stepper, params; nsteps=1000)
+evolve!(prob; nsteps=1000)
 
 # Analytical diagnostics — no gridding
 energy(prob)
 circulation(prob)
 enstrophy(prob)
 ```
+
+If you prefer full control, the lower-level API with `ContourProblem`,
+`RK4Stepper`, and `SurgeryParams` remains available.
 
 ## Physics Kernels
 
@@ -120,9 +119,8 @@ Pass `dev=GPU()` — no other code changes needed:
 ```julia
 using ContourDynamics, CUDA
 
-prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours; dev=GPU())
-stepper = RK4Stepper(0.01, total_nodes(prob); dev=GPU())
-evolve!(prob, stepper, params; nsteps=1000)
+prob = Problem(; contours=contours, dt=0.01, dev=:gpu)
+evolve!(prob; nsteps=1000)
 ```
 
 Small and medium problems use the direct KA/CUDA path. Large problems reuse the
@@ -142,11 +140,7 @@ Optional integrations loaded on demand (Julia 1.10+):
 | `ContourDynamicsDiffEqExt` | OrdinaryDiffEq | `to_ode_problem` — DifferentialEquations.jl bridge |
 | `ContourDynamicsMakieExt` | Makie | `record_evolution` — animated contour videos |
 | `ContourDynamicsRecordedArraysExt` | RecordedArrays | `recorded_diagnostics` — time-series callbacks |
-| `ContourDynamicsJLD2Ext` | JLD2 | `save_snapshot` / `load_snapshot` / `jld2_recorder` — checkpointing |
-
-## Documentation
-
-Full documentation is available at [subhk.github.io/ContourDynamics.jl](https://subhk.github.io/ContourDynamics.jl/dev/), including tutorials, API reference, and mathematical background.
+| `ContourDynamicsJLD2Ext` | JLD2 | `save_snapshot` / `load_snapshot` / `jld2_recorder` / `load_simulation` — checkpointing |
 
 ## References
 
