@@ -998,6 +998,16 @@ Orchestrates the complete FMM pipeline: tree construction, operator
 precomputation, upward pass (S2M, M2M), interaction pass (M2L),
 downward pass (L2L), local evaluation, and near-field correction.
 """
+@inline _all_finite(vec::AbstractVector{SVector{2,T}}) where {T} =
+    all(v -> isfinite(v[1]) && isfinite(v[2]), vec)
+
+@inline function _proxy_data_isfinite(proxy_data)
+    return all(pd ->
+        _all_finite(pd.equiv_strengths) &&
+        _all_finite(pd.local_strengths),
+        proxy_data)
+end
+
 function _experimental_fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     contours = prob.contours
     N = total_nodes(prob)
@@ -1029,11 +1039,15 @@ function _experimental_fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourPro
 
     # Full FMM pipeline
     _s2m!(proxy_data, tree, contours, plan, kernel, domain, ops, ewald; p, p_check)
+    _proxy_data_isfinite(proxy_data) || return _direct_velocity!(vel, prob)
     _m2m_upward!(proxy_data, tree, ops; p)
     _m2l!(proxy_data, tree, m2l_op; p)
+    _proxy_data_isfinite(proxy_data) || return _direct_velocity!(vel, prob)
     _l2l_downward!(proxy_data, tree, ops; p)
+    _proxy_data_isfinite(proxy_data) || return _direct_velocity!(vel, prob)
     _local_eval!(vel, tree, proxy_data, contours, kernel, domain, plan; p)
     _near_field!(vel, tree, contours, kernel, domain, ewald, plan)
+    _all_finite(vel) || return _direct_velocity!(vel, prob)
 
     return vel
 end
@@ -1156,12 +1170,18 @@ end
 # --- Multi-layer FMM support ---
 
 """
-    _experimental_fmm_velocity!(vel, prob::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain})
+    _experimental_multilayer_fmm_velocity!(vel, prob)
 
-Unbounded multi-layer proxy FMM using modal decomposition.
+Mode-by-mode multi-layer proxy FMM.
+
+This reuses the single-layer proxy FMM for each vertical mode, then projects
+the modal velocity fields back into layer space with the kernel eigenvectors.
+The approach is a little less specialized than the dedicated modal proxy path,
+but it is substantially easier to validate and keeps the multi-layer runtime on
+top of the already-tested single-layer implementation.
 """
-function _experimental_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
-                                     prob::MultiLayerContourProblem{NL, <:Any, UnboundedDomain}) where {NL, T}
+function _experimental_multilayer_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
+                                                prob::MultiLayerContourProblem{NL}) where {NL, T}
     kernel = prob.kernel
     evals = kernel.eigenvalues
     P = kernel.eigenvectors
@@ -1172,46 +1192,57 @@ function _experimental_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
     end
 
     all_contours = PVContour{T}[]
-    contour_layer = Int[]
-    layer_offsets = Vector{Int}(undef, NL)
-    contour_offset = 0
+    layer_node_offsets = Vector{Int}(undef, NL)
+    node_offset = 0
     for li in 1:NL
-        layer_offsets[li] = contour_offset
+        layer_node_offsets[li] = node_offset
         for c in prob.layers[li]
             push!(all_contours, c)
-            push!(contour_layer, li)
-            contour_offset += 1
+            node_offset += nnodes(c)
         end
     end
     isempty(all_contours) && return vel
 
-    tree = build_fmm_tree(all_contours)
-    _has_unhandled_coarse_leaf_interactions(tree) && return _treecode_velocity!(vel, prob)
-
-    p = _FMM_PROXY_ORDER
-    p_check = _FMM_CHECK_ORDER
-    nboxes = length(tree.boxes)
-    domain = UnboundedDomain()
-
+    mode_contours = similar(all_contours)
+    mode_vel = zeros(SVector{2,T}, node_offset)
     for mode in 1:NL
         lam = evals[mode]
         mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
                       QGKernel(one(T) / sqrt(abs(lam)))
-        plan = _build_tree_eval_plan(tree, all_contours, contour_layer;
-                                     p, p_check, include_proxy_geometry=true,
-                                     kernel=mode_kernel, domain)
-        proxy_data = [ProxyData(zeros(SVector{2,T}, p), SVector{2,T}[]) for _ in 1:nboxes]
-        ops = precompute_level_operators(tree, mode_kernel, domain; p, p_check)
-        m2l_op = precompute_m2l_operators(tree, mode_kernel, domain, ops; p, p_check)
+        contour_idx = 1
+        for source_layer in 1:NL
+            src_weight = P_inv[mode, source_layer]
+            for c in prob.layers[source_layer]
+                mode_contours[contour_idx] = PVContour(c.nodes, src_weight * c.pv, c.wrap)
+                contour_idx += 1
+            end
+        end
 
-        _s2m_modal!(proxy_data, tree, all_contours, plan, P_inv, mode, mode_kernel, domain, ops, NL; p, p_check)
-        _m2m_upward!(proxy_data, tree, ops; p)
-        _m2l!(proxy_data, tree, m2l_op; p)
-        _l2l_downward!(proxy_data, tree, ops; p)
-        _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets, prob, P, mode, mode_kernel, domain, NL, plan; p)
+        mode_prob = ContourProblem(mode_kernel, prob.domain, mode_contours; dev=prob.dev)
+        _experimental_fmm_velocity!(mode_vel, mode_prob)
+
+        for target_layer in 1:NL
+            target_weight = P[target_layer, mode]
+            abs(target_weight) < eps(T) && continue
+            vel_layer = vel[target_layer]
+            offset = layer_node_offsets[target_layer]
+            @inbounds for j in eachindex(vel_layer)
+                vel_layer[j] += target_weight * mode_vel[offset + j]
+            end
+        end
     end
 
     return vel
+end
+
+"""
+    _experimental_fmm_velocity!(vel, prob::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain})
+
+Unbounded multi-layer proxy FMM using modal decomposition.
+"""
+function _experimental_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
+                                     prob::MultiLayerContourProblem{NL, <:Any, UnboundedDomain}) where {NL, T}
+    return _experimental_multilayer_fmm_velocity!(vel, prob)
 end
 
 """
@@ -1221,10 +1252,7 @@ Periodic multi-layer proxy FMM.
 """
 function _experimental_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
                                      prob::MultiLayerContourProblem{NL, <:Any, <:PeriodicDomain{T}}) where {NL, T}
-    unbounded_prob = MultiLayerContourProblem(prob.kernel, UnboundedDomain(), prob.layers; dev=prob.dev)
-    _experimental_fmm_velocity!(vel, unbounded_prob)
-    _multilayer_periodic_correction!(vel, prob)
-    return vel
+    return _experimental_multilayer_fmm_velocity!(vel, prob)
 end
 
 """
