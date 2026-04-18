@@ -15,8 +15,8 @@
 #   scheme for extended integrations using contour dynamics."
 #   J. Comput. Phys. 77(1), 240–266. doi:10.1016/0021-9991(88)90165-9
 
-# To run on GPU, add `using CUDA` and pass `dev=:gpu`:
-#   prob = Problem(; contours=[contour], dt=0.005, dev=:gpu)
+# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
+#   prob = Problem(; contours=[contour], dt=0.005, dev=GPU())
 
 using ContourDynamics
 using JLD2

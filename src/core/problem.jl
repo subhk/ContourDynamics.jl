@@ -78,7 +78,7 @@ end
 # ── Factory constructor ─────────────────────────────────
 
 """
-    Problem(; contours, dt, kernel=:euler, domain=:unbounded, stepper=:RK4, surgery=:standard, dev=:cpu, T=Float64, ...)
+    Problem(; contours, dt, kernel=:euler, domain=:unbounded, stepper=:RK4, surgery=:standard, dev=CPU(), T=Float64, ...)
 
 Convenience constructor that builds a [`ContourProblem`](@ref),
 time stepper, and [`SurgeryParams`](@ref) from keyword arguments.
@@ -105,7 +105,7 @@ time stepper, and [`SurgeryParams`](@ref) from keyword arguments.
 - `surgery=:standard`: `:standard`, `:conservative`, `:aggressive`, `:none`, or a `SurgeryParams`
 
 # Optional — Device and type
-- `dev=:cpu`: `:cpu` or `:gpu`
+- `dev=CPU()`: `CPU()` or `GPU()`
 - `T=Float64`: floating-point type
 
 # Multi-layer
@@ -126,7 +126,7 @@ function Problem(;
     stepper::Symbol=:RK4,
     ra_coeff::Real=0.05,
     surgery=:standard,
-    dev::Symbol=:cpu,
+    dev=CPU(),
     T::Type{<:AbstractFloat}=Float64,
 )
     # ── Validate contours / layers ──
@@ -172,13 +172,9 @@ function Problem(;
     end
 
     # ── Build device ──
-    device = if dev === :cpu
-        CPU()
-    elseif dev === :gpu
-        GPU()
-    else
-        throw(ArgumentError("Unknown device :$dev. Use :cpu or :gpu."))
-    end
+    dev isa AbstractDevice || throw(ArgumentError(
+        "`dev` must be `CPU()` or `GPU()`, got $(repr(dev))."))
+    device = dev
 
     # ── Build ContourProblem or MultiLayerContourProblem ──
     cp = if _is_multilayer

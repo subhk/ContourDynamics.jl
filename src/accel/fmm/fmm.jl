@@ -234,6 +234,12 @@ Execute the production treecode using the preclassified worklists stored in
 `plan`. Each target leaf is processed independently, first by direct near-field
 boxes and then by accepted far-field boxes evaluated with the linearized model.
 """
+# Per-thread scratch storage for the KA-assisted treecode leaf stages.
+# The direct and linearized leaf evaluators both need packed source segments,
+# packed target/sample points, temporary device buffers for the subset kernel,
+# and CPU buffers for copied-back results. Keeping them in one reusable
+# workspace avoids repeated allocation in the hot leaf loop and keeps the
+# wrapper methods thin.
 mutable struct TreecodeSubsetWorkspace{T, DA<:AbstractVector{T}}
     cpu_ax::Vector{T}
     cpu_ay::Vector{T}
@@ -291,6 +297,9 @@ end
 @inline _treecode_leaf_source_count(tree::FMMTree, source_box_idx::Int) =
     length(tree.boxes[source_box_idx].segment_range)
 
+@inline _treecode_leaf_target_count(tree::FMMTree, target_leaf_idx::Int) =
+    length(tree.boxes[target_leaf_idx].segment_range)
+
 function _build_treecode_subset_workspaces(tree::FMMTree{T},
                                            plan::TreeEvalPlan{T},
                                            dev::AbstractDevice) where {T}
@@ -305,6 +314,15 @@ function _build_treecode_subset_workspaces(tree::FMMTree{T},
     return [_create_treecode_subset_workspace(dev, T, max_source, max_target) for _ in 1:nwork]
 end
 
+@inline function _treecode_ka_workspaces(tree::FMMTree{T},
+                                         plan::TreeEvalPlan{T},
+                                         kernel::AbstractKernel,
+                                         domain::AbstractDomain,
+                                         dev::AbstractDevice) where {T}
+    _treecode_direct_ka_available(dev, kernel, domain) || return nothing
+    return _build_treecode_subset_workspaces(tree, plan, dev)
+end
+
 function _apply_treecode_worklists!(
     vel::Vector{SVector{2,T}},
     tree::FMMTree{T},
@@ -315,12 +333,12 @@ function _apply_treecode_worklists!(
     ewald_cache,
     dev::AbstractDevice=CPU(),
 ) where {T}
-    workspaces = _treecode_direct_ka_available(dev, kernel, domain) ?
-                 _build_treecode_subset_workspaces(tree, plan, dev) : nothing
+    workspaces = _treecode_ka_workspaces(tree, plan, kernel, domain, dev)
+    ka_enabled = workspaces !== nothing
 
     function process_leaf(li_idx::Int)
         target_leaf_idx = tree.leaf_indices[li_idx]
-        if _treecode_direct_ka_available(dev, kernel, domain)
+        if ka_enabled
             work = workspaces[Threads.threadid()]
             _ka_treecode_direct_lists_to_leaf!(vel, tree, target_leaf_idx, plan.direct_lists[li_idx],
                                                contours, plan, kernel, domain, dev, work)
@@ -396,7 +414,7 @@ function _ka_treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
                                       dev::AbstractDevice) where {T}
     n_source = _treecode_leaf_source_count(tree, source_box_idx)
     n_source == 0 && return nothing
-    n_targets = length(tree.boxes[target_leaf_idx].segment_range)
+    n_targets = _treecode_leaf_target_count(tree, target_leaf_idx)
     n_targets == 0 && return nothing
     ws = _create_treecode_subset_workspace(dev, T, n_source, n_targets)
     return _ka_treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
@@ -461,6 +479,13 @@ function _fill_treecode_sources!(ax::AbstractVector{T}, ay::AbstractVector{T},
     return k - 1
 end
 
+"""
+    _for_each_treecode_target(tree, target_leaf_idx, contours, plan, f!)
+
+Iterate over the flat target nodes owned by one tree leaf and call
+`f!(k, flat_idx, x)` for each target. This keeps the target-scatter structure
+shared between CPU and KA-assisted treecode stages.
+"""
 @inline function _for_each_treecode_target(tree::FMMTree{T},
                                            target_leaf_idx::Int,
                                            contours::AbstractVector{PVContour{T}},
@@ -618,7 +643,7 @@ function _ka_treecode_direct_lists_to_leaf!(vel::Vector{SVector{2,T}},
     isempty(source_box_indices) && return nothing
     n_source = _treecode_leaf_source_count(tree, source_box_indices)
     n_source == 0 && return nothing
-    n_targets = length(tree.boxes[target_leaf_idx].segment_range)
+    n_targets = _treecode_leaf_target_count(tree, target_leaf_idx)
     n_targets == 0 && return nothing
     ws = _create_treecode_subset_workspace(dev, T, n_source, n_targets)
     return _ka_treecode_direct_lists_to_leaf!(vel, tree, target_leaf_idx, source_box_indices,

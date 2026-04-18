@@ -41,7 +41,7 @@ prob = Problem(; contours=[contour], dt=dt)
 ```
 
 !!! tip "GPU Support"
-    To run this tutorial on GPU, add `using CUDA` and pass `dev=:gpu` when
+    To run this tutorial on GPU, add `using CUDA` and pass `dev=GPU()` when
     constructing the `Problem`. All other code remains the same.
 
 You can check initial diagnostics right away:

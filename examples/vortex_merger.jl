@@ -16,8 +16,8 @@
 #   two-dimensional, inviscid, incompressible flows."
 #   Comput. Phys. Rep. 10(3), 77–146. doi:10.1016/0167-7977(89)90004-X
 
-# To run on GPU, add `using CUDA` and pass `dev=:gpu`:
-#   prob = Problem(; contours=[c1, c2], dt=0.01, dev=:gpu)
+# To run on GPU, add `using CUDA` and pass `dev=GPU()`:
+#   prob = Problem(; contours=[c1, c2], dt=0.01, dev=GPU())
 
 using ContourDynamics
 using JLD2

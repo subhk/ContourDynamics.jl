@@ -77,10 +77,10 @@ and `SurgeryParams` yourself. The tutorials start with the high-level `Problem`
 wrapper because it is the easiest way to get a working simulation.
 
 !!! tip "GPU Acceleration"
-    Pass `dev=:gpu` to run velocity computations on an NVIDIA GPU:
+Pass `dev=GPU()` to run velocity computations on an NVIDIA GPU:
     ```julia
     using CUDA
-    prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=:gpu)
+prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=GPU())
     ```
     See the [tutorial](/tutorial_euler) for details.
 

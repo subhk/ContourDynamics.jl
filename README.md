@@ -119,7 +119,7 @@ Pass `dev=GPU()` — no other code changes needed:
 ```julia
 using ContourDynamics, CUDA
 
-prob = Problem(; contours=contours, dt=0.01, dev=:gpu)
+prob = Problem(; contours=contours, dt=0.01, dev=GPU())
 evolve!(prob; nsteps=1000)
 ```
 

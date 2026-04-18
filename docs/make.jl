@@ -4,7 +4,7 @@ using Documenter, DocumenterVitepress
 makedocs(;
     modules = [ContourDynamics],
     authors = "Subhajit Kar",
-    repo = "https://github.com/subhk/ContourDynamics.jl",
+    repo = "https://github.com/subhk/ContourDynamics.jl/blob/{commit}{path}#{line}",
     sitename = "ContourDynamics.jl",
     format = DocumenterVitepress.MarkdownVitepress(
         repo = "https://github.com/subhk/ContourDynamics.jl",
