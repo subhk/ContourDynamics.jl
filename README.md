@@ -128,8 +128,8 @@ evolve!(prob, stepper, params; nsteps=1000)
 Small and medium problems use the direct KA/CUDA path. Large problems reuse the
 existing treecode/FMM policy today, so the first accelerator-side GPU step is a
 hybrid dispatcher rather than a full GPU treecode implementation. The first
-treecode stage that can now reuse KA is the direct leaf-to-leaf interaction
-stage when CUDA is available.
+treecode stages that can now reuse KA are the per-leaf direct and linearized
+worklist evaluations, batched one target leaf at a time when CUDA is available.
 
 Surgery stays on CPU. Requires NVIDIA GPU with CUDA.jl v5+ for the direct GPU path.
 

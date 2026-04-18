@@ -35,7 +35,7 @@ features:
     linkText: See periodic example
   - title: Analytical Diagnostics
     details: Compute energy, enstrophy, circulation, angular momentum, and ellipse moments directly from the contour geometry.
-    link: /api#Diagnostics
+    link: /api/diagnostics
     linkText: View diagnostics API
   - title: Ecosystem Integration
     details: Optional extensions connect to DifferentialEquations.jl, Makie.jl, RecordedArrays.jl, and JLD2.jl.

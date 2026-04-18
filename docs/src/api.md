@@ -1,6 +1,6 @@
 # API Reference
 
-This page lists the public API by topic.
+This section lists the public API by topic.
 
 If you are new to the package, the most common entry points are:
 
@@ -12,160 +12,70 @@ If you are new to the package, the most common entry points are:
 If you want a worked example before diving into the full reference, start with
 the [Euler tutorial](/tutorial_euler).
 
-## Accelerator Status
+Use the left sidebar to jump directly to the topic you want:
 
-Current large-problem behavior is:
+- [Types](/api/types)
+- [Velocity & Acceleration](/api/velocity)
+- [Time Integration](/api/time_integration)
+- [Surgery](/api/surgery)
+- [Diagnostics](/api/diagnostics)
+- [Helpers](/api/helpers)
+- [Periodic & Ewald](/api/periodic_ewald)
+- [Devices](/api/devices)
+- [Internals](/api/internals)
 
-- single-layer unbounded CPU: direct for small problems, treecode for large problems
-- single-layer unbounded CPU with experimental proxy FMM enabled: optional experimental FMM path
-- single-layer periodic CPU: treecode for large problems in normal use; the current periodic `_fmm_velocity!` method is still a direct fallback
-- multi-layer CPU: treecode for large problems in normal use; the current multi-layer `_fmm_velocity!` method is still a direct fallback
-- GPU: supported for single-layer Euler, QG, and SQG on unbounded or periodic domains, plus direct multi-layer QG on unbounded or periodic domains; large GPU-tagged problems use a hybrid path today, with treecode/FMM dispatch still CPU-led and the direct leaf interaction stage able to reuse KA
+## Topic Guide
 
-So, at the moment, the production accelerator story is treecode plus the direct
-GPU unbounded-kernel path. The proxy FMM remains experimental and is not the active
-production path for periodic or multi-layer problems.
+### Types
 
-## Types
+Core public structs including kernels, contours, domains, problems, and steppers.
 
-### Kernels
+Open: [Types](/api/types)
 
-```@docs
-EulerKernel
-QGKernel
-SQGKernel
-MultiLayerQGKernel
-```
+### Velocity & Acceleration
 
-### Contours and Domains
+Pointwise and batched velocity APIs, plus the current status of treecode, FMM, and GPU support.
 
-```@docs
-PVContour
-UnboundedDomain
-PeriodicDomain
-```
+Open: [Velocity & Acceleration](/api/velocity)
 
-### Problem Structs
+### Time Integration
 
-```@docs
-ContourProblem
-MultiLayerContourProblem
-SurgeryParams
-Problem
-```
+Timestep and evolution entry points.
 
-### Accessors
+Open: [Time Integration](/api/time_integration)
 
-```@docs
-contours
-kernel
-domain
-```
+### Surgery
 
-### Time Steppers
+Remeshing, reconnection, and filament-removal functions.
 
-```@docs
-RK4Stepper
-LeapfrogStepper
-```
+Open: [Surgery](/api/surgery)
 
-## Velocity Computation
+### Diagnostics
 
-```@docs
-velocity!
-velocity
-segment_velocity
-```
+Energy, circulation, enstrophy, geometry, and related contour diagnostics.
 
-## Time Integration
+Open: [Diagnostics](/api/diagnostics)
 
-```@docs
-timestep!
-evolve!
-resize_buffers!
-```
+### Helpers
 
-## Surgery
+Contour utilities and shape constructors.
 
-The surgery API handles remeshing, reconnection, and filament removal. Most
-users only need `SurgeryParams` and `surgery!`; the lower-level functions are
-mainly useful if you want to customize the surgery pipeline.
+Open: [Helpers](/api/helpers)
 
-```@docs
-surgery!
-remesh
-ContourDynamics.find_close_segments
-ContourDynamics.build_spatial_index
-ContourDynamics.reconnect!
-ContourDynamics.remove_filaments!
-```
+### Periodic & Ewald
 
-## Diagnostics
+Periodic-domain helpers and Ewald cache/setup routines.
 
-```@docs
-vortex_area
-centroid
-ellipse_moments
-energy
-enstrophy
-circulation
-angular_momentum
-```
+Open: [Periodic & Ewald](/api/periodic_ewald)
 
-## Contour Helpers
+### Devices
 
-```@docs
-nnodes
-nlayers
-total_nodes
-arc_lengths
-next_node
-beta_staircase
-is_spanning
-```
+CPU/GPU device types and array-constructor helpers.
 
-## Shape Helpers
+Open: [Devices](/api/devices)
 
-```@docs
-circular_patch
-elliptical_patch
-rankine_vortex
-```
+### Internals
 
-## Ewald Summation
+Lower-level functions documented for advanced users and developers.
 
-```@docs
-EwaldCache
-build_ewald_cache
-setup_ewald_cache!
-clear_ewald_cache!
-```
-
-## Periodic Domains
-
-```@docs
-wrap_nodes!
-```
-
-## Device Types
-
-```@docs
-CPU
-GPU
-device_array
-```
-
-## Internals
-
-These functions are documented for developers and advanced users. They are not
-part of the stable high-level API.
-
-```@docs
-ContourDynamics._collect_all_nodes!
-ContourDynamics._scatter_nodes!
-ContourDynamics._scatter_shifted!
-ContourDynamics._expint_e1
-ContourDynamics._segment_min_dist2
-ContourDynamics._best_stitch_nodes
-ContourDynamics._check_spanning_proximity
-```
+Open: [Internals](/api/internals)

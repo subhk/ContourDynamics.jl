@@ -196,4 +196,4 @@ println("Circulation change: $(abs(circulation(prob) - circulation0) / abs(circu
 
 - See complete runnable scripts in the [Examples](/examples) section
 - Read the [Theory overview](/theory), [Ewald Summation](/theory/ewald_summation), or [Multi-Layer QG](/theory/multilayer_qg) for the relevant mathematics
-- Check the [API Reference](/api) for all available functions
+- Check the [API overview](/api) or jump straight to the relevant sidebar section for available functions
