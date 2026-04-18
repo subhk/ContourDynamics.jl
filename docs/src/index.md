@@ -21,34 +21,27 @@ hero:
       link: https://github.com/subhk/ContourDynamics.jl
 
 features:
-  - icon: 🌀
-    title: 2D Euler, SQG & QG Kernels
+  - title: 2D Euler, SQG & QG Kernels
     details: Built-in kernels for Euler, SQG, QG, and multi-layer QG. Euler and SQG segment integrals are handled analytically, and QG uses a stable high-order quadrature scheme.
     link: /theory
     linkText: Learn the math
-  - icon: ✂️
-    title: Contour Surgery
+  - title: Contour Surgery
     details: Adaptive remeshing, reconnection, and filament removal keep contours well resolved during long integrations.
     link: /tutorial_euler
     linkText: Try a tutorial
-  - icon: 🔁
-    title: Doubly-Periodic Domains
+  - title: Doubly-Periodic Domains
     details: Periodic domains use Ewald summation and automatic node wrapping. The package also supports beta-plane PV staircases for geophysical examples.
     link: /tutorial_qg#periodic-domains-and-beta-staircases
     linkText: See periodic example
-  - icon: 📊
-    title: Analytical Diagnostics
+  - title: Analytical Diagnostics
     details: Compute energy, enstrophy, circulation, angular momentum, and ellipse moments directly from the contour geometry.
     link: /api#Diagnostics
     linkText: View diagnostics API
-  - icon: 🔌
-    title: Ecosystem Integration
+  - title: Ecosystem Integration
     details: Optional extensions connect to DifferentialEquations.jl, Makie.jl, RecordedArrays.jl, and JLD2.jl.
-  - icon: ⚡
-    title: High Performance
+  - title: High Performance
     details: Fast contour kernels, threaded CPU execution, GPU support for the direct Euler path, and low-allocation timestepping.
-  - icon: 🚀
-    title: GPU Acceleration
+  - title: GPU Acceleration
     details: Pass `dev=GPU()` to offload supported velocity computations to an NVIDIA GPU through CUDA.jl. Surgery and diagnostics still run on CPU.
     link: /tutorial_euler
     linkText: Try a tutorial

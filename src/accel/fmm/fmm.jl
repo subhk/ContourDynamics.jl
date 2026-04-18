@@ -252,7 +252,7 @@ function _apply_treecode_worklists!(
         end
         for source_box_idx in plan.approx_lists[li_idx]
             _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                          contours, plan, kernel, domain, ewald_cache)
+                                          contours, plan, kernel, domain, ewald_cache, dev)
         end
         return nothing
     end
@@ -312,25 +312,9 @@ function _ka_treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
                                       kernel::AbstractKernel,
                                       domain::AbstractDomain,
                                       dev::AbstractDevice) where {T}
-    target_box = tree.boxes[target_leaf_idx]
     source_box = tree.boxes[source_box_idx]
-    n_targets = length(target_box.segment_range)
     n_source = length(source_box.segment_range)
-    n_targets == 0 && return nothing
     n_source == 0 && return nothing
-
-    tx = Vector{T}(undef, n_targets)
-    ty = Vector{T}(undef, n_targets)
-    flat_idxs = Vector{Int}(undef, n_targets)
-    k = 1
-    for target_seg_idx in target_box.segment_range
-        flat_idxs[k] = plan.flat_indices[target_seg_idx]
-        ci_t, ni_t = tree.sorted_segments[target_seg_idx]
-        x = contours[ci_t].nodes[ni_t]
-        tx[k] = x[1]
-        ty[k] = x[2]
-        k += 1
-    end
 
     ax = Vector{T}(undef, n_source)
     ay = Vector{T}(undef, n_source)
@@ -351,6 +335,36 @@ function _ka_treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
         k += 1
     end
 
+    target_box = tree.boxes[target_leaf_idx]
+    n_targets = length(target_box.segment_range)
+    n_targets == 0 && return nothing
+    tx = Vector{T}(undef, n_targets)
+    ty = Vector{T}(undef, n_targets)
+    flat_idxs = Vector{Int}(undef, n_targets)
+    k = 1
+    for target_seg_idx in target_box.segment_range
+        flat_idxs[k] = plan.flat_indices[target_seg_idx]
+        ci_t, ni_t = tree.sorted_segments[target_seg_idx]
+        x = contours[ci_t].nodes[ni_t]
+        tx[k] = x[1]
+        ty[k] = x[2]
+        k += 1
+    end
+
+    vx, vy = _ka_box_direct_velocity_at_targets(ax, ay, bx, by, pv, tx, ty, kernel, domain, dev)
+    @inbounds for i in 1:n_targets
+        vel[flat_idxs[i]] = vel[flat_idxs[i]] + SVector{2,T}(vx[i], vy[i])
+    end
+    return nothing
+end
+
+function _ka_box_direct_velocity_at_targets(ax::Vector{T}, ay::Vector{T}, bx::Vector{T},
+                                            by::Vector{T}, pv::Vector{T},
+                                            tx::Vector{T}, ty::Vector{T},
+                                            kernel::AbstractKernel,
+                                            domain::AbstractDomain,
+                                            dev::AbstractDevice) where {T}
+    n_targets = length(tx)
     seg = SegmentData(to_device(dev, ax), to_device(dev, ay),
                       to_device(dev, bx), to_device(dev, by),
                       to_device(dev, pv))
@@ -360,13 +374,7 @@ function _ka_treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
     dev_vy = device_zeros(dev, T, n_targets)
 
     _ka_velocity_subset!(dev_vx, dev_vy, dev_tx, dev_ty, seg, kernel, domain, dev)
-
-    vx = to_cpu(dev_vx)
-    vy = to_cpu(dev_vy)
-    @inbounds for i in 1:n_targets
-        vel[flat_idxs[i]] = vel[flat_idxs[i]] + SVector{2,T}(vx[i], vy[i])
-    end
-    return nothing
+    return to_cpu(dev_vx), to_cpu(dev_vy)
 end
 
 function _treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
@@ -404,7 +412,8 @@ function _treecode_linearized_to_leaf!(vel::Vector{SVector{2,T}},
                                        plan::TreeEvalPlan,
                                        kernel::AbstractKernel,
                                        domain::AbstractDomain,
-                                       ewald_cache) where {T}
+                                       ewald_cache,
+                                       dev::AbstractDevice=CPU()) where {T}
     target_box = tree.boxes[target_leaf_idx]
     source_box = tree.boxes[source_box_idx]
     center = target_box.center
@@ -413,11 +422,42 @@ function _treecode_linearized_to_leaf!(vel::Vector{SVector{2,T}},
     ex = SVector{2,T}(h, zero(T))
     ey = SVector{2,T}(zero(T), h)
 
-    v0 = _box_direct_velocity(tree, contours, source_box, kernel, domain, center, ewald_cache)
-    vxp = _box_direct_velocity(tree, contours, source_box, kernel, domain, center + ex, ewald_cache)
-    vxm = _box_direct_velocity(tree, contours, source_box, kernel, domain, center - ex, ewald_cache)
-    vyp = _box_direct_velocity(tree, contours, source_box, kernel, domain, center + ey, ewald_cache)
-    vym = _box_direct_velocity(tree, contours, source_box, kernel, domain, center - ey, ewald_cache)
+    if _treecode_direct_ka_available(dev, kernel, domain)
+        n_source = length(source_box.segment_range)
+        ax = Vector{T}(undef, n_source)
+        ay = Vector{T}(undef, n_source)
+        bx = Vector{T}(undef, n_source)
+        by = Vector{T}(undef, n_source)
+        pv = Vector{T}(undef, n_source)
+        k = 1
+        for seg_idx in source_box.segment_range
+            ci_s, ni_s = tree.sorted_segments[seg_idx]
+            c = contours[ci_s]
+            a = c.nodes[ni_s]
+            b = next_node(c, ni_s)
+            ax[k] = a[1]
+            ay[k] = a[2]
+            bx[k] = b[1]
+            by[k] = b[2]
+            pv[k] = c.pv
+            k += 1
+        end
+
+        tx = T[center[1], center[1] + ex[1], center[1] - ex[1], center[1] + ey[1], center[1] - ey[1]]
+        ty = T[center[2], center[2] + ex[2], center[2] - ex[2], center[2] + ey[2], center[2] - ey[2]]
+        vx, vy = _ka_box_direct_velocity_at_targets(ax, ay, bx, by, pv, tx, ty, kernel, domain, dev)
+        v0  = SVector{2,T}(vx[1], vy[1])
+        vxp = SVector{2,T}(vx[2], vy[2])
+        vxm = SVector{2,T}(vx[3], vy[3])
+        vyp = SVector{2,T}(vx[4], vy[4])
+        vym = SVector{2,T}(vx[5], vy[5])
+    else
+        v0 = _box_direct_velocity(tree, contours, source_box, kernel, domain, center, ewald_cache)
+        vxp = _box_direct_velocity(tree, contours, source_box, kernel, domain, center + ex, ewald_cache)
+        vxm = _box_direct_velocity(tree, contours, source_box, kernel, domain, center - ex, ewald_cache)
+        vyp = _box_direct_velocity(tree, contours, source_box, kernel, domain, center + ey, ewald_cache)
+        vym = _box_direct_velocity(tree, contours, source_box, kernel, domain, center - ey, ewald_cache)
+    end
 
     j11 = (vxp[1] - vxm[1]) / (2h)
     j21 = (vxp[2] - vxm[2]) / (2h)

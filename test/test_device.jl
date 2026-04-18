@@ -219,6 +219,75 @@ end
         end
     end
 
+    @testset "Treecode linearized leaf KA helper matches CPU loop" begin
+        shift(nodes, dx, dy) = [SVector(p[1] + dx, p[2] + dy) for p in nodes]
+        base = circular_patch(0.12, 48, 1.0)
+        contours = [
+            PVContour(shift(base.nodes, -0.6, -0.6), 1.0),
+            PVContour(shift(base.nodes,  0.6, -0.6), -0.8),
+            PVContour(shift(base.nodes, -0.6,  0.6), 0.7),
+            PVContour(shift(base.nodes,  0.6,  0.6), -0.6),
+        ]
+        tree = ContourDynamics.build_fmm_tree(contours; max_per_leaf=8)
+        plan = ContourDynamics._build_tree_eval_plan(tree, contours)
+        li_idx = findfirst(!isempty, plan.approx_lists)
+        @test li_idx !== nothing
+
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        source_box_idx = first(plan.approx_lists[li_idx])
+        N = total_nodes(ContourProblem(EulerKernel(), UnboundedDomain(), contours))
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = zeros(SVector{2,Float64}, N)
+        target_box = tree.boxes[target_leaf_idx]
+        flat_idxs = [plan.flat_indices[seg_idx] for seg_idx in target_box.segment_range]
+
+        ContourDynamics._treecode_linearized_to_leaf!(vel_ref, tree, target_leaf_idx, source_box_idx,
+                                                      contours, plan, EulerKernel(), UnboundedDomain(), nothing)
+        ContourDynamics._treecode_linearized_to_leaf!(vel_ka, tree, target_leaf_idx, source_box_idx,
+                                                      contours, plan, EulerKernel(), UnboundedDomain(), nothing, CPU())
+
+        for i in flat_idxs
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
+        end
+    end
+
+    @testset "Treecode linearized leaf KA helper matches periodic QG CPU loop" begin
+        clear_ewald_cache!()
+        shift(nodes, dx, dy) = [SVector(p[1] + dx, p[2] + dy) for p in nodes]
+        base = circular_patch(0.1, 48, 1.0)
+        contours = [
+            PVContour(shift(base.nodes, -0.7, -0.7), 1.0),
+            PVContour(shift(base.nodes,  0.7, -0.7), -0.8),
+            PVContour(shift(base.nodes, -0.7,  0.7), 0.7),
+            PVContour(shift(base.nodes,  0.7,  0.7), -0.6),
+        ]
+        tree = ContourDynamics.build_fmm_tree(contours; max_per_leaf=8)
+        plan = ContourDynamics._build_tree_eval_plan(tree, contours)
+        li_idx = findfirst(!isempty, plan.approx_lists)
+        @test li_idx !== nothing
+
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        source_box_idx = first(plan.approx_lists[li_idx])
+        prob = ContourProblem(QGKernel(1.1), PeriodicDomain(2.0, 2.0), contours)
+        N = total_nodes(prob)
+        ewald = ContourDynamics._prefetch_ewald(prob.domain, EulerKernel())
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = zeros(SVector{2,Float64}, N)
+        target_box = tree.boxes[target_leaf_idx]
+        flat_idxs = [plan.flat_indices[seg_idx] for seg_idx in target_box.segment_range]
+
+        ContourDynamics._treecode_linearized_to_leaf!(vel_ref, tree, target_leaf_idx, source_box_idx,
+                                                      contours, plan, prob.kernel, prob.domain, ewald)
+        ContourDynamics._treecode_linearized_to_leaf!(vel_ka, tree, target_leaf_idx, source_box_idx,
+                                                      contours, plan, prob.kernel, prob.domain, ewald, CPU())
+
+        for i in flat_idxs
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-8, rtol=1e-8)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-8, rtol=1e-8)
+        end
+    end
+
     @testset "KA SQG velocity matches direct CPU" begin
         c = circular_patch(0.5, 32, 1.0)
         prob = ContourProblem(SQGKernel(0.02), UnboundedDomain(), [c])
