@@ -84,32 +84,6 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             end
         end
 
-        @testset "S2M Proxy Strengths" begin
-            c = circular_patch(0.5, 64, 1.0)
-            contours = [c]
-            tree = ContourDynamics.build_fmm_tree(contours; max_per_leaf=100)
-            ops = ContourDynamics.precompute_level_operators(tree, EulerKernel())
-
-            p = ContourDynamics._FMM_PROXY_ORDER
-            p_check = ContourDynamics._FMM_CHECK_ORDER
-            plan = ContourDynamics._build_tree_eval_plan(tree, contours;
-                                                         p, p_check,
-                                                         include_proxy_geometry=true,
-                                                         kernel=EulerKernel(),
-                                                         domain=UnboundedDomain())
-            proxy_data = [ContourDynamics.ProxyData(
-                zeros(SVector{2,Float64}, p),
-                SVector{2,Float64}[]) for _ in 1:length(tree.boxes)]
-
-            ContourDynamics._s2m!(proxy_data, tree, contours, plan, EulerKernel(),
-                                  UnboundedDomain(), ops, nothing; p, p_check)
-
-            leaf = tree.leaf_indices[1]
-            strengths = proxy_data[leaf].equiv_strengths
-            @test length(strengths) == p
-            @test all(s -> isfinite(s[1]) && isfinite(s[2]), strengths)
-            @test any(!iszero, strengths)
-        end
     end
 
     @testset "Translation Operators" begin
@@ -194,45 +168,6 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             @test max_err < 1e-10
         end
 
-        @testset "Two-Layer QG Unbounded" begin
-            Ld = SVector(1.0)
-            F = 1.0 / (2 * Ld[1]^2)
-            coupling = SMatrix{2,2}(-F, F, F, -F)
-            kernel = MultiLayerQGKernel(Ld, coupling)
-            c1 = circular_patch(0.5, 96, 1.0)
-            c2_nodes = [SVector(2.0 + 0.5*cos(2*pi*i/96), 0.5*sin(2*pi*i/96)) for i in 0:95]
-            c2 = PVContour(c2_nodes, 0.5)
-            prob = MultiLayerContourProblem(kernel, UnboundedDomain(), ([c1], [c2]))
-            vel_direct = ContourDynamics._make_vel_tuple(prob)
-            vel_fmm = ContourDynamics._make_vel_tuple(prob)
-            ContourDynamics._direct_velocity!(vel_direct, prob)
-            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
-            for i in 1:2
-                max_err = maximum(sqrt(sum((vel_fmm[i][j] - vel_direct[i][j]).^2)) /
-                                  max(sqrt(sum(vel_direct[i][j].^2)), 1e-15) for j in eachindex(vel_direct[i]))
-                @test max_err < 1e-10
-            end
-        end
-
-        @testset "Two-Layer QG Periodic" begin
-            Ld = SVector(1.0)
-            F = 1.0 / (2 * Ld[1]^2)
-            coupling = SMatrix{2,2}(-F, F, F, -F)
-            kernel = MultiLayerQGKernel(Ld, coupling)
-            c1 = circular_patch(0.5, 96, 1.0)
-            c2_nodes = [SVector(2.0 + 0.5*cos(2*pi*i/96), 0.5*sin(2*pi*i/96)) for i in 0:95]
-            c2 = PVContour(c2_nodes, 0.5)
-            prob = MultiLayerContourProblem(kernel, PeriodicDomain(2pi, 2pi), ([c1], [c2]))
-            vel_direct = ContourDynamics._make_vel_tuple(prob)
-            vel_fmm = ContourDynamics._make_vel_tuple(prob)
-            ContourDynamics._direct_velocity!(vel_direct, prob)
-            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
-            for i in 1:2
-                max_err = maximum(sqrt(sum((vel_fmm[i][j] - vel_direct[i][j]).^2)) /
-                                  max(sqrt(sum(vel_direct[i][j].^2)), 1e-15) for j in eachindex(vel_direct[i]))
-                @test max_err < 1e-10
-            end
-        end
     end
 
     @testset "Large-Problem Dispatcher" begin

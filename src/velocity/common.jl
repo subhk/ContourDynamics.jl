@@ -155,10 +155,13 @@ Compute velocity at every contour node of `prob`, storing results in `vel`.
 Current large-problem policy for single-layer CPU problems:
 
 - small problems: direct evaluator
-- large problems: proxy FMM when `_FMM_ACCELERATION_ENABLED = true`, otherwise treecode
+- large problems: production treecode
+- large problems with `_FMM_ACCELERATION_ENABLED = true`: experimental proxy FMM
 
-The same FMM-vs-treecode policy is used for periodic single-layer problems and
-multi-layer problems.
+Periodic single-layer problems and multi-layer problems do **not** currently
+have a production FMM path. Even when `_FMM_ACCELERATION_ENABLED` is true,
+those cases should be treated as experimental and may still conservatively
+route to direct evaluation.
 """
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{EulerKernel, UnboundedDomain, T, CPU}) where {T}

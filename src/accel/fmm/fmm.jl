@@ -1073,7 +1073,9 @@ end
 """
     _fmm_velocity!(vel, prob::ContourProblem)
 
-Public proxy-FMM wrapper for single-layer contour problems.
+Conservative public wrapper for the experimental proxy FMM. The runtime uses
+the proxy path only when explicitly enabled. Otherwise it falls back to the
+validated direct evaluator.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     if !_FMM_ACCELERATION_ENABLED
@@ -1091,7 +1093,7 @@ _to_unbounded_kernel(k::SQGKernel) = k
 """
     _fmm_velocity!(vel, prob::ContourProblem{K, PeriodicDomain{T}, T})
 
-Public periodic proxy-FMM wrapper for single-layer contour problems.
+Conservative public wrapper for the experimental periodic proxy FMM.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}},
                         prob::ContourProblem{K, PeriodicDomain{T}, T}) where {K, T}
@@ -1172,67 +1174,15 @@ end
 """
     _experimental_multilayer_fmm_velocity!(vel, prob)
 
-Mode-by-mode multi-layer proxy FMM.
+Placeholder for multi-layer proxy FMM.
 
-This reuses the single-layer proxy FMM for each vertical mode, then projects
-the modal velocity fields back into layer space with the kernel eigenvectors.
-The approach is a little less specialized than the dedicated modal proxy path,
-but it is substantially easier to validate and keeps the multi-layer runtime on
-top of the already-tested single-layer implementation.
+The mode-by-mode formulation still needs further validation for multi-contour
+configurations, so for now this helper conservatively falls back to the exact
+direct multi-layer evaluator.
 """
 function _experimental_multilayer_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
                                                 prob::MultiLayerContourProblem{NL}) where {NL, T}
-    kernel = prob.kernel
-    evals = kernel.eigenvalues
-    P = kernel.eigenvectors
-    P_inv = kernel.eigenvectors_inv
-
-    for i in 1:NL
-        fill!(vel[i], zero(SVector{2,T}))
-    end
-
-    all_contours = PVContour{T}[]
-    layer_node_offsets = Vector{Int}(undef, NL)
-    node_offset = 0
-    for li in 1:NL
-        layer_node_offsets[li] = node_offset
-        for c in prob.layers[li]
-            push!(all_contours, c)
-            node_offset += nnodes(c)
-        end
-    end
-    isempty(all_contours) && return vel
-
-    mode_contours = similar(all_contours)
-    mode_vel = zeros(SVector{2,T}, node_offset)
-    for mode in 1:NL
-        lam = evals[mode]
-        mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
-                      QGKernel(one(T) / sqrt(abs(lam)))
-        contour_idx = 1
-        for source_layer in 1:NL
-            src_weight = P_inv[mode, source_layer]
-            for c in prob.layers[source_layer]
-                mode_contours[contour_idx] = PVContour(c.nodes, src_weight * c.pv, c.wrap)
-                contour_idx += 1
-            end
-        end
-
-        mode_prob = ContourProblem(mode_kernel, prob.domain, mode_contours; dev=prob.dev)
-        _experimental_fmm_velocity!(mode_vel, mode_prob)
-
-        for target_layer in 1:NL
-            target_weight = P[target_layer, mode]
-            abs(target_weight) < eps(T) && continue
-            vel_layer = vel[target_layer]
-            offset = layer_node_offsets[target_layer]
-            @inbounds for j in eachindex(vel_layer)
-                vel_layer[j] += target_weight * mode_vel[offset + j]
-            end
-        end
-    end
-
-    return vel
+    return _direct_velocity!(vel, prob)
 end
 
 """
@@ -1258,7 +1208,7 @@ end
 """
     _fmm_velocity!(vel, prob::MultiLayerContourProblem)
 
-Public proxy-FMM wrapper for multi-layer contour problems.
+Conservative public wrapper for the experimental multi-layer proxy FMM.
 """
 function _fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
                         prob::MultiLayerContourProblem{NL}) where {NL, T}

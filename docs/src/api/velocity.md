@@ -12,11 +12,12 @@ segment_velocity
 
 Current large-problem behavior is:
 
-- single-layer CPU: direct for small problems, proxy FMM for large problems
-- single-layer CPU with `_FMM_ACCELERATION_ENABLED = false`: direct for small problems, treecode for large problems
-- periodic single-layer CPU: the same large-problem proxy-FMM policy as the unbounded case
-- multi-layer CPU: the same large-problem proxy-FMM policy as the single-layer case
+- single-layer unbounded CPU: direct for small problems, treecode for large problems
+- single-layer unbounded CPU with experimental proxy FMM enabled: optional experimental FMM path
+- single-layer periodic CPU: treecode for large problems in normal use; the current periodic `_fmm_velocity!` method is still experimental
+- multi-layer CPU: treecode for large problems in normal use; the current multi-layer `_fmm_velocity!` method still falls back conservatively
 - GPU: supported for single-layer Euler, QG, and SQG on unbounded or periodic domains, plus direct multi-layer QG on unbounded or periodic domains; large GPU-tagged problems use a hybrid path today, with treecode/FMM dispatch still CPU-led and the per-leaf direct and linearized treecode worklists able to reuse KA in batched leaf-sized evaluations
 
-So, at the moment, the production accelerator story is proxy FMM for large CPU
-problems, plus the direct GPU paths and GPU-assisted treecode leaf evaluations.
+So, at the moment, the production accelerator story is treecode plus the direct
+GPU paths and GPU-assisted treecode leaf evaluations. The proxy FMM remains
+experimental.
