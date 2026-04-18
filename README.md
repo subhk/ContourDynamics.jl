@@ -109,8 +109,13 @@ See the [`examples/`](examples/) directory for complete scripts with JLD2 output
 
 ## GPU Acceleration
 
-GPU velocity evaluation is currently available for the Euler and SQG kernels on
-unbounded domains. Pass `dev=GPU()` — no other code changes needed:
+GPU velocity evaluation is currently available for:
+
+- Euler, single-layer QG, and SQG on unbounded domains
+- Euler, single-layer QG, and SQG on periodic domains
+- Multi-layer QG direct evaluation on unbounded and periodic domains
+
+Pass `dev=GPU()` — no other code changes needed:
 
 ```julia
 using ContourDynamics, CUDA
@@ -120,7 +125,13 @@ stepper = RK4Stepper(0.01, total_nodes(prob); dev=GPU())
 evolve!(prob, stepper, params; nsteps=1000)
 ```
 
-Surgery stays on CPU. Requires NVIDIA GPU with CUDA.jl v5+.
+Small and medium problems use the direct KA/CUDA path. Large problems reuse the
+existing treecode/FMM policy today, so the first accelerator-side GPU step is a
+hybrid dispatcher rather than a full GPU treecode implementation. The first
+treecode stage that can now reuse KA is the direct leaf-to-leaf interaction
+stage when CUDA is available.
+
+Surgery stays on CPU. Requires NVIDIA GPU with CUDA.jl v5+ for the direct GPU path.
 
 ## Package Extensions
 

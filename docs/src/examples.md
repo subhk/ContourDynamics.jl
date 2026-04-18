@@ -16,7 +16,7 @@ Full scripts with JLD2 output are available in the [`examples/`](https://github.
 ::: tip GPU Acceleration
 The vortex merger and filamentation examples support GPU acceleration.
 Add `using CUDA` and pass `dev=:gpu` to `Problem`.
-GPU velocity is currently available for the Euler and SQG kernels on unbounded domains.
+GPU velocity is currently available for single-layer Euler, QG, and SQG on unbounded or periodic domains, plus direct multi-layer QG on unbounded or periodic domains.
 :::
 
 ---

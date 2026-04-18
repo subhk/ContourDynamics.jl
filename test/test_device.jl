@@ -30,15 +30,37 @@ end
         @test_throws ErrorException device_array(GPU())
     end
 
-    @testset "GPU() with unsupported kernel/domain errors at construction" begin
+    @testset "GPU velocity! without CUDA gives helpful error" begin
         c = circular_patch(0.5, 32, 1.0)
-        @test_throws ArgumentError ContourProblem(QGKernel(1.0), UnboundedDomain(), [c]; dev=GPU())
-        @test_throws ArgumentError ContourProblem(EulerKernel(), PeriodicDomain(1.0, 1.0), [c]; dev=GPU())
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c]; dev=GPU())
+        vel = zeros(SVector{2,Float64}, total_nodes(prob))
+        @test_throws ErrorException velocity!(vel, prob)
     end
 
-    @testset "GPU() accepts SQG on unbounded domains" begin
+    @testset "GPU() accepts supported single-layer periodic and unbounded cases" begin
         c = circular_patch(0.5, 32, 1.0)
+        prob = ContourProblem(QGKernel(1.0), UnboundedDomain(), [c]; dev=GPU())
+        @test prob.dev === GPU()
+
+        prob_periodic = ContourProblem(QGKernel(1.0), PeriodicDomain(1.0, 1.0), [c]; dev=GPU())
+        @test prob_periodic.dev === GPU()
+
+        prob_periodic_euler = ContourProblem(EulerKernel(), PeriodicDomain(1.0, 1.0), [c]; dev=GPU())
+        @test prob_periodic_euler.dev === GPU()
+
         prob = ContourProblem(SQGKernel(0.01), UnboundedDomain(), [c]; dev=GPU())
+        @test prob.dev === GPU()
+        prob_periodic_sqg = ContourProblem(SQGKernel(0.01), PeriodicDomain(1.0, 1.0), [c]; dev=GPU())
+        @test prob_periodic_sqg.dev === GPU()
+    end
+
+    @testset "GPU() accepts multi-layer QG problems" begin
+        Ld = SVector(1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
+        c = circular_patch(0.5, 32, 1.0)
+        prob = MultiLayerContourProblem(MultiLayerQGKernel(Ld, coupling), UnboundedDomain(),
+                                        ([c], PVContour{Float64}[]); dev=GPU())
         @test prob.dev === GPU()
     end
 
@@ -122,6 +144,81 @@ end
         end
     end
 
+    @testset "Large GPU-tagged single-layer problems fall back to treecode policy" begin
+        c = circular_patch(0.5, 1024, 1.0)
+        prob_cpu = ContourProblem(EulerKernel(), UnboundedDomain(), [c]; dev=CPU())
+        prob_gpu = ContourProblem(EulerKernel(), UnboundedDomain(), [c]; dev=GPU())
+        N = total_nodes(prob_cpu)
+
+        vel_cpu = zeros(SVector{2,Float64}, N)
+        vel_gpu = similar(vel_cpu)
+        velocity!(vel_cpu, prob_cpu)
+        velocity!(vel_gpu, prob_gpu)
+
+        for i in 1:N
+            @test vel_gpu[i] == vel_cpu[i]
+        end
+    end
+
+    @testset "Treecode direct leaf KA helper matches CPU loop" begin
+        c1 = circular_patch(0.3, 64, 1.0)
+        c2 = circular_patch(0.3, 64, -0.8)
+        contours = [c1, c2]
+        tree = ContourDynamics.build_fmm_tree(contours)
+        plan = ContourDynamics._build_tree_eval_plan(tree, contours)
+        li_idx = findfirst(!isempty, plan.direct_lists)
+        @test li_idx !== nothing
+
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        source_box_idx = first(plan.direct_lists[li_idx])
+        N = total_nodes(ContourProblem(EulerKernel(), UnboundedDomain(), contours))
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = zeros(SVector{2,Float64}, N)
+        target_box = tree.boxes[target_leaf_idx]
+        flat_idxs = [plan.flat_indices[seg_idx] for seg_idx in target_box.segment_range]
+
+        ContourDynamics._treecode_direct_to_leaf!(vel_ref, tree, target_leaf_idx, source_box_idx,
+                                                  contours, plan, EulerKernel(), UnboundedDomain(), nothing)
+        ContourDynamics._ka_treecode_direct_to_leaf!(vel_ka, tree, target_leaf_idx, source_box_idx,
+                                                     contours, plan, EulerKernel(), UnboundedDomain(), CPU())
+
+        for i in flat_idxs
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
+        end
+    end
+
+    @testset "Treecode direct leaf KA helper matches periodic QG CPU loop" begin
+        clear_ewald_cache!()
+        c1 = circular_patch(0.25, 48, 1.0)
+        c2 = circular_patch(0.18, 48, -0.8)
+        contours = [c1, c2]
+        tree = ContourDynamics.build_fmm_tree(contours)
+        plan = ContourDynamics._build_tree_eval_plan(tree, contours)
+        li_idx = findfirst(!isempty, plan.direct_lists)
+        @test li_idx !== nothing
+
+        target_leaf_idx = tree.leaf_indices[li_idx]
+        source_box_idx = first(plan.direct_lists[li_idx])
+        prob = ContourProblem(QGKernel(1.1), PeriodicDomain(2.0, 2.0), contours)
+        N = total_nodes(prob)
+        ewald = ContourDynamics._prefetch_ewald(prob.domain, EulerKernel())
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = zeros(SVector{2,Float64}, N)
+        target_box = tree.boxes[target_leaf_idx]
+        flat_idxs = [plan.flat_indices[seg_idx] for seg_idx in target_box.segment_range]
+
+        ContourDynamics._treecode_direct_to_leaf!(vel_ref, tree, target_leaf_idx, source_box_idx,
+                                                  contours, plan, prob.kernel, prob.domain, ewald)
+        ContourDynamics._ka_treecode_direct_to_leaf!(vel_ka, tree, target_leaf_idx, source_box_idx,
+                                                     contours, plan, prob.kernel, prob.domain, CPU())
+
+        for i in flat_idxs
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-8, rtol=1e-8)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-8, rtol=1e-8)
+        end
+    end
+
     @testset "KA SQG velocity matches direct CPU" begin
         c = circular_patch(0.5, 32, 1.0)
         prob = ContourProblem(SQGKernel(0.02), UnboundedDomain(), [c])
@@ -135,6 +232,125 @@ end
         for i in 1:N
             @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12)
             @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12)
+        end
+    end
+
+    @testset "KA QG velocity matches direct CPU" begin
+        c = circular_patch(0.5, 32, 1.0)
+        prob = ContourProblem(QGKernel(1.25), UnboundedDomain(), [c])
+        N = total_nodes(prob)
+
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = similar(vel_ref)
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
+
+        for i in 1:N
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-8, rtol=1e-8)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-8, rtol=1e-8)
+        end
+    end
+
+    @testset "KA periodic Euler velocity matches direct CPU" begin
+        clear_ewald_cache!()
+        c = circular_patch(0.35, 24, 1.0)
+        prob = ContourProblem(EulerKernel(), PeriodicDomain(2.0, 2.0), [c])
+        N = total_nodes(prob)
+
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = similar(vel_ref)
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
+
+        for i in 1:N
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
+        end
+    end
+
+    @testset "KA periodic QG velocity matches direct CPU" begin
+        clear_ewald_cache!()
+        c = circular_patch(0.35, 24, 1.0)
+        prob = ContourProblem(QGKernel(1.1), PeriodicDomain(2.0, 2.0), [c])
+        N = total_nodes(prob)
+
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = similar(vel_ref)
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
+
+        for i in 1:N
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
+        end
+    end
+
+    @testset "KA periodic SQG velocity matches direct CPU" begin
+        clear_ewald_cache!()
+        c = circular_patch(0.35, 24, 1.0)
+        prob = ContourProblem(SQGKernel(0.02), PeriodicDomain(2.0, 2.0), [c])
+        N = total_nodes(prob)
+
+        vel_ref = zeros(SVector{2,Float64}, N)
+        vel_ka = similar(vel_ref)
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
+
+        for i in 1:N
+            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
+            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
+        end
+    end
+
+    @testset "KA multi-layer velocity matches direct CPU" begin
+        Ld = SVector(1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
+        c1 = circular_patch(0.35, 24, 1.0)
+        c2 = circular_patch(0.2, 16, -0.5)
+        prob = MultiLayerContourProblem(MultiLayerQGKernel(Ld, coupling), UnboundedDomain(),
+                                        ([c1], [c2]))
+
+        vel_ref = (zeros(SVector{2,Float64}, nnodes(c1)),
+                   zeros(SVector{2,Float64}, nnodes(c2)))
+        vel_ka = (similar(vel_ref[1]), similar(vel_ref[2]))
+
+        ContourDynamics._direct_velocity!(vel_ref, prob)
+        ContourDynamics._ka_multilayer_velocity!(vel_ka, prob, CPU())
+
+        for i in eachindex(vel_ref[1])
+            @test isapprox(vel_ka[1][i][1], vel_ref[1][i][1]; atol=1e-8, rtol=1e-8)
+            @test isapprox(vel_ka[1][i][2], vel_ref[1][i][2]; atol=1e-8, rtol=1e-8)
+        end
+        for i in eachindex(vel_ref[2])
+            @test isapprox(vel_ka[2][i][1], vel_ref[2][i][1]; atol=1e-8, rtol=1e-8)
+            @test isapprox(vel_ka[2][i][2], vel_ref[2][i][2]; atol=1e-8, rtol=1e-8)
+        end
+    end
+
+    @testset "Large GPU-tagged multi-layer problems fall back to treecode policy" begin
+        Ld = SVector(1.0)
+        F = 1.0 / (2 * Ld[1]^2)
+        coupling = SMatrix{2,2}(-F, F, F, -F)
+        c1 = circular_patch(0.35, 600, 1.0)
+        c2 = circular_patch(0.2, 600, -0.5)
+        prob_cpu = MultiLayerContourProblem(MultiLayerQGKernel(Ld, coupling), UnboundedDomain(),
+                                            ([c1], [c2]); dev=CPU())
+        prob_gpu = MultiLayerContourProblem(MultiLayerQGKernel(Ld, coupling), UnboundedDomain(),
+                                            ([c1], [c2]); dev=GPU())
+
+        vel_cpu = (zeros(SVector{2,Float64}, nnodes(c1)),
+                   zeros(SVector{2,Float64}, nnodes(c2)))
+        vel_gpu = (similar(vel_cpu[1]), similar(vel_cpu[2]))
+
+        velocity!(vel_cpu, prob_cpu)
+        velocity!(vel_gpu, prob_gpu)
+
+        for i in eachindex(vel_cpu[1])
+            @test vel_gpu[1][i] == vel_cpu[1][i]
+        end
+        for i in eachindex(vel_cpu[2])
+            @test vel_gpu[2][i] == vel_cpu[2][i]
         end
     end
 end

@@ -20,7 +20,7 @@ Current large-problem behavior is:
 - single-layer unbounded CPU with experimental proxy FMM enabled: optional experimental FMM path
 - single-layer periodic CPU: treecode for large problems in normal use; the current periodic `_fmm_velocity!` method is still a direct fallback
 - multi-layer CPU: treecode for large problems in normal use; the current multi-layer `_fmm_velocity!` method is still a direct fallback
-- GPU: supported for the Euler and SQG kernels on unbounded domains
+- GPU: supported for single-layer Euler, QG, and SQG on unbounded or periodic domains, plus direct multi-layer QG on unbounded or periodic domains; large GPU-tagged problems use a hybrid path today, with treecode/FMM dispatch still CPU-led and the direct leaf interaction stage able to reuse KA
 
 So, at the moment, the production accelerator story is treecode plus the direct
 GPU unbounded-kernel path. The proxy FMM remains experimental and is not the active

@@ -242,12 +242,13 @@ function _apply_treecode_worklists!(
     kernel::AbstractKernel,
     domain::AbstractDomain,
     ewald_cache,
+    dev::AbstractDevice=CPU(),
 ) where {T}
     function process_leaf(li_idx::Int)
         target_leaf_idx = tree.leaf_indices[li_idx]
         for source_box_idx in plan.direct_lists[li_idx]
             _treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
-                                      contours, plan, kernel, domain, ewald_cache)
+                                      contours, plan, kernel, domain, ewald_cache, dev)
         end
         for source_box_idx in plan.approx_lists[li_idx]
             _treecode_linearized_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
@@ -287,6 +288,87 @@ function _box_direct_velocity(tree::FMMTree{T},
     return v
 end
 
+@inline function _treecode_direct_ka_available(::AbstractDevice, ::AbstractKernel, ::AbstractDomain)
+    return false
+end
+
+@inline function _treecode_direct_ka_available(dev::GPU,
+                                               ::Union{EulerKernel,QGKernel,SQGKernel},
+                                               ::Union{UnboundedDomain,PeriodicDomain})
+    try
+        _ka_backend(dev)
+        return true
+    catch
+        return false
+    end
+end
+
+function _ka_treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
+                                      tree::FMMTree{T},
+                                      target_leaf_idx::Int,
+                                      source_box_idx::Int,
+                                      contours::AbstractVector{PVContour{T}},
+                                      plan::TreeEvalPlan,
+                                      kernel::AbstractKernel,
+                                      domain::AbstractDomain,
+                                      dev::AbstractDevice) where {T}
+    target_box = tree.boxes[target_leaf_idx]
+    source_box = tree.boxes[source_box_idx]
+    n_targets = length(target_box.segment_range)
+    n_source = length(source_box.segment_range)
+    n_targets == 0 && return nothing
+    n_source == 0 && return nothing
+
+    tx = Vector{T}(undef, n_targets)
+    ty = Vector{T}(undef, n_targets)
+    flat_idxs = Vector{Int}(undef, n_targets)
+    k = 1
+    for target_seg_idx in target_box.segment_range
+        flat_idxs[k] = plan.flat_indices[target_seg_idx]
+        ci_t, ni_t = tree.sorted_segments[target_seg_idx]
+        x = contours[ci_t].nodes[ni_t]
+        tx[k] = x[1]
+        ty[k] = x[2]
+        k += 1
+    end
+
+    ax = Vector{T}(undef, n_source)
+    ay = Vector{T}(undef, n_source)
+    bx = Vector{T}(undef, n_source)
+    by = Vector{T}(undef, n_source)
+    pv = Vector{T}(undef, n_source)
+    k = 1
+    for seg_idx in source_box.segment_range
+        ci_s, ni_s = tree.sorted_segments[seg_idx]
+        c = contours[ci_s]
+        a = c.nodes[ni_s]
+        b = next_node(c, ni_s)
+        ax[k] = a[1]
+        ay[k] = a[2]
+        bx[k] = b[1]
+        by[k] = b[2]
+        pv[k] = c.pv
+        k += 1
+    end
+
+    seg = SegmentData(to_device(dev, ax), to_device(dev, ay),
+                      to_device(dev, bx), to_device(dev, by),
+                      to_device(dev, pv))
+    dev_tx = to_device(dev, tx)
+    dev_ty = to_device(dev, ty)
+    dev_vx = device_zeros(dev, T, n_targets)
+    dev_vy = device_zeros(dev, T, n_targets)
+
+    _ka_velocity_subset!(dev_vx, dev_vy, dev_tx, dev_ty, seg, kernel, domain, dev)
+
+    vx = to_cpu(dev_vx)
+    vy = to_cpu(dev_vy)
+    @inbounds for i in 1:n_targets
+        vel[flat_idxs[i]] = vel[flat_idxs[i]] + SVector{2,T}(vx[i], vy[i])
+    end
+    return nothing
+end
+
 function _treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
                                    tree::FMMTree{T},
                                    target_leaf_idx::Int,
@@ -295,7 +377,13 @@ function _treecode_direct_to_leaf!(vel::Vector{SVector{2,T}},
                                    plan::TreeEvalPlan,
                                    kernel::AbstractKernel,
                                    domain::AbstractDomain,
-                                   ewald_cache) where {T}
+                                   ewald_cache,
+                                   dev::AbstractDevice=CPU()) where {T}
+    if _treecode_direct_ka_available(dev, kernel, domain)
+        return _ka_treecode_direct_to_leaf!(vel, tree, target_leaf_idx, source_box_idx,
+                                            contours, plan, kernel, domain, dev)
+    end
+
     target_box = tree.boxes[target_leaf_idx]
     source_box = tree.boxes[source_box_idx]
     for target_seg_idx in target_box.segment_range
@@ -363,7 +451,7 @@ function _treecode_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wh
     domain = prob.domain
     ewald = _prefetch_ewald(domain, kernel)
 
-    _apply_treecode_worklists!(vel, tree, contours, plan, kernel, domain, ewald)
+    _apply_treecode_worklists!(vel, tree, contours, plan, kernel, domain, ewald, prob.dev)
 
     return vel
 end
@@ -432,7 +520,7 @@ function _treecode_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
 
         # Run treecode on weighted contours using the shared tree
         fill!(mode_vel, zero(SVector{2,T}))
-        _apply_treecode_worklists!(mode_vel, tree, weighted, plan, mode_kernel, domain, ewald)
+        _apply_treecode_worklists!(mode_vel, tree, weighted, plan, mode_kernel, domain, ewald, prob.dev)
 
         # Scatter mode velocity to per-layer arrays with projection weights
         for li in 1:NL

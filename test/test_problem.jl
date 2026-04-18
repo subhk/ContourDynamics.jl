@@ -195,11 +195,23 @@ using Test
         # (error only at velocity! time when CUDA is not loaded)
         prob_gpu = Problem(; contours=[c], dt=0.01, dev=:gpu)
         @test prob_gpu.contour_problem.dev === GPU()
+        prob_qg_gpu = Problem(; kernel=:qg, Ld=1.0, contours=[c], dt=0.01, dev=:gpu)
+        @test prob_qg_gpu.contour_problem.dev === GPU()
+        prob_periodic_gpu = Problem(; contours=[c], dt=0.01, domain=:periodic, Lx=1.0, Ly=1.0, dev=:gpu)
+        @test prob_periodic_gpu.contour_problem.dev === GPU()
+        prob_periodic_qg_gpu = Problem(; kernel=:qg, Ld=1.0, contours=[c], dt=0.01,
+                                       domain=:periodic, Lx=1.0, Ly=1.0, dev=:gpu)
+        @test prob_periodic_qg_gpu.contour_problem.dev === GPU()
         prob_sqg_gpu = Problem(; kernel=:sqg, delta_sqg=0.01, contours=[c], dt=0.01, dev=:gpu)
         @test prob_sqg_gpu.contour_problem.dev === GPU()
+        prob_periodic_sqg_gpu = Problem(; kernel=:sqg, delta_sqg=0.01, contours=[c], dt=0.01,
+                                        domain=:periodic, Lx=1.0, Ly=1.0, dev=:gpu)
+        @test prob_periodic_sqg_gpu.contour_problem.dev === GPU()
 
-        # GPU with unsupported kernel/domain errors at construction
-        @test_throws ArgumentError Problem(; kernel=:qg, Ld=1.0, contours=[c], dt=0.01, dev=:gpu)
+        prob_ml_gpu = Problem(; kernel=:multilayer_qg, Ld=SVector(1.0),
+                              coupling=SMatrix{2,2}(-0.5, 0.5, 0.5, -0.5),
+                              layers=([c], PVContour{Float64}[]), dt=0.01, dev=:gpu)
+        @test prob_ml_gpu.contour_problem.dev === GPU()
 
         # Unknown device
         @test_throws ArgumentError Problem(; contours=[c], dt=0.01, dev=:unknown)
