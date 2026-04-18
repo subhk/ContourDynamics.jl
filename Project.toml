@@ -27,7 +27,7 @@ ContourDynamicsRecordedArraysExt = "RecordedArrays"
 
 [compat]
 Adapt = "4"
-CUDA = "5"
+CUDA = "5, 6"
 JLD2 = "0.5, 0.6"
 KernelAbstractions = "0.9"
 Makie = "0.21, 0.22, 0.24"
