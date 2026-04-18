@@ -149,6 +149,19 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             @test max_err < 1e-10
         end
 
+        @testset "Euler Periodic" begin
+            c = circular_patch(1.0, 96, 1.0)
+            prob = ContourProblem(EulerKernel(), PeriodicDomain(2pi, 2pi), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_fmm = zeros(SVector{2,Float64}, N)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-10
+        end
+
         @testset "QG Unbounded" begin
             c = circular_patch(1.0, 128, 1.0)
             prob = ContourProblem(QGKernel(2.0), UnboundedDomain(), [c])
@@ -160,6 +173,72 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
                               max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
             @test max_err < 1e-10
+        end
+
+        @testset "QG Periodic" begin
+            c = circular_patch(1.0, 96, 1.0)
+            prob = ContourProblem(QGKernel(2.0), PeriodicDomain(2pi, 2pi), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_fmm = zeros(SVector{2,Float64}, N)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-10
+        end
+
+        @testset "SQG Periodic" begin
+            c = circular_patch(1.0, 96, 1.0)
+            prob = ContourProblem(SQGKernel(0.05), PeriodicDomain(2pi, 2pi), [c])
+            N = total_nodes(prob)
+            vel_direct = zeros(SVector{2,Float64}, N)
+            vel_fmm = zeros(SVector{2,Float64}, N)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            max_err = maximum(sqrt(sum((vel_fmm[i] - vel_direct[i]).^2)) /
+                              max(sqrt(sum(vel_direct[i].^2)), 1e-15) for i in 1:N)
+            @test max_err < 1e-10
+        end
+
+        @testset "Two-Layer QG Unbounded" begin
+            Ld = SVector(1.0)
+            F = 1.0 / (2 * Ld[1]^2)
+            coupling = SMatrix{2,2}(-F, F, F, -F)
+            kernel = MultiLayerQGKernel(Ld, coupling)
+            c1 = circular_patch(0.5, 96, 1.0)
+            c2_nodes = [SVector(2.0 + 0.5*cos(2*pi*i/96), 0.5*sin(2*pi*i/96)) for i in 0:95]
+            c2 = PVContour(c2_nodes, 0.5)
+            prob = MultiLayerContourProblem(kernel, UnboundedDomain(), ([c1], [c2]))
+            vel_direct = ContourDynamics._make_vel_tuple(prob)
+            vel_fmm = ContourDynamics._make_vel_tuple(prob)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            for i in 1:2
+                max_err = maximum(sqrt(sum((vel_fmm[i][j] - vel_direct[i][j]).^2)) /
+                                  max(sqrt(sum(vel_direct[i][j].^2)), 1e-15) for j in eachindex(vel_direct[i]))
+                @test max_err < 1e-10
+            end
+        end
+
+        @testset "Two-Layer QG Periodic" begin
+            Ld = SVector(1.0)
+            F = 1.0 / (2 * Ld[1]^2)
+            coupling = SMatrix{2,2}(-F, F, F, -F)
+            kernel = MultiLayerQGKernel(Ld, coupling)
+            c1 = circular_patch(0.5, 96, 1.0)
+            c2_nodes = [SVector(2.0 + 0.5*cos(2*pi*i/96), 0.5*sin(2*pi*i/96)) for i in 0:95]
+            c2 = PVContour(c2_nodes, 0.5)
+            prob = MultiLayerContourProblem(kernel, PeriodicDomain(2pi, 2pi), ([c1], [c2]))
+            vel_direct = ContourDynamics._make_vel_tuple(prob)
+            vel_fmm = ContourDynamics._make_vel_tuple(prob)
+            ContourDynamics._direct_velocity!(vel_direct, prob)
+            ContourDynamics._experimental_fmm_velocity!(vel_fmm, prob)
+            for i in 1:2
+                max_err = maximum(sqrt(sum((vel_fmm[i][j] - vel_direct[i][j]).^2)) /
+                                  max(sqrt(sum(vel_direct[i][j].^2)), 1e-15) for j in eachindex(vel_direct[i]))
+                @test max_err < 1e-10
+            end
         end
     end
 

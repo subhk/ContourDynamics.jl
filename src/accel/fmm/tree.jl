@@ -6,7 +6,7 @@
 const _FMM_THRESHOLD = 1024
 
 """Whether the proxy-surface FMM acceleration path is enabled for runtime use."""
-const _FMM_ACCELERATION_ENABLED = false
+const _FMM_ACCELERATION_ENABLED = true
 
 """Maximum number of segments in a leaf box before subdivision."""
 const _FMM_MAX_PER_LEAF = 40

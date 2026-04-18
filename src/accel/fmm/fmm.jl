@@ -1039,15 +1039,27 @@ function _experimental_fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourPro
 end
 
 """
+    _experimental_fmm_velocity!(vel, prob::ContourProblem{<:Any, <:PeriodicDomain})
+
+Periodic single-layer proxy FMM.
+
+The proxy solve is carried out for the corresponding unbounded kernel, then a
+direct periodic correction `(G_per - G_unbounded)` is added back.
+"""
+function _experimental_fmm_velocity!(vel::Vector{SVector{2,T}},
+                                     prob::ContourProblem{K, PeriodicDomain{T}, T}) where {K, T}
+    unbounded_prob = ContourProblem(_to_unbounded_kernel(prob.kernel), UnboundedDomain(),
+                                    prob.contours; dev=prob.dev)
+    _experimental_fmm_velocity!(vel, unbounded_prob)
+    ewald = _prefetch_ewald(prob.domain, prob.kernel)
+    _periodic_correction!(vel, prob.contours, prob.kernel, prob.domain, ewald)
+    return vel
+end
+
+"""
     _fmm_velocity!(vel, prob::ContourProblem)
 
-Conservative public wrapper for the experimental proxy FMM. The runtime uses
-the proxy path only for unbounded single-layer problems when explicitly
-enabled. Otherwise it falls back to the validated direct evaluator.
-
-This wrapper should not be read as "full FMM support for all `ContourProblem`
-variants". Periodic and multi-layer `_fmm_velocity!` methods below are still
-conservative fallbacks, not production FMM implementations.
+Public proxy-FMM wrapper for single-layer contour problems.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     if !_FMM_ACCELERATION_ENABLED
@@ -1065,15 +1077,14 @@ _to_unbounded_kernel(k::SQGKernel) = k
 """
     _fmm_velocity!(vel, prob::ContourProblem{K, PeriodicDomain{T}, T})
 
-Conservative periodic fallback.
-
-Periodic proxy FMM is not implemented yet. This method currently delegates to
-the validated direct periodic evaluator, even if `_FMM_ACCELERATION_ENABLED` is
-true elsewhere.
+Public periodic proxy-FMM wrapper for single-layer contour problems.
 """
 function _fmm_velocity!(vel::Vector{SVector{2,T}},
                         prob::ContourProblem{K, PeriodicDomain{T}, T}) where {K, T}
-    return _direct_velocity!(vel, prob)
+    if !_FMM_ACCELERATION_ENABLED
+        return _direct_velocity!(vel, prob)
+    end
+    return _experimental_fmm_velocity!(vel, prob)
 end
 
 """
@@ -1145,17 +1156,88 @@ end
 # --- Multi-layer FMM support ---
 
 """
+    _experimental_fmm_velocity!(vel, prob::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain})
+
+Unbounded multi-layer proxy FMM using modal decomposition.
+"""
+function _experimental_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
+                                     prob::MultiLayerContourProblem{NL, <:Any, UnboundedDomain}) where {NL, T}
+    kernel = prob.kernel
+    evals = kernel.eigenvalues
+    P = kernel.eigenvectors
+    P_inv = kernel.eigenvectors_inv
+
+    for i in 1:NL
+        fill!(vel[i], zero(SVector{2,T}))
+    end
+
+    all_contours = PVContour{T}[]
+    contour_layer = Int[]
+    layer_offsets = Vector{Int}(undef, NL)
+    contour_offset = 0
+    for li in 1:NL
+        layer_offsets[li] = contour_offset
+        for c in prob.layers[li]
+            push!(all_contours, c)
+            push!(contour_layer, li)
+            contour_offset += 1
+        end
+    end
+    isempty(all_contours) && return vel
+
+    tree = build_fmm_tree(all_contours)
+    _has_unhandled_coarse_leaf_interactions(tree) && return _treecode_velocity!(vel, prob)
+
+    p = _FMM_PROXY_ORDER
+    p_check = _FMM_CHECK_ORDER
+    nboxes = length(tree.boxes)
+    domain = UnboundedDomain()
+
+    for mode in 1:NL
+        lam = evals[mode]
+        mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
+                      QGKernel(one(T) / sqrt(abs(lam)))
+        plan = _build_tree_eval_plan(tree, all_contours, contour_layer;
+                                     p, p_check, include_proxy_geometry=true,
+                                     kernel=mode_kernel, domain)
+        proxy_data = [ProxyData(zeros(SVector{2,T}, p), SVector{2,T}[]) for _ in 1:nboxes]
+        ops = precompute_level_operators(tree, mode_kernel, domain; p, p_check)
+        m2l_op = precompute_m2l_operators(tree, mode_kernel, domain, ops; p, p_check)
+
+        _s2m_modal!(proxy_data, tree, all_contours, plan, P_inv, mode, mode_kernel, domain, ops, NL; p, p_check)
+        _m2m_upward!(proxy_data, tree, ops; p)
+        _m2l!(proxy_data, tree, m2l_op; p)
+        _l2l_downward!(proxy_data, tree, ops; p)
+        _modal_accumulate!(vel, tree, proxy_data, all_contours, layer_offsets, prob, P, mode, mode_kernel, domain, NL, plan; p)
+    end
+
+    return vel
+end
+
+"""
+    _experimental_fmm_velocity!(vel, prob::MultiLayerContourProblem{<:Any, <:Any, <:PeriodicDomain})
+
+Periodic multi-layer proxy FMM.
+"""
+function _experimental_fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
+                                     prob::MultiLayerContourProblem{NL, <:Any, <:PeriodicDomain{T}}) where {NL, T}
+    unbounded_prob = MultiLayerContourProblem(prob.kernel, UnboundedDomain(), prob.layers; dev=prob.dev)
+    _experimental_fmm_velocity!(vel, unbounded_prob)
+    _multilayer_periodic_correction!(vel, prob)
+    return vel
+end
+
+"""
     _fmm_velocity!(vel, prob::MultiLayerContourProblem)
 
-Conservative multi-layer fallback.
-
-Multi-layer proxy FMM is not implemented as a public production path yet. This
-method currently delegates to the validated direct multi-layer evaluator, even
-if `_FMM_ACCELERATION_ENABLED` is true elsewhere.
+Public proxy-FMM wrapper for multi-layer contour problems.
 """
 function _fmm_velocity!(vel::NTuple{NL, Vector{SVector{2,T}}},
                         prob::MultiLayerContourProblem{NL}) where {NL, T}
-    return _direct_velocity!(vel, prob)
+    if !_FMM_ACCELERATION_ENABLED
+        return _direct_velocity!(vel, prob)
+    end
+    return _experimental_fmm_velocity!(vel, prob)
 end
 
 """
