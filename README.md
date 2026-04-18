@@ -52,9 +52,9 @@ If you prefer full control, the lower-level API with `ContourProblem`,
 
 | Kernel | Scalar kernel | Use case |
 |--------|-----------------|----------|
-| `EulerKernel()` | -1/(2pi) log(r) | 2D incompressible Euler |
-| `QGKernel(Ld)` | 1/(2pi) K_0(r/Ld) | Single-layer QG with deformation radius Ld |
-| `SQGKernel(delta)` | -1/(2pi sqrt(r^2 + delta^2)) | Surface QG (regularized fractional Laplacian) |
+| `EulerKernel()` | $-\frac{1}{2\pi}\log(r)$ | 2D incompressible Euler |
+| `QGKernel(Ld)` | $\frac{1}{2\pi}K_0(r/L_d)$ | Single-layer QG with deformation radius $L_d$ |
+| `SQGKernel(delta)` | $-\frac{1}{2\pi\sqrt{r^2 + \delta^2}}$ | Surface QG (regularized fractional Laplacian) |
 | `MultiLayerQGKernel(Ld, C)` | Eigenmode decomposition | N-layer QG with coupling matrix C |
 
 ## Examples
