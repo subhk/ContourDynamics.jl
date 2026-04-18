@@ -1,6 +1,6 @@
 name = "ContourDynamics"
 uuid = "0a114e3f-4576-410c-8414-be1d36bbc63f"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Subhajit Kar"]
 
 [deps]
