@@ -195,5 +195,5 @@ println("Circulation change: $(abs(circulation(prob) - circulation0) / abs(circu
 ## Next Steps
 
 - See complete runnable scripts in the [Examples](/examples) section
-- Read the [Theory & Method](/theory) page for the mathematics behind Ewald summation and modal decomposition
+- Read the [Theory overview](/theory), [Ewald Summation](/theory/ewald_summation), or [Multi-Layer QG](/theory/multilayer_qg) for the relevant mathematics
 - Check the [API Reference](/api) for all available functions

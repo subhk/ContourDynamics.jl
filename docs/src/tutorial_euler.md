@@ -118,4 +118,4 @@ println("Velocity at (5,0): $v_far")
 
 - Learn about [quasi-geostrophic dynamics](/tutorial_qg) with finite deformation radii
 - See complete runnable scripts in the [Examples](/examples) section
-- Read the [Theory & Method](/theory) page for mathematical details
+- Read the [Theory overview](/theory) or jump straight to [Contour Dynamics](/theory/contour_dynamics) for mathematical details
