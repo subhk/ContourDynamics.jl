@@ -108,12 +108,6 @@ See the [`examples/`](examples/) directory for complete scripts with JLD2 output
 
 ## GPU Acceleration
 
-GPU velocity evaluation is currently available for:
-
-- Euler, single-layer QG, and SQG on unbounded domains
-- Euler, single-layer QG, and SQG on periodic domains
-- Multi-layer QG direct evaluation on unbounded and periodic domains
-
 Pass `dev=GPU()` — no other code changes needed:
 
 ```julia
