@@ -11,11 +11,11 @@ If you are new to the package, read these in roughly this order:
 4. [SQG Elliptical Vortex](examples/sqg_elliptical_vortex.md)
 5. [Two-Layer QG](examples/two_layer_qg.md)
 
-Full scripts with JLD2 output are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory.
+Longer runnable scripts are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory. The pages in this section are shorter walkthrough versions of those ideas.
 
 ::: tip GPU Acceleration
-The vortex merger and filamentation examples support GPU acceleration.
-Add `using CUDA` and pass `dev=GPU()` to `Problem`.
+All examples in this section can use GPU velocity evaluation on supported
+hardware. Add `using CUDA` and pass `dev=GPU()` to `Problem`.
 GPU velocity is currently available for single-layer Euler, QG, and SQG on unbounded or periodic domains, plus direct multi-layer QG on unbounded or periodic domains.
 :::
 
@@ -26,9 +26,13 @@ Each example page includes:
 - a few cues for what to look for in the output
 - references to the classical literature where relevant
 
+The repository currently includes full scripts for:
+
+- `vortex_merger.jl`
+- `filamentation.jl`
+- `beta_drift.jl`
+- `sqg_elliptical_vortex.jl`
+- `two_layer_qg.jl`
+
 Use the `Examples` section in the left-hand navigation to jump directly to a
 specific case.
-
-**References:**
-- Dritschel, D.G. (1989). *Contour dynamics and contour surgery.* Comput. Phys. Rep. **10**(3), 77--146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
-- Polvani, L.M., Zabusky, N.J. & Flierl, G.R. (1989). *Two-layer geostrophic vortex dynamics. Part 1. Upper-layer V-states and merger.* J. Fluid Mech. **205**, 215--242. [doi:10.1017/S0022112089002016](https://doi.org/10.1017/S0022112089002016)
