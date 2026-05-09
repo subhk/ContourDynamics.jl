@@ -59,7 +59,8 @@ L = 5π                        # half-width l; domain is [-l, l] × [-l, l]
 @assert isapprox(L / (n_beta * abs(omega0)), 6.3e-2; atol=5e-4)
 
 # --- Build PV staircase (discretized βy background), Eqs. (3.2)--(3.4) ---
-nodes_per_beta_contour = parse(Int, get(ENV, "BETA_DRIFT_BETA_NODES", "4"))
+nodes_per_beta_contour = 100
+
 function lam_dritschel_beta_staircase(beta, L, n_beta; nodes_per_contour)
     # The staircase contours are spanning: their closing segment crosses one
     # periodic image in x via the wrap vector instead of closing locally.
@@ -75,19 +76,20 @@ function lam_dritschel_beta_staircase(beta, L, n_beta; nodes_per_contour)
 end
 staircase = lam_dritschel_beta_staircase(beta, L, n_beta;
                                          nodes_per_contour=nodes_per_beta_contour)
+
 println("Beta staircase: $(length(staircase)) spanning contours, Δq = $(round(staircase[1].pv; digits=4))")
 
 # --- Circular vortex patch at origin ---
-vortex_nodes = parse(Int, get(ENV, "BETA_DRIFT_VORTEX_NODES", "64"))
+vortex_nodes = 64
 vortex = circular_patch(R, vortex_nodes, omega0)
 
 # Combine: staircase contours + vortex patch
 all_contours = vcat(staircase, [vortex])
 
-dt = 0.005
-t_final = parse(Float64, get(ENV, "BETA_DRIFT_T_FINAL", "0.1"))
-nsteps = parse(Int, get(ENV, "BETA_DRIFT_NSTEPS", string(round(Int, t_final / dt))))
-save_dt = parse(Float64, get(ENV, "BETA_DRIFT_SAVE_DT", "0.025"))
+dt = 0.01
+t_final = 10.0
+nsteps = round(Int, t_final / dt)
+save_dt = 0.25
 surgery_delta = 1e-3          # Lam & Dritschel CASL cutoff scale
 surgery_mu = 0.01
 max_segment = 0.3
@@ -95,12 +97,14 @@ prob = Problem(; kernel=:qg, Ld=Ld,
                  domain=:periodic, Lx=L, Ly=L,
                  contours=all_contours, dt=dt,
                  surgery=SurgeryParams(surgery_delta, surgery_mu, max_segment, 1e-6, nsteps + 1))
+
 display(prob); println()
 
 mkpath(OUTDIR)
 outfile = joinpath(OUTDIR, "beta_drift.jld2")
 rm(outfile; force=true)
 mediabase = joinpath(OUTDIR, "beta_drift")
+
 println("Writing outputs under $OUTDIR")
 println("Lam & Dritschel case D: β=$beta, Rd=$Ld, l=$L, R=$R, ω0=$omega0, nβ=$n_beta")
 println("Table 1 checks: l/(nβ R)=$(round(L / (n_beta * R); digits=2)), l/(nβ |ω0|)=$(round(L / (n_beta * abs(omega0)); digits=3))")
