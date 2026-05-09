@@ -16,7 +16,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             nc = length(c.nodes)
             for i in 1:nc
                 a = c.nodes[i]
-                b = c.nodes[mod1(i + 1, nc)]
+                b = ContourDynamics.next_node(c, i)
                 ds = b - a
                 for m in -modes:modes, n in -modes:modes
                     (m == 0 && n == 0) && continue
@@ -31,6 +31,24 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
                         (sin(phase) - sin(phase - k_dot_ds)) / k_dot_ds
                     v += c.pv * ds * coeff * segment_average
                 end
+            end
+        end
+        return v
+    end
+
+    function horizontal_spanning_fourier_velocity(kernel, domain, contours, x; modes=20_000)
+        v = zero(SVector{2,Float64})
+        area = 4 * domain.Lx * domain.Ly
+        kappa2 = kernel isa QGKernel ? 1 / kernel.Ld^2 : 0.0
+        for c in contours
+            y = c.nodes[1][2]
+            for n in -modes:modes
+                n == 0 && continue
+                ky = π * n / domain.Ly
+                k2 = ky^2
+                coeff = kernel isa EulerKernel ? 1 / (area * k2) :
+                    1 / (area * (k2 + kappa2))
+                v += c.pv * c.wrap * coeff * cos(ky * (x[2] - y))
             end
         end
         return v
@@ -126,6 +144,29 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
             v_ewald = velocity(prob, x)
             v_fourier = periodic_fourier_velocity(kernel, domain, contours, x)
+
+            @test norm(v_ewald - v_fourier) / norm(v_fourier) < 1e-5
+        end
+    end
+
+    @testset "Spanning Euler and QG velocities match Fourier reference" begin
+        domain = PeriodicDomain(1.7, 1.2)
+        spanning_line(y, pv, n) = PVContour(
+            [SVector(-domain.Lx + 2domain.Lx * (i - 1) / n, y) for i in 1:n],
+            pv, SVector(2domain.Lx, 0.0))
+        contours = [
+            spanning_line(-0.36, 0.42, 8),
+            spanning_line(0.43, -0.27, 8),
+        ]
+        x = SVector(0.37, 0.08)
+
+        for kernel in (EulerKernel(), QGKernel(0.9))
+            clear_ewald_cache!()
+            setup_ewald_cache!(domain, kernel; n_fourier=64, n_images=5)
+            prob = ContourProblem(kernel, domain, deepcopy(contours))
+
+            v_ewald = velocity(prob, x)
+            v_fourier = horizontal_spanning_fourier_velocity(kernel, domain, contours, x)
 
             @test norm(v_ewald - v_fourier) / norm(v_fourier) < 1e-5
         end
