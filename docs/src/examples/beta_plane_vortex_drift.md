@@ -8,8 +8,22 @@ The parameters below follow vortex D from Lam & Dritschel (2001): their
 equation (2.5) sets ``\beta = 1`` and ``R_d = 1``, section 3.1 uses domain
 half-width ``l = 5\pi``, and Table 1 gives vortex radius ``R = 1``, PV anomaly
 ``\omega_0 = 5``, and ``n_\beta = 50`` β-contours. The β-contour positions
-follow their equations (3.2)--(3.4). The original calculation used CASL and ran
-to ``t = 28``; this example uses a shorter, lower-node direct-contour run.
+follow their equations (3.2)--(3.4). The original calculation used CASL with
+common Table 1 parameters ``\bar n_h = 512``, ``m_g = 2``, and
+``\delta = 10^{-3}``, and ran to ``t = 28``. Those grid parameters are not
+direct-contour node counts; the example script reports them as CASL metadata
+and keeps the direct contour node counts separately configurable.
+
+To run the full paper time window with the literature parameters that map
+directly to this solver, use:
+
+```bash
+BETA_DRIFT_PRESET=paper julia -t 5 examples/beta_drift.jl
+```
+
+For direct-contour convergence checks, vary ``BETA_DRIFT_BETA_NODES`` and
+``BETA_DRIFT_VORTEX_NODES``. Do not interpret ``\bar n_h = 512`` as 512 nodes
+per β-contour.
 
 What to look for:
 
