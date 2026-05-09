@@ -616,9 +616,22 @@ end
     return vx, vy
 end
 
-@inline function _minimum_image_scalar(dx::T, L::T) where {T}
-    period = T(2) * L
-    return dx - round(dx / period) * period
+@inline function _nearest_periodic_segment_image_scalar(xi::T, yi::T,
+                                                        ax::T, ay::T,
+                                                        bx::T, by::T,
+                                                        Lx::T, Ly::T) where {T}
+    Lx2 = T(2) * Lx
+    Ly2 = T(2) * Ly
+    midx = (ax + bx) / T(2)
+    midy = (ay + by) / T(2)
+    shiftx = round((xi - midx) / Lx2) * Lx2
+    shifty = round((yi - midy) / Ly2) * Ly2
+    return ax + shiftx, ay + shifty, bx + shiftx, by + shifty
+end
+
+@inline function _periodic_euler_zero_mode_scalar(alpha::T, Lx::T, Ly::T) where {T}
+    area = T(4) * Lx * Ly
+    return one(T) / (T(4) * alpha^2 * area)
 end
 
 @inline function _periodic_euler_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
@@ -627,16 +640,16 @@ end
                                                          kx, ky, fourier_coeffs,
                                                          inv4pi::T,
                                                          gamma_euler::T) where {T}
-    r0x_wrap = _minimum_image_scalar(xi - sx, Lx)
-    r0y_wrap = _minimum_image_scalar(yi - sy, Ly)
+    r0x = xi - sx
+    r0y = yi - sy
     G_corr = zero(T)
 
     for px in -n_images:n_images
         shiftx = T(2) * Lx * T(px)
         for py in -n_images:n_images
             shifty = T(2) * Ly * T(py)
-            rx = r0x_wrap - shiftx
-            ry = r0y_wrap - shifty
+            rx = r0x - shiftx
+            ry = r0y - shifty
             r2 = rx * rx + ry * ry
 
             if px == 0 && py == 0
@@ -655,17 +668,17 @@ end
     nky = length(ky)
     for mi in 1:nkx
         kxi = kx[mi]
-        cx = cos(kxi * r0x_wrap)
-        sx_trig = sin(kxi * r0x_wrap)
+        cx = cos(kxi * r0x)
+        sx_trig = sin(kxi * r0x)
         for ni in 1:nky
             coeff = fourier_coeffs[mi, ni]
             abs(coeff) < eps(T) && continue
             kyi = ky[ni]
-            G_corr += coeff * (cx * cos(kyi * r0y_wrap) - sx_trig * sin(kyi * r0y_wrap))
+            G_corr += coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
         end
     end
 
-    return G_corr
+    return G_corr - _periodic_euler_zero_mode_scalar(alpha, Lx, Ly)
 end
 
 @inline function _periodic_qg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
@@ -698,16 +711,16 @@ end
                                                        Lx::T, Ly::T, n_images::Int,
                                                        kx, ky, fourier_coeffs,
                                                        inv2pi::T) where {T}
-    r0x_wrap = _minimum_image_scalar(xi - sx, Lx)
-    r0y_wrap = _minimum_image_scalar(yi - sy, Ly)
+    r0x = xi - sx
+    r0y = yi - sy
     G_corr = zero(T)
 
     for px in -n_images:n_images
         shiftx = T(2) * Lx * T(px)
         for py in -n_images:n_images
             shifty = T(2) * Ly * T(py)
-            rx = r0x_wrap - shiftx
-            ry = r0y_wrap - shifty
+            rx = r0x - shiftx
+            ry = r0y - shifty
             r2 = rx * rx + ry * ry
 
             if px == 0 && py == 0
@@ -724,13 +737,13 @@ end
     nky = length(ky)
     for mi in 1:nkx
         kxi = kx[mi]
-        cx = cos(kxi * r0x_wrap)
-        sx_trig = sin(kxi * r0x_wrap)
+        cx = cos(kxi * r0x)
+        sx_trig = sin(kxi * r0x)
         for ni in 1:nky
             coeff = fourier_coeffs[mi, ni]
             abs(coeff) < eps(T) && continue
             kyi = ky[ni]
-            G_corr += inv2pi * coeff * (cx * cos(kyi * r0y_wrap) - sx_trig * sin(kyi * r0y_wrap))
+            G_corr += inv2pi * coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
         end
     end
 
@@ -778,18 +791,20 @@ end
     vy = zero(T)
     inv4pi = one(T) / (T(4) * T(pi))
     gamma_euler = T(Base.MathConstants.eulergamma)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
+    g_nodes, g_weights = _gl5_nodes_weights(T)
 
     @inbounds for j in 1:n_seg
-        dsx = seg_bx[j] - seg_ax[j]
-        dsy = seg_by[j] - seg_ay[j]
+        ax, ay, bx, by = _nearest_periodic_segment_image_scalar(
+            xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j], Lx, Ly)
+        dsx = bx - ax
+        dsy = by - ay
         ds_len_sq = dsx^2 + dsy^2
         ds_len = sqrt(ds_len_sq)
         ds_len < eps(T) && continue
 
         if max(abs(seg_ka[j]), abs(seg_kb[j])) * ds_len > sqrt(eps(T))
             dvx, dvy = _curved_euler_contribution_scalar(
-                xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j],
+                xi, yi, ax, ay, bx, by,
                 seg_pv[j], seg_ka[j], seg_kb[j], inv4pi)
             vx += dvx
             vy += dvy
@@ -798,7 +813,7 @@ end
             @inbounds for q in 1:5
                 p = (one(T) + g5_nodes[q]) / T(2)
                 sx, sy, tx_curve, ty_curve = _cubic_point_tangent_scalar(
-                    seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j],
+                    ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_euler_green_correction_scalar(
                     xi, yi, sx, sy, alpha, Lx, Ly, n_images,
@@ -815,8 +830,8 @@ end
         nx = -ty
         ny = tx
 
-        r0x = xi - seg_ax[j]
-        r0y = yi - seg_ay[j]
+        r0x = xi - ax
+        r0y = yi - ay
         u_a = r0x * tx + r0y * ty
         h = r0x * nx + r0y * ny
         u_b = u_a - ds_len
@@ -827,28 +842,26 @@ end
         vx += contrib * tx
         vy += contrib * ty
 
-        mid_x = (seg_ax[j] + seg_bx[j]) / T(2)
-        mid_y = (seg_ay[j] + seg_by[j]) / T(2)
+        mid_x = (ax + bx) / T(2)
+        mid_y = (ay + by) / T(2)
         half_dsx = dsx / T(2)
         half_dsy = dsy / T(2)
         corr_integral = zero(T)
 
-        for q in 1:3
+        for q in eachindex(g_nodes)
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
 
-            r0x_raw = xi - sx
-            r0y_raw = yi - sy
-            r0x_wrap = _minimum_image_scalar(r0x_raw, Lx)
-            r0y_wrap = _minimum_image_scalar(r0y_raw, Ly)
+            r0x = xi - sx
+            r0y = yi - sy
             G_corr = zero(T)
 
             for px in -n_images:n_images
                 shiftx = T(2) * Lx * T(px)
                 for py in -n_images:n_images
                     shifty = T(2) * Ly * T(py)
-                    rx = r0x_wrap - shiftx
-                    ry = r0y_wrap - shifty
+                    rx = r0x - shiftx
+                    ry = r0y - shifty
                     r2 = rx * rx + ry * ry
 
                     if px == 0 && py == 0
@@ -863,8 +876,8 @@ end
                 end
             end
 
-            rx = r0x_wrap
-            ry = r0y_wrap
+            rx = r0x
+            ry = r0y
             nkx = length(kx)
             nky = length(ky)
             for mi in 1:nkx
@@ -879,7 +892,7 @@ end
                 end
             end
 
-            corr_integral += g_weights[q] * G_corr
+            corr_integral += g_weights[q] * (G_corr - _periodic_euler_zero_mode_scalar(alpha, Lx, Ly))
         end
 
         vx += seg_pv[j] * half_dsx * corr_integral
@@ -928,13 +941,15 @@ end
     yi = target_y[i]
     kappa2 = one(T) / (Ld * Ld)
     area = T(4) * Lx * Ly
-    g_nodes, g_weights = _gl3_nodes_weights(T)
+    g_nodes, g_weights = _gl5_nodes_weights(T)
     vx = vel_x[i]
     vy = vel_y[i]
 
     @inbounds for j in 1:n_seg
-        dsx = seg_bx[j] - seg_ax[j]
-        dsy = seg_by[j] - seg_ay[j]
+        ax, ay, bx, by = _nearest_periodic_segment_image_scalar(
+            xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j], Lx, Ly)
+        dsx = bx - ax
+        dsy = by - ay
         ds_len_sq = dsx^2 + dsy^2
         ds_len = sqrt(ds_len_sq)
         ds_len < eps(T) && continue
@@ -944,7 +959,7 @@ end
             @inbounds for q in 1:5
                 p = (one(T) + g5_nodes[q]) / T(2)
                 sx, sy, tx_curve, ty_curve = _cubic_point_tangent_scalar(
-                    seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j],
+                    ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_qg_green_correction_scalar(
                     xi, yi, sx, sy, kappa2, area, kx, ky)
@@ -955,13 +970,13 @@ end
             continue
         end
 
-        mid_x = (seg_ax[j] + seg_bx[j]) / T(2)
-        mid_y = (seg_ay[j] + seg_by[j]) / T(2)
+        mid_x = (ax + bx) / T(2)
+        mid_y = (ay + by) / T(2)
         half_dsx = dsx / T(2)
         half_dsy = dsy / T(2)
         corr_integral = zero(T)
 
-        for q in 1:3
+        for q in eachindex(g_nodes)
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
             rx = xi - sx
@@ -1007,20 +1022,22 @@ end
     yi = target_y[i]
     delta_sq = delta * delta
     inv2pi = one(T) / (T(2) * T(pi))
-    g_nodes, g_weights = _gl3_nodes_weights(T)
+    g_nodes, g_weights = _gl5_nodes_weights(T)
     vx = zero(T)
     vy = zero(T)
 
     @inbounds for j in 1:n_seg
-        dsx = seg_bx[j] - seg_ax[j]
-        dsy = seg_by[j] - seg_ay[j]
+        ax, ay, bx, by = _nearest_periodic_segment_image_scalar(
+            xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j], Lx, Ly)
+        dsx = bx - ax
+        dsy = by - ay
         ds_len_sq = dsx^2 + dsy^2
         ds_len = sqrt(ds_len_sq)
         ds_len < eps(T) && continue
 
         if max(abs(seg_ka[j]), abs(seg_kb[j])) * ds_len > sqrt(eps(T))
             dvx, dvy = _curved_sqg_contribution_scalar(
-                xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j],
+                xi, yi, ax, ay, bx, by,
                 seg_pv[j], seg_ka[j], seg_kb[j], delta, inv2pi)
             vx += dvx
             vy += dvy
@@ -1029,7 +1046,7 @@ end
             @inbounds for q in 1:5
                 p = (one(T) + g5_nodes[q]) / T(2)
                 sx, sy, tx_curve, ty_curve = _cubic_point_tangent_scalar(
-                    seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j],
+                    ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_sqg_green_correction_scalar(
                     xi, yi, sx, sy, alpha, delta_sq, Lx, Ly, n_images,
@@ -1046,8 +1063,8 @@ end
         nx = -ty
         ny = tx
 
-        r0x = xi - seg_ax[j]
-        r0y = yi - seg_ay[j]
+        r0x = xi - ax
+        r0y = yi - ay
         u_a = r0x * tx + r0y * ty
         h = r0x * nx + r0y * ny
         u_b = u_a - ds_len
@@ -1058,28 +1075,26 @@ end
         vx += contrib * tx
         vy += contrib * ty
 
-        mid_x = (seg_ax[j] + seg_bx[j]) / T(2)
-        mid_y = (seg_ay[j] + seg_by[j]) / T(2)
+        mid_x = (ax + bx) / T(2)
+        mid_y = (ay + by) / T(2)
         half_dsx = dsx / T(2)
         half_dsy = dsy / T(2)
         corr_integral = zero(T)
 
-        for q in 1:3
+        for q in eachindex(g_nodes)
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
 
-            r0x_raw = xi - sx
-            r0y_raw = yi - sy
-            r0x_wrap = _minimum_image_scalar(r0x_raw, Lx)
-            r0y_wrap = _minimum_image_scalar(r0y_raw, Ly)
+            r0x = xi - sx
+            r0y = yi - sy
             G_corr = zero(T)
 
             for px in -n_images:n_images
                 shiftx = T(2) * Lx * T(px)
                 for py in -n_images:n_images
                     shifty = T(2) * Ly * T(py)
-                    rx = r0x_wrap - shiftx
-                    ry = r0y_wrap - shifty
+                    rx = r0x - shiftx
+                    ry = r0y - shifty
                     r2 = rx * rx + ry * ry
 
                     if px == 0 && py == 0
@@ -1092,8 +1107,8 @@ end
                 end
             end
 
-            rx = r0x_wrap
-            ry = r0y_wrap
+            rx = r0x
+            ry = r0y
             nkx = length(kx)
             nky = length(ky)
             for mi in 1:nkx
