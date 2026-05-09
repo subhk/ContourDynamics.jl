@@ -106,7 +106,7 @@ The Fourier coefficients contain an ``\operatorname{erfc}(|\mathbf{k}|/(2\alpha)
 The periodic segment velocity again uses singular subtraction:
 
 - the regularized unbounded SQG segment velocity handles the near-singular part analytically
-- the periodic correction is smooth enough to integrate with 3-point Gauss-Legendre quadrature
+- the periodic correction is smooth enough to integrate with 5-point Gauss-Legendre quadrature
 
 The central-image correction is evaluated with the regularized radius
 ``r_\delta = \sqrt{r^2+\delta^2}``, giving
