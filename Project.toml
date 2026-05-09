@@ -1,0 +1,48 @@
+name = "ContourDynamics"
+uuid = "0a114e3f-4576-410c-8414-be1d36bbc63f"
+version = "1.0.11"
+authors = ["Subhajit Kar"]
+
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+RecordedArrays = "1040807a-3a2f-4266-b2c1-805b33c7034a"
+
+[extensions]
+ContourDynamicsCUDAExt = "CUDA"
+ContourDynamicsDiffEqExt = "OrdinaryDiffEq"
+ContourDynamicsJLD2Ext = "JLD2"
+ContourDynamicsMakieExt = "Makie"
+ContourDynamicsRecordedArraysExt = "RecordedArrays"
+
+[compat]
+Adapt = "4"
+CUDA = "5, 6"
+JLD2 = "0.5, 0.6"
+KernelAbstractions = "0.9"
+Makie = "0.21, 0.22, 0.24"
+OrdinaryDiffEq = "6, 7"
+PrecompileTools = "1"
+RecordedArrays = "0.4, 0.5"
+SpecialFunctions = "2"
+StaticArrays = "1"
+julia = "1.10"
+
+[extras]
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "JLD2", "Logging"]
