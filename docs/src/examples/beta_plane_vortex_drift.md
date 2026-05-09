@@ -4,11 +4,12 @@ A cyclonic vortex on a beta plane drifts north-westward due to the background
 PV gradient. The gradient ``\beta y`` is represented by a PV staircase in a
 periodic domain.
 
-The parameters below follow vortex D from Lam & Dritschel (2001): ``\beta = 1``,
-``R_d = 1``, domain half-width ``l = 5\pi``, vortex radius ``R = 1``, PV anomaly
-``\omega_0 = 5``, and ``n_\beta = 50`` β-contours. The original calculation
-used CASL and ran to ``t = 28``; this example uses a shorter, lower-node
-direct-contour run.
+The parameters below follow vortex D from Lam & Dritschel (2001): their
+equation (2.5) sets ``\beta = 1`` and ``R_d = 1``, section 3.1 uses domain
+half-width ``l = 5\pi``, and Table 1 gives vortex radius ``R = 1``, PV anomaly
+``\omega_0 = 5``, and ``n_\beta = 50`` β-contours. The β-contour positions
+follow their equations (3.2)--(3.4). The original calculation used CASL and ran
+to ``t = 28``; this example uses a shorter, lower-node direct-contour run.
 
 What to look for:
 
@@ -27,7 +28,11 @@ omega0 = 5.0          # uniform positive PV anomaly
 L = 5π                # domain half-width
 n_beta = 50
 
-# PV staircase discretizing βy
+# Rounded Table 1 resolution ratios for vortex D
+@assert isapprox(L / (n_beta * R), 0.31; atol=0.005)
+@assert isapprox(L / (n_beta * abs(omega0)), 6.3e-2; atol=5e-4)
+
+# PV staircase discretizing βy, Lam & Dritschel (2001), Eqs. (3.2)--(3.4)
 function lam_dritschel_beta_staircase(beta, L, n_beta; nodes_per_contour)
     d_beta = 2L / n_beta
     dq = beta * d_beta
