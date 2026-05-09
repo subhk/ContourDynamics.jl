@@ -65,8 +65,8 @@ end
 @inline _gl3_nodes_weights(::Type{Float32}) = (_GL3_NODES_F32, _GL3_WEIGHTS_F32)
 
 @inline function _gl3_nodes_weights(::Type{T}) where {T<:AbstractFloat}
-    # 3-point quadrature is used by energy diagnostics and periodic corrections,
-    # where the integrand is smoother after singular subtraction.
+    # 3-point quadrature is used by energy diagnostics where the integrand is
+    # smoother after singular subtraction.
     n1 = sqrt(T(3)/T(5))
     nodes = SVector{3,T}(-n1, zero(T), n1)
     weights = SVector{3,T}(T(5)/T(9), T(8)/T(9), T(5)/T(9))
