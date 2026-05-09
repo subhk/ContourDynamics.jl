@@ -1,0 +1,67 @@
+using ContourDynamics
+using Documenter, DocumenterVitepress
+
+# On PRs, skip execution of @repl / @example / @setup / @eval blocks so the
+# preview build is fast; full evaluation runs on push to main / tags.
+const DRAFT = get(ENV, "GITHUB_EVENT_NAME", "") == "pull_request"
+const BUILD_DIR = get(ENV, "DOCUMENTER_BUILD_DIR", "build")
+
+makedocs(;
+    modules = [ContourDynamics],
+    authors = "Subhajit Kar",
+    repo = "https://github.com/subhk/ContourDynamics.jl/blob/{commit}{path}#{line}",
+    sitename = "ContourDynamics.jl",
+    doctest = false,
+    draft = DRAFT,
+    build = BUILD_DIR,
+    format = DocumenterVitepress.MarkdownVitepress(
+        repo = "https://github.com/subhk/ContourDynamics.jl",
+        devbranch = "main",
+        devurl = "dev",
+    ),
+    pages = [
+        "Home" => "index.md",
+        "Tutorials" => [
+            "2D Euler Vortex Patch" => "tutorial_euler.md",
+            "Quasi-Geostrophic" => "tutorial_qg.md",
+        ],
+        "Examples" => [
+            "Overview" => "examples.md",
+            "Vortex Merger" => "examples/vortex_merger.md",
+            "Filamentation" => "examples/filamentation.md",
+            "Beta-Plane Vortex Drift" => "examples/beta_plane_vortex_drift.md",
+            "SQG Elliptical Vortex" => "examples/sqg_elliptical_vortex.md",
+            "Two-Layer QG" => "examples/two_layer_qg.md",
+        ],
+        "Theory & Method" => [
+            "Overview" => "theory.md",
+            "Contour Dynamics" => "theory/contour_dynamics.md",
+            "Ewald Summation" => "theory/ewald_summation.md",
+            "Contour Surgery" => "theory/contour_surgery.md",
+            "Multi-Layer QG" => "theory/multilayer_qg.md",
+            "Time Integration" => "theory/time_integration.md",
+            "References" => "theory/references.md",
+        ],
+        "API Reference" => [
+            "Overview" => "api.md",
+            "Types" => "api/types.md",
+            "Velocity & Acceleration" => "api/velocity.md",
+            "Time Integration" => "api/time_integration.md",
+            "Surgery" => "api/surgery.md",
+            "Diagnostics" => "api/diagnostics.md",
+            "Helpers" => "api/helpers.md",
+            "Periodic & Ewald" => "api/periodic_ewald.md",
+            "Devices" => "api/devices.md",
+            "Extensions" => "api/extensions.md",
+            "Internals" => "api/internals.md",
+        ],
+        "Architecture" => "architecture.md",
+        "Contributing" => "contributing.md",
+    ],
+    warnonly = true,
+)
+
+deploydocs(;
+    repo = "github.com/subhk/ContourDynamics.jl",
+    push_preview = true,
+)
