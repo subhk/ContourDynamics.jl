@@ -16,20 +16,6 @@ diagnostics from contour geometry, optional CUDA acceleration for supported
 velocity paths, and documented examples for merger, filamentation, beta-plane,
 SQG, and multilayer QG workflows.
 
-## Relation to Other Work
-
-ContourDynamics.jl implements the classical contour-dynamics and
-contour-surgery methodology of Zabusky et al. and Dritschel in the Julia
-ecosystem. It complements grid-based and spectral solvers by focusing on
-patch-boundary evolution rather than field evolution. Compared with a bespoke
-research script, the package provides a tested public API, multiple physics
-kernels, periodic domains, multilayer QG, documented examples, CI-tested
-diagnostics, and extension hooks for visualization, checkpointing, ODE solver
-integration, and GPU acceleration.
-
-The package is not intended to replace general-purpose Navier-Stokes, primitive
-equation, or smooth-PV solvers. It is most appropriate when the model has
-piecewise-constant PV and the boundary geometry is the primary object of study.
 
 ## Installation
 
@@ -90,7 +76,7 @@ control over kernels, domains, timesteppers, and surgery parameters, use the
 lower-level `ContourProblem`, `MultiLayerContourProblem`, `RK4Stepper`, and
 `SurgeryParams` APIs.
 
-## Scientific Examples
+## Examples
 
 Complete runnable scripts are available in [`examples/`](examples/), with
 matching documentation pages under the online docs.
@@ -245,8 +231,3 @@ or examples when public behavior changes.
 ## License
 
 ContourDynamics.jl is distributed under the MIT license. See [LICENSE](LICENSE).
-
-## Citation
-
-If you use ContourDynamics.jl in published research, please cite the JOSS paper
-once available.
