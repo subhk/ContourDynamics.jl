@@ -1,6 +1,8 @@
 using ContourDynamics
 import CairoMakie
 
+include("visualization_geometry.jl")
+
 # Shared plotting utilities for example scripts that write JLD2 snapshots.
 # Snapshot records are intentionally handled structurally: single-layer files
 # contain `contours`, while multi-layer files contain `layers`.
@@ -26,7 +28,10 @@ function _foreach_snapshot_contour(f, snapshot)
     return nothing
 end
 
-function _snapshot_limits(snapshots)
+function _snapshot_limits(snapshots; limits=nothing, periodic_box=nothing)
+    limits !== nothing && return limits
+    periodic_box !== nothing && return periodic_box
+
     # Compute a square data window over all frames. A fixed window prevents
     # videos from visually zooming as vortices merge, drift, or shed filaments.
     xmin = Inf
@@ -66,36 +71,18 @@ function _snapshot_limits(snapshots)
             mid_y - half_span, mid_y + half_span)
 end
 
-function _closed_curve(contour)
-    # Closed vortex patches repeat the first point for line rendering. Spanning
-    # contours represent periodic interfaces, so drawing the closing edge would
-    # incorrectly connect across the plot.
-    nodes = contour.nodes
-    n = length(nodes)
-    n == 0 && return Float64[], Float64[]
-    npts = is_spanning(contour) ? n : n + 1
-    xs = Vector{Float64}(undef, npts)
-    ys = Vector{Float64}(undef, npts)
-    for i in 1:n
-        xs[i] = nodes[i][1]
-        ys[i] = nodes[i][2]
-    end
-    if !is_spanning(contour)
-        xs[end] = nodes[1][1]
-        ys[end] = nodes[1][2]
-    end
-    return xs, ys
-end
-
-function _draw_snapshot!(cm, ax, snapshot; linewidth, fillalpha)
+function _draw_snapshot!(cm, ax, snapshot; linewidth, fillalpha, periodic_box)
     # Multi-layer snapshots reuse line style for layer identity; PV color is not
     # used here because these example exports are intended as simple black-line
     # validation artifacts.
     _foreach_snapshot_contour(snapshot) do contour, layer_idx
-        xs, ys = _closed_curve(contour)
+        xs, ys = _contour_curve(contour)
+        if periodic_box !== nothing
+            xs, ys = _periodic_curve(xs, ys, periodic_box)
+        end
         isempty(xs) && return
         linestyle = _LAYER_LINESTYLES[mod1(layer_idx, length(_LAYER_LINESTYLES))]
-        if fillalpha > 0 && !is_spanning(contour)
+        if fillalpha > 0 && !is_spanning(contour) && all(isfinite, xs) && all(isfinite, ys)
             cm.poly!(ax, cm.Point2f.(xs, ys); color=(:black, fillalpha), strokewidth=0)
         end
         cm.lines!(ax, xs, ys;
@@ -124,18 +111,20 @@ function save_animation(basename::AbstractString, snapshots;
                         linewidth::Real=3.0,
                         fillalpha::Real=0.0,
                         framerate::Int=30,
-                        px_per_unit::Real=2)
+                        px_per_unit::Real=2,
+                        limits=nothing,
+                        periodic_box=nothing)
     # Produce both static final-state figures and an MP4 from the same drawing
     # path so example outputs remain comparable.
     isempty(snapshots) && error("No snapshots available for media export.")
 
     cm = CairoMakie
-    limits = _snapshot_limits(snapshots)
+    limits = _snapshot_limits(snapshots; limits=limits, periodic_box=periodic_box)
 
     fig = cm.Figure(size=figure_size, backgroundcolor=:white, fontsize=24)
     ax = cm.Axis(fig[1, 1]; aspect=cm.DataAspect())
     _style_axis!(cm, ax, limits, title)
-    _draw_snapshot!(cm, ax, snapshots[end]; linewidth, fillalpha)
+    _draw_snapshot!(cm, ax, snapshots[end]; linewidth, fillalpha, periodic_box)
 
     pngfile = basename * "_final.png"
     svgfile = basename * "_final.svg"
@@ -148,7 +137,7 @@ function save_animation(basename::AbstractString, snapshots;
     cm.record(fig, mp4file, eachindex(snapshots); framerate=framerate) do i
         cm.empty!(ax)
         _style_axis!(cm, ax, limits, "$(title) (t = $(round(snapshots[i].time; digits=3)))")
-        _draw_snapshot!(cm, ax, snapshots[i]; linewidth, fillalpha)
+        _draw_snapshot!(cm, ax, snapshots[i]; linewidth, fillalpha, periodic_box)
     end
     println("Saved animation: $mp4file")
 

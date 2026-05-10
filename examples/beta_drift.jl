@@ -199,4 +199,4 @@ for s in snaps
     end
 end
 
-save_animation(mediabase, snaps; title="Beta-plane drift")
+save_animation(mediabase, snaps; title="Beta-plane drift", periodic_box=(-L, L, -L, L))

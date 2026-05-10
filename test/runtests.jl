@@ -2,6 +2,7 @@ using Test
 using Logging
 
 include("test_utils.jl")
+include("test_example_visualization_geometry.jl")
 
 @testset "ContourDynamics.jl" begin
     @testset "Core Types" begin
