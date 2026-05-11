@@ -5,6 +5,7 @@
 ```@docs
 EulerKernel
 QGKernel
+BetaPlaneQGKernel
 SQGKernel
 MultiLayerQGKernel
 ```

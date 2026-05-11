@@ -135,9 +135,14 @@ In most cases, `setup_ewald_cache!` does not need to be called explicitly. The
 default cache settings are adequate for typical problem sizes. Manual setup is
 primarily relevant when higher periodic-kernel accuracy is required.
 
-### Beta-Plane PV Staircase
+### Beta-Plane PV Staircases
 
-The background PV gradient ``\beta y`` on a beta plane can be represented as a **PV staircase**, a set of horizontal spanning contours that discretize the continuous gradient:
+The package includes a `beta_staircase` helper for constructing horizontal
+spanning contours in a periodic domain. With [`BetaPlaneQGKernel`](@ref), these
+contours represent material full-PV interfaces on a beta plane. The kernel keeps
+a reference copy of the initial straight staircase and subtracts that reference
+from the QG inversion, so an undeformed planetary PV gradient does not induce
+spurious flow.
 
 ```@repl tutorial_qg_staircase
 using ContourDynamics
@@ -146,13 +151,24 @@ T = Float64
 L = 3.0
 domain = PeriodicDomain(T(L))
 
-# Discretize βy into 12 staircase steps
+# Construct material full-PV jumps for beta-plane contour dynamics
 beta = T(1.0)
 staircase = beta_staircase(beta, domain, 8; nodes_per_contour=16)
+vortex = circular_patch(T(0.3), 32, T(2π))
+
+prob = Problem(; contours=vcat(staircase, [vortex]),
+               dt=T(0.005),
+               kernel=:beta_plane_qg,
+               beta=beta,
+               Ld=T(1.0),
+               domain=:periodic,
+               Lx=L,
+               Ly=L,
+               surgery=:none)
 
 println("Number of spanning contours: $(length(staircase))")
 println("PV jump per contour: $(staircase[1].pv)")
-println("Is spanning: $(is_spanning(staircase[1]))");
+println("Kernel: $(kernel(prob))");
 ```
 
 Each spanning contour has a `wrap` vector that connects the last node back to the first node shifted by one period. That is how the package represents contours that cross the periodic boundary.
@@ -160,46 +176,15 @@ Each spanning contour has a `wrap` vector that connects the last node back to th
 That means the staircase contours are not ordinary closed loops sitting inside
 the box. They represent interfaces that continue across the periodic boundary.
 
-### Beta Drift of a Cyclone
-
-A cyclone on a beta plane drifts north-westward. We can simulate this by combining the PV staircase with a circular vortex patch:
-
-```@repl tutorial_qg_beta
-using ContourDynamics
-
-T = Float64
-L = 3.0
-beta = T(1.0)
-staircase = beta_staircase(beta, PeriodicDomain(T(L)), 8; nodes_per_contour=16)
-
-# Circular vortex at the origin
-vortex = circular_patch(T(0.3), 24, T(2π))
-
-# Combine staircase + vortex
-all_contours = vcat(staircase, [vortex])
-prob = Problem(; contours=all_contours, dt=T(0.005),
-               kernel=:qg, Ld=T(1.0), domain=:periodic, Lx=T(L), Ly=T(L))
-
-c0 = centroid(vortex)
-evolve!(prob; nsteps=5)
-
-# Find the vortex (largest non-spanning contour)
-final_contours = materialize_contours(prob)
-vortex_final = argmax(
-    c -> is_spanning(c) ? 0.0 : abs(vortex_area(c)),
-    final_contours
-)
-cf = centroid(vortex_final)
-println("Vortex drift: dx=$(round(cf[1] - c0[1]; digits=6)), dy=$(round(cf[2] - c0[2]; digits=6))")
-println("Largest non-spanning contour area: $(round(abs(vortex_area(vortex_final)); digits=6))");
-```
-
-This example combines two features:
+The beta-plane setup combines three features:
 
 - a periodic Green's function through the Ewald machinery
-- a background PV gradient represented by spanning contours
+- active spanning-contour geometry for material beta contours
+- reference straight beta staircase subtraction in `BetaPlaneQGKernel`
 
-The setup is correspondingly more involved than the single-layer QG case.
+The reference subtraction means that straight beta contours alone have zero
+velocity, while deformed beta contours contribute to the regular PV that drives
+the contour motion.
 
 ## Multi-Layer QG
 
