@@ -60,3 +60,36 @@ function _periodic_curve(xs, ys, periodic_box)
 
     return out_x, out_y
 end
+
+function _point_like(reference, x, y)
+    try
+        return typeof(reference)(x, y)
+    catch
+        return (x, y)
+    end
+end
+
+function _periodic_delta(prev, current, periodic_box)
+    xmin, xmax, ymin, ymax = periodic_box
+    width_x = xmax - xmin
+    width_y = ymax - ymin
+    width_x > 0 || throw(ArgumentError("periodic x bounds must have positive width"))
+    width_y > 0 || throw(ArgumentError("periodic y bounds must have positive width"))
+
+    dx = current[1] - prev[1]
+    dy = current[2] - prev[2]
+    dx -= width_x * round(dx / width_x)
+    dy -= width_y * round(dy / width_y)
+    return _point_like(current - prev, dx, dy)
+end
+
+function _unwrap_periodic_points(points, periodic_box)
+    isempty(points) && return copy(points)
+
+    out = Vector{typeof(first(points))}(undef, length(points))
+    out[1] = first(points)
+    for i in 2:length(points)
+        out[i] = out[i - 1] + _periodic_delta(points[i - 1], points[i], periodic_box)
+    end
+    return out
+end
