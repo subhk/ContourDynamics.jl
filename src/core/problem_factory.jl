@@ -26,7 +26,8 @@ function _validate_problem_layout(kernel::Symbol, contours, layers)
     return is_multilayer
 end
 
-function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling, delta_sqg::Real) where {T}
+function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling, delta_sqg::Real,
+                       beta::Real) where {T}
     # Normalize all numeric inputs to the problem float type here. Downstream
     # kernel constructors deliberately enforce type consistency with contours.
     if kernel === :euler
@@ -34,6 +35,10 @@ function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling, delta_sqg::Real)
     elseif kernel === :qg
         Ld === nothing && throw(ArgumentError("kernel=:qg requires `Ld` (deformation radius)."))
         return QGKernel(T(Ld))
+    elseif kernel === :beta_plane_qg
+        Ld === nothing && throw(ArgumentError("kernel=:beta_plane_qg requires `Ld` (deformation radius)."))
+        isnan(beta) && throw(ArgumentError("kernel=:beta_plane_qg requires `beta`."))
+        return BetaPlaneQGKernel(T(beta), T(Ld), PVContour{T}[])
     elseif kernel === :sqg
         isnan(delta_sqg) && throw(ArgumentError("kernel=:sqg requires `delta_sqg` (regularization length)."))
         return SQGKernel(T(delta_sqg))
@@ -49,7 +54,7 @@ function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling, delta_sqg::Real)
         coupling_s = coupling isa SMatrix ? convert(SMatrix{Nlay, Nlay, T}, coupling) : SMatrix{Nlay, Nlay, T}(T.(coupling))
         return MultiLayerQGKernel(Ld_s, coupling_s)
     end
-    throw(ArgumentError("Unknown kernel :$kernel. Use :euler, :qg, :sqg, or :multilayer_qg."))
+    throw(ArgumentError("Unknown kernel :$kernel. Use :euler, :qg, :beta_plane_qg, :sqg, or :multilayer_qg."))
 end
 
 function _build_domain(::Type{T}, domain::Symbol, Lx::Real, Ly::Real) where {T}
@@ -70,9 +75,16 @@ function _build_device(dev)
 end
 
 function _build_contour_problem(is_multilayer::Bool, kernel, domain, contours, layers, dev)
-    return is_multilayer ?
-        MultiLayerContourProblem(kernel, domain, layers; dev=dev) :
-        ContourProblem(kernel, domain, contours; dev=dev)
+    if is_multilayer
+        return MultiLayerContourProblem(kernel, domain, layers; dev=dev)
+    elseif kernel isa BetaPlaneQGKernel
+        domain isa PeriodicDomain || throw(ArgumentError(
+            "kernel=:beta_plane_qg currently requires domain=:periodic."))
+        return ContourProblem(_attach_beta_plane_reference(kernel, contours),
+                              domain, contours; dev=dev)
+    else
+        return ContourProblem(kernel, domain, contours; dev=dev)
+    end
 end
 
 function _build_stepper(::Type{T}, stepper::Symbol, dt::Real, prob, dev, ra_coeff::Real) where {T}
@@ -110,8 +122,9 @@ time stepper, and [`SurgeryParams`](@ref) from keyword arguments.
 Use `contours=Vector{PVContour}` for single-layer Euler/QG/SQG problems, or
 `layers=(layer1, layer2, ...)` with `kernel=:multilayer_qg` for multi-layer QG.
 Periodic domains require `domain=:periodic, Lx=..., Ly=...`. QG kernels require
-`Ld`; SQG kernels require `delta_sqg`; multi-layer kernels require both `Ld`
-and `coupling`.
+`Ld`; beta-plane QG also requires `beta` and spanning contours from
+[`beta_staircase`](@ref); SQG kernels require `delta_sqg`; multi-layer kernels
+require both `Ld` and `coupling`.
 
 `surgery` may be a [`SurgeryParams`](@ref), one of `:standard`,
 `:conservative`, `:aggressive`, or `:none`.
@@ -123,6 +136,7 @@ function Problem(;
     coupling=nothing,
     kernel::Symbol=:euler,
     Ld=nothing,
+    beta::Real=NaN,
     delta_sqg::Real=NaN,
     domain::Symbol=:unbounded,
     Lx::Real=NaN,
@@ -136,7 +150,7 @@ function Problem(;
     # Build in dependency order: layout determines problem type, then kernel and
     # domain are normalized, then the concrete problem sizes the stepper buffers.
     is_multilayer = _validate_problem_layout(kernel, contours, layers)
-    built_kernel = _build_kernel(T, kernel, Ld, coupling, delta_sqg)
+    built_kernel = _build_kernel(T, kernel, Ld, coupling, delta_sqg, beta)
     built_domain = _build_domain(T, domain, Lx, Ly)
     device = _build_device(dev)
     contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain, contours, layers, device)
