@@ -21,4 +21,27 @@ include("../examples/visualization_geometry.jl")
     @test split_ys[1] == 0.0
     @test isnan(split_ys[2])
     @test split_ys[3] == 0.0
+
+    unwrapped = _unwrap_periodic_points(
+        [SVector(0.0, 0.0), SVector(-0.8, 0.1), SVector(0.9, 0.2)],
+        (-1.0, 1.0, -1.0, 1.0))
+    @test unwrapped[1] == SVector(0.0, 0.0)
+    @test unwrapped[2] == SVector(-0.8, 0.1)
+    @test unwrapped[3] ≈ SVector(-1.1, 0.2)
+end
+
+@testset "Beta drift example scope is explicit" begin
+    repo_root = normpath(joinpath(@__DIR__, ".."))
+    example_text = read(joinpath(repo_root, "examples", "beta_drift.jl"), String)
+    docs_text = read(joinpath(repo_root, "docs", "src", "examples", "beta_plane_vortex_drift.md"), String)
+
+    @test occursin("kernel=:beta_plane_qg", example_text)
+    @test occursin("beta_staircase", example_text)
+    @test occursin("BetaPlaneQGKernel", docs_text)
+    @test occursin("reference straight beta staircase", docs_text)
+    @test !occursin("BetaPlaneQGModel", example_text)
+    @test !occursin("regular-grid beta-plane QG", docs_text)
+    @test !occursin("BETA_DRIFT_ALLOW_ACTIVE_STAIRCASE", example_text)
+    @test !occursin("lam_dritschel_beta_staircase", example_text)
+    @test !occursin("active PV-staircase setup", docs_text)
 end
