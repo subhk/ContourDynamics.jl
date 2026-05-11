@@ -71,16 +71,14 @@ function _direct_velocity!(vel::Vector{SVector{2,T}},
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
 
     ewald = _prefetch_ewald(domain, kernel)
-    contour_curvatures = [_signed_node_curvatures(c) for c in contours]
-    reference_curvatures = [_signed_node_curvatures(c) for c in kernel.reference_contours]
+    scratch = prob.velocity_scratch
+    contour_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures, contours)
+    reference_curvatures = _prepare_curvature_buffers!(scratch.reference_curvatures,
+                                                       kernel.reference_contours)
 
     if _should_thread_velocity(N)
         n_contours = length(contours)
-        offsets = Vector{Int}(undef, n_contours + 1)
-        offsets[1] = 0
-        for ci in 1:n_contours
-            offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
-        end
+        offsets = _prepare_contour_offsets!(scratch.offsets, contours)
         Threads.@threads for i in 1:N
             ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
             ci = clamp(ci, 1, n_contours)
@@ -109,8 +107,11 @@ function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},
                   x::SVector{2,T}) where {T, D<:PeriodicDomain{T}}
     kernel = prob.kernel
     ewald = _prefetch_ewald(prob.domain, kernel)
-    contour_curvatures = [_signed_node_curvatures(c) for c in prob.contours]
-    reference_curvatures = [_signed_node_curvatures(c) for c in kernel.reference_contours]
+    scratch = prob.velocity_scratch
+    contour_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures,
+                                                     prob.contours)
+    reference_curvatures = _prepare_curvature_buffers!(scratch.reference_curvatures,
+                                                       kernel.reference_contours)
     return _beta_plane_velocity_at(kernel, prob.domain, x, prob.contours,
                                    contour_curvatures, reference_curvatures, ewald)
 end
