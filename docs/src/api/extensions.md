@@ -12,6 +12,18 @@ after loading the corresponding optional package extension.
   `load_simulation`
 - `Makie` extension: `record_evolution`
 
+```@docs
+flatten_nodes
+unflatten_nodes!
+to_ode_problem
+record_evolution
+recorded_diagnostics
+save_snapshot
+load_snapshot
+jld2_recorder
+load_simulation
+```
+
 ## OrdinaryDiffEq Bridge
 
 `to_ode_problem(prob::ContourProblem, tspan; surgery_params=nothing, surgery_dt=nothing)`
