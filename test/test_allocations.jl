@@ -61,8 +61,9 @@ using SpecialFunctions
         prob = ContourProblem(QGKernel(1.0), UnboundedDomain(), [c])
         vel = zeros(SVector{2,Float64}, total_nodes(prob))
 
+        @test @inferred(velocity!(vel, prob)) === vel
         alloc = allocation_bytes(() -> velocity!(vel, prob))
-        @test alloc <= 256
+        @test alloc <= 128
     end
 
     @testset "Beta-plane velocity reuses live and reference curvature scratch" begin
@@ -75,8 +76,9 @@ using SpecialFunctions
                               domain, vcat(reference, [vortex]))
         vel = zeros(SVector{2,Float64}, total_nodes(prob))
 
+        @test @inferred(velocity!(vel, prob)) === vel
         alloc = allocation_bytes(() -> velocity!(vel, prob))
-        @test alloc <= 1_024
+        @test alloc <= 256
     end
 
     @testset "Multilayer CPU velocity reuses modal scratch" begin
@@ -92,8 +94,9 @@ using SpecialFunctions
         )
         vel = (zeros(SVector{2,Float64}, N), zeros(SVector{2,Float64}, N))
 
+        @test @inferred(velocity!(vel, prob)) === vel
         alloc = allocation_bytes(() -> velocity!(vel, prob))
-        @test alloc <= 2_500
+        @test alloc <= 512
     end
 
     @testset "Single-point velocity is allocation-light after warm-up" begin
