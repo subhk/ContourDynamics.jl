@@ -3,17 +3,19 @@
 This example uses contour dynamics on a beta plane. The live contours encode
 full PV: a straight beta staircase plus a circular vortex anomaly. The
 [`BetaPlaneQGKernel`](@ref) keeps a frozen copy of the initial straight
-staircase and subtracts it from the QG inversion, so the velocity is induced by
+staircase, subtracts it from the contour sum, and adds the analytic velocity of
+the finite-step residual relative to the continuous beta plane:
 
 ```math
 q_\mathrm{regular}
   = q_\mathrm{full\ contours}
-  - q_\mathrm{reference\ staircase}.
+  - q_\mathrm{reference\ staircase}
+  + (q_\mathrm{reference\ staircase} - \beta y).
 ```
 
-That reference straight beta staircase subtraction is the important beta-plane correction.
-The beta contours remain material and can deform, but the undeformed planetary
-PV gradient is not inverted as active anomaly PV.
+That is the contour-only form of the Lam-Dritschel decomposed inversion
+``(\nabla^2 - R_d^{-2})\psi_r = q_r - \beta y``. The beta contours remain
+material and can deform; no contour-to-grid velocity solve is introduced.
 
 The parameters follow vortex D from Lam & Dritschel (2001): their equation
 (2.5) sets ``\beta = 1`` and ``R_d = 1``, section 3.1 uses domain half-width
@@ -21,7 +23,7 @@ The parameters follow vortex D from Lam & Dritschel (2001): their equation
 ``\omega_0 = 5``, and ``n_\beta = 50`` beta contours. The paper used CASL with
 Table 1 parameters ``\bar n_h = 512``, ``m_g = 2``, and
 ``\delta = 10^{-3}``, and ran to ``t = 28``. This package example is direct
-contour dynamics with reference-staircase subtraction, not the full CASL
+contour dynamics with the analytic beta-plane correction, not the full CASL
 algorithm.
 
 Run the default demonstration with:
@@ -47,7 +49,8 @@ Useful controls:
 
 What to look for:
 
-- a straight reference beta staircase alone induces no velocity
+- a straight reference beta staircase induces only the small finite-step
+  `q_r - beta*y` sawtooth velocity
 - the vortex deforms the material beta contours
 - the largest closed contour reports the vortex centroid displacement over time
 
