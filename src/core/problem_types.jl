@@ -17,6 +17,7 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
                             dev::Dev=CPU()) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
+        _check_kernel_domain(kernel, domain)
         _check_gpu_support(kernel, domain, dev)
         state = _build_device_state(contours, dev)
         new{K, D, T, Dev, typeof(state)}(kernel, domain, contours, dev, state)
@@ -53,6 +54,8 @@ _check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
 _check_kernel_type(::AbstractKernel, ::Type) = nothing
 _check_kernel_type(::QGKernel{Tk}, ::Type{T}) where {Tk, T} =
     Tk !== T && throw(ArgumentError("QGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
+_check_kernel_type(::BetaPlaneQGKernel{Tk}, ::Type{T}) where {Tk, T} =
+    Tk !== T && throw(ArgumentError("BetaPlaneQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
 _check_kernel_type(::SQGKernel{Tk}, ::Type{T}) where {Tk, T} =
     Tk !== T && throw(ArgumentError("SQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
 _check_kernel_type(::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
@@ -61,6 +64,10 @@ _check_kernel_type(::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
 _check_domain_type(::AbstractDomain, ::Type) = nothing
 _check_domain_type(::PeriodicDomain{Td}, ::Type{T}) where {Td, T} =
     Td !== T && throw(ArgumentError("PeriodicDomain uses $Td but contours use $T — construct the domain with the same float type as the contours"))
+
+_check_kernel_domain(::AbstractKernel, ::AbstractDomain) = nothing
+_check_kernel_domain(kernel::BetaPlaneQGKernel, domain::AbstractDomain) =
+    _validate_beta_plane_reference(kernel, domain)
 
 """
     MultiLayerContourProblem{N,K,D,T,Dev}(kernel, domain, layers; dev=CPU())
