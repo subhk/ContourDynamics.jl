@@ -26,8 +26,8 @@ function _validate_problem_layout(kernel::Symbol, contours, layers)
     return is_multilayer
 end
 
-function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling, delta_sqg::Real,
-                       beta::Real) where {T}
+Base.@constprop :aggressive function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling,
+                                                   delta_sqg::Real, beta::Real) where {T}
     # Normalize all numeric inputs to the problem float type here. Downstream
     # kernel constructors deliberately enforce type consistency with contours.
     if kernel === :euler
@@ -57,7 +57,8 @@ function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling, delta_sqg::Real,
     throw(ArgumentError("Unknown kernel :$kernel. Use :euler, :qg, :beta_plane_qg, :sqg, or :multilayer_qg."))
 end
 
-function _build_domain(::Type{T}, domain::Symbol, Lx::Real, Ly::Real) where {T}
+Base.@constprop :aggressive function _build_domain(::Type{T}, domain::Symbol,
+                                                   Lx::Real, Ly::Real) where {T}
     if domain === :unbounded
         return UnboundedDomain()
     elseif domain === :periodic
@@ -74,7 +75,8 @@ function _build_device(dev)
     return dev
 end
 
-function _build_contour_problem(is_multilayer::Bool, kernel, domain, contours, layers, dev)
+Base.@constprop :aggressive function _build_contour_problem(is_multilayer::Bool, kernel,
+                                                            domain, contours, layers, dev)
     if is_multilayer
         return MultiLayerContourProblem(kernel, domain, layers; dev=dev)
     elseif kernel isa BetaPlaneQGKernel
@@ -87,7 +89,9 @@ function _build_contour_problem(is_multilayer::Bool, kernel, domain, contours, l
     end
 end
 
-function _build_stepper(::Type{T}, stepper::Symbol, dt::Real, prob, dev, ra_coeff::Real) where {T}
+Base.@constprop :aggressive function _build_stepper(::Type{T}, stepper::Symbol,
+                                                    dt::Real, prob, dev,
+                                                    ra_coeff::Real) where {T}
     # Stepper buffers are sized from the current node count. Surgery may change
     # this later, in which case `resize_buffers!` is called by `evolve!`.
     N = total_nodes(prob)
@@ -99,7 +103,7 @@ function _build_stepper(::Type{T}, stepper::Symbol, dt::Real, prob, dev, ra_coef
     throw(ArgumentError("Unknown stepper :$stepper. Use :RK4 or :leapfrog."))
 end
 
-function _build_surgery(surgery, ::Type{T}) where {T}
+Base.@constprop :aggressive function _build_surgery(surgery, ::Type{T}) where {T}
     # Accept either an explicit SurgeryParams or a named preset. Presets are
     # intentionally conservative defaults for examples, not universal settings.
     surgery isa SurgeryParams && return surgery
@@ -129,7 +133,7 @@ require both `Ld` and `coupling`.
 `surgery` may be a [`SurgeryParams`](@ref), one of `:standard`,
 `:conservative`, `:aggressive`, or `:none`.
 """
-function Problem(;
+Base.@constprop :aggressive function Problem(;
     contours=nothing,
     dt::Real,
     layers=nothing,
