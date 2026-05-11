@@ -1,5 +1,23 @@
 # ── Problem Structs ──────────────────────────────────────
 
+mutable struct _VelocityScratch{T<:AbstractFloat}
+    contour_curvatures::Vector{Vector{T}}
+    reference_curvatures::Vector{Vector{T}}
+    layer_curvatures::Vector{Vector{Vector{T}}}
+    offsets::Vector{Int}
+    target_nodes::Vector{SVector{2,T}}
+    mode_vel::Vector{SVector{2,T}}
+end
+
+function _VelocityScratch{T}() where {T<:AbstractFloat}
+    return _VelocityScratch{T}(Vector{T}[],
+                               Vector{T}[],
+                               Vector{Vector{T}}[],
+                               Int[],
+                               SVector{2,T}[],
+                               SVector{2,T}[])
+end
+
 """
     ContourProblem{K,D,T,Dev}(kernel, domain, contours; dev=CPU())
 
@@ -13,6 +31,7 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
     contours::Vector{PVContour{T}}
     dev::Dev
     device_state::S
+    velocity_scratch::_VelocityScratch{T}
     function ContourProblem(kernel::K, domain::D, contours::Vector{PVContour{T}};
                             dev::Dev=CPU()) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
@@ -20,7 +39,8 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
         _check_kernel_domain(kernel, domain)
         _check_gpu_support(kernel, domain, dev)
         state = _build_device_state(contours, dev)
-        new{K, D, T, Dev, typeof(state)}(kernel, domain, contours, dev, state)
+        new{K, D, T, Dev, typeof(state)}(kernel, domain, contours, dev, state,
+                                          _VelocityScratch{T}())
     end
 end
 
@@ -82,12 +102,14 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
     layers::NTuple{N, Vector{PVContour{T}}}
     dev::Dev
     device_state::S
+    velocity_scratch::_VelocityScratch{T}
     function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}};
                                       dev::Dev=CPU()) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
         state = _build_layer_device_state(layers, dev)
-        new{N, K, D, T, Dev, typeof(state)}(kernel, domain, layers, dev, state)
+        new{N, K, D, T, Dev, typeof(state)}(kernel, domain, layers, dev, state,
+                                             _VelocityScratch{T}())
     end
 end
 
