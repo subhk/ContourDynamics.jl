@@ -1,5 +1,6 @@
 # Beta-plane contour QG stores total-PV contours plus a frozen straight
-# staircase reference. The inversion uses current contours minus that reference.
+# staircase reference. The inversion uses current contours minus that reference,
+# plus the analytic velocity of the reference staircase relative to beta*y.
 
 function _copy_pv_contour(c::PVContour{T}) where {T}
     return PVContour(copy(c.nodes), c.pv, c.wrap, copy(c.corners))
@@ -22,8 +23,9 @@ end
 Contour-dynamics beta-plane QG kernel with deformation radius `Ld`.
 
 The live contours represent full PV. `reference_contours` is the undeformed
-straight beta staircase that is subtracted from the QG inversion, so the
-velocity comes from `current full PV - reference beta staircase`.
+straight beta staircase. The velocity comes from `current full PV - reference
+beta staircase` plus the analytic zonal correction for
+`reference beta staircase - beta*y`.
 """
 struct BetaPlaneQGKernel{T<:AbstractFloat} <: AbstractKernel
     beta::T
@@ -49,7 +51,7 @@ function _validate_beta_plane_reference(kernel::BetaPlaneQGKernel{T},
         "BetaPlaneQGKernel requires at least one reference beta-staircase contour."))
 
     expected_wrap = SVector{2,T}(2 * domain.Lx, zero(T))
-    expected_dy = 2 * domain.Ly / T(length(reference) + 1)
+    expected_dy = 2 * domain.Ly / T(length(reference))
     expected_pv = kernel.beta * expected_dy
 
     for (ci, c) in pairs(reference)
@@ -75,10 +77,10 @@ function _validate_beta_plane_reference(kernel::BetaPlaneQGKernel{T},
 
     y_levels = sort([c.nodes[1][2] for c in reference])
     for (k, y) in pairs(y_levels)
-        expected_y = -domain.Ly + T(k) * expected_dy
+        expected_y = -domain.Ly + (T(k) - T(0.5)) * expected_dy
         _beta_plane_isapprox(y, expected_y, domain.Ly) || throw(ArgumentError(
             "BetaPlaneQGKernel reference y-level $k is $y; expected $expected_y. " *
-            "Build reference contours with beta_staircase(beta, domain, n_beta + 1)."))
+            "Build reference contours with beta_staircase(beta, domain, n_beta)."))
     end
     return nothing
 end
@@ -93,6 +95,6 @@ function _attach_beta_plane_reference(kernel::BetaPlaneQGKernel{T},
     reference = _beta_plane_reference_contours(contours)
     isempty(reference) && throw(ArgumentError(
         "kernel=:beta_plane_qg requires spanning beta-staircase contours. " *
-        "Build them with beta_staircase(beta, PeriodicDomain(Lx, Ly), n_steps)."))
+        "Build them with beta_staircase(beta, PeriodicDomain(Lx, Ly), n_beta)."))
     return BetaPlaneQGKernel(kernel.beta, kernel.Ld, reference)
 end

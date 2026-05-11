@@ -2,9 +2,9 @@
 #
 # A circular vortex patch drifts on a beta plane using contour dynamics.  The
 # live contours encode full PV: a beta staircase plus the vortex anomaly.  The
-# BetaPlaneQGKernel subtracts the frozen straight staircase from the QG
-# inversion, so only regular PV drives the flow while the staircase contours
-# remain material and can deform.
+# BetaPlaneQGKernel subtracts the frozen straight staircase and adds the
+# analytic `reference staircase - beta*y` correction, so the regular beta-plane
+# inversion remains contour-based while the staircase contours stay material.
 #
 # This follows the contour-dynamics structure of Lam & Dritschel (2001), but it
 # is still a compact package example rather than a CASL reproduction.
@@ -52,7 +52,7 @@ surgery_mu = envfloat("BETA_DRIFT_SURGERY_MU", 0.01)
 max_segment = envfloat("BETA_DRIFT_MAX_SEGMENT", 0.3)
 surgery_every = envint("BETA_DRIFT_SURGERY_EVERY", nsteps + 1)
 
-n_beta >= 1 || error("BETA_DRIFT_NBETA must be at least 1")
+n_beta >= 2 || error("BETA_DRIFT_NBETA must be at least 2")
 nodes_per_beta_contour >= 3 || error("BETA_DRIFT_BETA_NODES must be at least 3")
 vortex_nodes >= 3 || error("BETA_DRIFT_VORTEX_NODES must be at least 3")
 dt > 0 || error("BETA_DRIFT_DT must be positive")
@@ -61,7 +61,7 @@ save_dt > 0 || error("BETA_DRIFT_SAVE_DT must be positive")
 surgery_every >= 1 || error("BETA_DRIFT_SURGERY_EVERY must be at least 1")
 
 domain = PeriodicDomain(L, L)
-staircase = beta_staircase(beta, domain, n_beta + 1;
+staircase = beta_staircase(beta, domain, n_beta;
                            nodes_per_contour=nodes_per_beta_contour)
 vortex = circular_patch(R, vortex_nodes, omega0)
 all_contours = vcat(staircase, [vortex])
@@ -80,7 +80,7 @@ prob = Problem(; contours=all_contours,
 
 println("Output directory: $OUTDIR")
 println("Preset: $preset")
-println("Method: contour beta-plane QG, full PV contours minus reference straight beta staircase")
+println("Method: contour beta-plane QG with analytic beta*y correction")
 println("Lam & Dritschel case D metadata: beta=$beta, Rd=$Ld, l=$L, R=$R, omega0=$omega0")
 println("Lam & Dritschel Table 1 CASL metadata: nbar_h=$casl_grid_nh, mg=$casl_grid_mg, delta=$casl_surgery_delta")
 println("Contour resolution: beta contours=$(length(staircase)), beta nodes/contour=$nodes_per_beta_contour, vortex nodes=$vortex_nodes")

@@ -7,24 +7,42 @@ function _copy_contours_for_test(contours)
     return [PVContour(copy(c.nodes), c.pv, c.wrap, copy(c.corners)) for c in contours]
 end
 
+function _beta_plane_sawtooth_velocity(beta, Ld, domain, n_beta, x)
+    T = typeof(float(beta))
+    dy = 2 * domain.Ly / n_beta
+    κ = inv(Ld)
+    ξ = mod(x[2] + domain.Ly + dy / 2, dy) - dy / 2
+    u = if abs(κ * dy) < sqrt(eps(T))
+        beta * (ξ^2 / 2 - dy^2 / 24)
+    else
+        -beta / κ^2 + beta * dy * cosh(κ * ξ) / (2 * κ * sinh(κ * dy / 2))
+    end
+    return SVector(u, zero(u))
+end
+
 @testset "Beta-plane contour QG kernel" begin
     beta = 1.0
     Ld = 1.0
     domain = PeriodicDomain(3.0, 3.0)
-    staircase = beta_staircase(beta, domain, 6; nodes_per_contour=8)
+    n_beta = 6
+    staircase = beta_staircase(beta, domain, n_beta; nodes_per_contour=8)
 
     kernel = BetaPlaneQGKernel(beta, Ld, staircase)
     @test kernel.beta == beta
     @test kernel.Ld == Ld
-    @test length(kernel.reference_contours) == length(staircase)
+    @test length(kernel.reference_contours) == n_beta
     @test kernel.reference_contours[1].nodes == staircase[1].nodes
     @test kernel.reference_contours[1].nodes !== staircase[1].nodes
+    @test [c.nodes[1][2] for c in staircase] ≈ [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]
 
     straight = ContourProblem(kernel, domain, _copy_contours_for_test(staircase))
     vel = fill(SVector(0.0, 0.0), total_nodes(straight))
     velocity!(vel, straight)
-    @test maximum(norm, vel) < 1e-12
-    @test norm(velocity(straight, SVector(0.37, -0.22))) < 1e-12
+    @test maximum(norm, vel) > 1e-3
+    @test vel[1] ≈ _beta_plane_sawtooth_velocity(beta, Ld, domain, n_beta, staircase[1].nodes[1]) atol=1e-12
+
+    probe = SVector(0.37, -0.22)
+    @test velocity(straight, probe) ≈ _beta_plane_sawtooth_velocity(beta, Ld, domain, n_beta, probe) atol=1e-12
 
     deformed_staircase = _copy_contours_for_test(staircase)
     deformed_staircase[2].nodes[3] += SVector(0.0, 0.1)

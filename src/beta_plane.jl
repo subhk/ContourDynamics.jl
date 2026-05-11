@@ -1,13 +1,32 @@
 # Contour-dynamics beta-plane QG velocity.
 #
-# Live contours encode full PV.  The frozen straight beta staircase stored in
-# `BetaPlaneQGKernel.reference_contours` is subtracted from the QG inversion,
-# leaving only regular PV to drive the flow.
+# Live contours encode full PV. The frozen straight beta staircase stored in
+# `BetaPlaneQGKernel.reference_contours` is subtracted from the contour sum.
+# An analytic zonal correction then adds the velocity induced by
+# `reference staircase - beta*y`, matching the decomposed beta-plane inversion
+# `(del^2 - Ld^-2) psi_r = q_r - beta*y` without introducing a grid solve.
 
 @inline _qg_kernel(kernel::BetaPlaneQGKernel{T}) where {T} = QGKernel(kernel.Ld)
 
 @inline _prefetch_ewald(domain::PeriodicDomain, kernel::BetaPlaneQGKernel) =
     _prefetch_ewald(domain, _qg_kernel(kernel))
+
+@inline function _beta_plane_sawtooth_velocity(kernel::BetaPlaneQGKernel{T},
+                                               domain::PeriodicDomain{T},
+                                               x::SVector{2,T}) where {T}
+    n_beta = length(kernel.reference_contours)
+    dy = 2 * domain.Ly / T(n_beta)
+    κ = inv(kernel.Ld)
+    ξ = mod(x[2] + domain.Ly + dy / 2, dy) - dy / 2
+
+    u = if abs(κ * dy) < sqrt(eps(T))
+        kernel.beta * (ξ^2 / 2 - dy^2 / 24)
+    else
+        -kernel.beta / κ^2 +
+            kernel.beta * dy * cosh(κ * ξ) / (2 * κ * sinh(κ * dy / 2))
+    end
+    return SVector{2,T}(u, zero(T))
+end
 
 function _sum_qg_contour_velocity(kernel::QGKernel{T},
                                   domain::AbstractDomain,
@@ -30,7 +49,7 @@ function _sum_qg_contour_velocity(kernel::QGKernel{T},
 end
 
 @inline function _beta_plane_velocity_at(kernel::BetaPlaneQGKernel{T},
-                                         domain::AbstractDomain,
+                                         domain::PeriodicDomain{T},
                                          x::SVector{2,T},
                                          contours::Vector{PVContour{T}},
                                          contour_curvatures,
@@ -40,11 +59,11 @@ end
     current = _sum_qg_contour_velocity(qg, domain, x, contours, contour_curvatures, ewald)
     reference = _sum_qg_contour_velocity(qg, domain, x, kernel.reference_contours,
                                          reference_curvatures, ewald)
-    return current - reference
+    return current - reference + _beta_plane_sawtooth_velocity(kernel, domain, x)
 end
 
 function _direct_velocity!(vel::Vector{SVector{2,T}},
-                           prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU}) where {T, D<:AbstractDomain}
+                           prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU}) where {T, D<:PeriodicDomain{T}}
     kernel = prob.kernel
     domain = prob.domain
     contours = prob.contours
@@ -87,7 +106,7 @@ function _direct_velocity!(vel::Vector{SVector{2,T}},
 end
 
 function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},
-                  x::SVector{2,T}) where {T, D<:AbstractDomain}
+                  x::SVector{2,T}) where {T, D<:PeriodicDomain{T}}
     kernel = prob.kernel
     ewald = _prefetch_ewald(prob.domain, kernel)
     contour_curvatures = [_signed_node_curvatures(c) for c in prob.contours]

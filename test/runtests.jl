@@ -403,9 +403,10 @@ include("test_beta_plane.jl")
         T = Float64
         domain = PeriodicDomain(T(3.0))
 
-        # beta_staircase creates correct number of spanning contours
+        # beta_staircase creates paper-style mid-step spanning contours
         staircase = beta_staircase(T(1.0), domain, 6; nodes_per_contour=16)
-        @test length(staircase) == 5  # n_steps - 1
+        @test length(staircase) == 6
+        @test [c.nodes[1][2] for c in staircase] ≈ T[-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]
 
         # Each contour is spanning with correct wrap
         for c in staircase
@@ -441,7 +442,7 @@ include("test_beta_plane.jl")
         surgery!(prob, params)
         # All spanning contours should survive surgery
         n_spanning = count(is_spanning, prob.contours)
-        @test n_spanning == 5
+        @test n_spanning == 6
 
         # Remesh preserves wrap
         remeshed = remesh(staircase[1], params)
