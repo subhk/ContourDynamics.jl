@@ -23,6 +23,13 @@ function _save_metadata!(g, kernel::QGKernel{T}, domain) where {T}
     g["kernel_Ld"] = kernel.Ld
     _save_domain!(g, domain)
 end
+function _save_metadata!(g, kernel::BetaPlaneQGKernel{T}, domain) where {T}
+    g["kernel_type"] = "BetaPlaneQGKernel"
+    g["kernel_beta"] = kernel.beta
+    g["kernel_Ld"] = kernel.Ld
+    g["kernel_reference_contours"] = length(kernel.reference_contours)
+    _save_domain!(g, domain)
+end
 function _save_metadata!(g, kernel::SQGKernel{T}, domain) where {T}
     g["kernel_type"] = "SQGKernel"
     g["kernel_delta"] = kernel.delta
