@@ -7,6 +7,11 @@ diagnostic paths. Host contour containers on a GPU problem are initialization
 shadows; use `materialize_contours(prob)` only when you intentionally need a CPU
 copy for output, plotting, file writing, or interactive inspection.
 
+Single-layer Euler, QG, and SQG support GPU velocity and timestepping on
+unbounded and periodic domains. `BetaPlaneQGKernel` currently requires
+`dev=CPU()`. Multi-layer QG has a GPU velocity path, but multi-layer GPU
+timestepping, periodic wrapping, and surgery are not device-resident yet.
+
 ```@docs
 CPU
 GPU

@@ -42,7 +42,7 @@ features:
   - title: High Performance
     details: Fast contour kernels, threaded CPU execution, device-resident GPU state for supported paths, and low-allocation timestepping.
   - title: GPU Acceleration
-    details: Pass `dev=GPU()` to keep supported velocity, timestepping, surgery, and diagnostics on an NVIDIA GPU. CPU copies are explicit output boundaries via `materialize_contours`, snapshots, and animation frames.
+    details: Pass `dev=GPU()` to keep supported single-layer velocity, timestepping, surgery, and diagnostics on an NVIDIA GPU. CPU copies are explicit output boundaries via `materialize_contours`, snapshots, and animation frames.
     link: /api/devices
     linkText: Devices API
 ---
@@ -77,7 +77,7 @@ For lower-level control, build `ContourProblem`, `RK4Stepper`, and
 the default entry point.
 
 !!! tip "GPU Acceleration"
-Pass `dev=GPU()` to keep supported simulation work on an NVIDIA GPU:
+Pass `dev=GPU()` to keep supported single-layer simulation work on an NVIDIA GPU:
     ```julia
     using CUDA
 prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=GPU())
@@ -85,7 +85,8 @@ prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=GPU())
     GPU problems keep the active contour state in device buffers. Use
     `materialize_contours(prob)` only when you need a CPU copy for output,
     plotting, file writing, or inspection. Unsupported GPU operations throw
-    instead of silently falling back to CPU work.
+    instead of silently falling back to CPU work. `BetaPlaneQGKernel` currently
+    requires `dev=CPU()`, and multi-layer GPU support is velocity-only.
 
 ## Installation
 
