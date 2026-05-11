@@ -116,6 +116,25 @@ function _max_layer_node_count(prob::MultiLayerContourProblem{N}) where {N}
     return max_nodes
 end
 
+function _prepare_modal_matrices!(scratch::_VelocityScratch{T},
+                                  kernel::MultiLayerQGKernel{N,M,T}) where {N, M, T}
+    if size(scratch.modal_matrix) != (N, N)
+        scratch.modal_matrix = Matrix{T}(undef, N, N)
+    end
+    if size(scratch.modal_matrix_inv) != (N, N)
+        scratch.modal_matrix_inv = Matrix{T}(undef, N, N)
+    end
+    P = kernel.eigenvectors
+    P_inv = kernel.eigenvectors_inv
+    @inbounds for j in 1:N
+        for i in 1:N
+            scratch.modal_matrix[i, j] = P[i, j]
+            scratch.modal_matrix_inv[i, j] = P_inv[i, j]
+        end
+    end
+    return scratch.modal_matrix, scratch.modal_matrix_inv
+end
+
 @inline function _segment_velocity_with_geometry(kernel::AbstractKernel,
                                                  domain::AbstractDomain,
                                                  x::SVector{2,T},
@@ -313,13 +332,14 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
     kernel = prob.kernel
     domain = prob.domain
     evals = kernel.eigenvalues
-    P = kernel.eigenvectors
-    P_inv = kernel.eigenvectors_inv
+    scratch = prob.velocity_scratch
+    P, P_inv = _prepare_modal_matrices!(scratch, kernel)
     ewald = _prefetch_ewald(domain, EulerKernel())
     source_curvatures = _prepare_layer_curvature_buffers!(
-        prob.velocity_scratch.layer_curvatures, prob.layers)
+        scratch.layer_curvatures, prob.layers)
 
-    vel = MVector{N, SVector{2,T}}(ntuple(_ -> zero(SVector{2,T}), Val(N)))
+    vel = resize!(scratch.mode_vel, N)
+    fill!(vel, zero(SVector{2,T}))
 
     for mode in 1:N
         lam = evals[mode]
@@ -355,7 +375,7 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
         end
     end
 
-    return Tuple(vel)
+    return ntuple(i -> vel[i], Val(N))
 end
 
 # Function barrier: the concrete kernel type is resolved here so that
@@ -366,9 +386,9 @@ function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                                     target_nodes::Vector{SVector{2,T}},
                                     mode_vel::Vector{SVector{2,T}},
                                     source_curvatures,
-                                    ewald) where {N, T, K}
-    P = prob.kernel.eigenvectors
-    P_inv = prob.kernel.eigenvectors_inv
+                                    ewald,
+                                    P::Matrix{T},
+                                    P_inv::Matrix{T}) where {N, T, K}
     domain = prob.domain
 
     for target_layer in 1:N
@@ -462,13 +482,12 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     end
 
     evals = kernel.eigenvalues
-    P = kernel.eigenvectors
-    P_inv = kernel.eigenvectors_inv
 
     # Pre-fetch Ewald cache once (all modes use the Euler cache for periodic domains)
     ewald = _prefetch_ewald(domain, EulerKernel())
 
     scratch = prob.velocity_scratch
+    P, P_inv = _prepare_modal_matrices!(scratch, kernel)
     max_nodes = _max_layer_node_count(prob)
     target_nodes = resize!(scratch.target_nodes, max_nodes)
     mode_vel = resize!(scratch.mode_vel, max_nodes)
@@ -482,11 +501,13 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
         # eigenvalues become QG modes with deformation radius 1/sqrt(abs(lambda)).
         if abs(lam) < eps(T) * 100
             _multilayer_mode_velocity!(vel, prob, mode, EulerKernel(),
-                                       target_nodes, mode_vel, source_curvatures, ewald)
+                                       target_nodes, mode_vel, source_curvatures,
+                                       ewald, P, P_inv)
         else
             Ld_mode = one(T) / sqrt(abs(lam))
             _multilayer_mode_velocity!(vel, prob, mode, QGKernel(Ld_mode),
-                                       target_nodes, mode_vel, source_curvatures, ewald)
+                                       target_nodes, mode_vel, source_curvatures,
+                                       ewald, P, P_inv)
         end
     end
 
