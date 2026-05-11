@@ -13,6 +13,7 @@ unbounded and periodic domains. `BetaPlaneQGKernel` currently requires
 timestepping, periodic wrapping, and surgery are not device-resident yet.
 
 ```@docs
+AbstractDevice
 CPU
 GPU
 DeviceContourState
