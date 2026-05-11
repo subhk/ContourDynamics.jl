@@ -55,6 +55,47 @@ using SpecialFunctions
         @test alloc <= 4_000
     end
 
+    @testset "Single-layer direct velocity reuses curvature scratch" begin
+        N = 64
+        c = circular_patch(0.5, N, 2π)
+        prob = ContourProblem(QGKernel(1.0), UnboundedDomain(), [c])
+        vel = zeros(SVector{2,Float64}, total_nodes(prob))
+
+        alloc = allocation_bytes(() -> velocity!(vel, prob))
+        @test alloc <= 256
+    end
+
+    @testset "Beta-plane velocity reuses live and reference curvature scratch" begin
+        N = 8
+        domain = PeriodicDomain(4.0, 4.0)
+        setup_ewald_cache!(domain, QGKernel(1.0); n_fourier=1, n_images=0)
+        reference = beta_staircase(0.2, domain, 2)
+        vortex = circular_patch(0.4, N, 2π)
+        prob = ContourProblem(BetaPlaneQGKernel(0.2, 1.0, reference),
+                              domain, vcat(reference, [vortex]))
+        vel = zeros(SVector{2,Float64}, total_nodes(prob))
+
+        alloc = allocation_bytes(() -> velocity!(vel, prob))
+        @test alloc <= 1_024
+    end
+
+    @testset "Multilayer CPU velocity reuses modal scratch" begin
+        N = 64
+        F = 0.5
+        coupling = SMatrix{2,2,Float64}(-F, F, F, -F)
+        c1 = PVContour([SVector(0.5cos(2π*k/N), 0.5sin(2π*k/N)) for k in 0:N-1], 1.0)
+        c2 = PVContour([SVector(0.5cos(2π*k/N), 1.0 + 0.5sin(2π*k/N)) for k in 0:N-1], -1.0)
+        prob = MultiLayerContourProblem(
+            MultiLayerQGKernel(SVector(1 / sqrt(2F)), coupling),
+            UnboundedDomain(),
+            ([c1], [c2]),
+        )
+        vel = (zeros(SVector{2,Float64}, N), zeros(SVector{2,Float64}, N))
+
+        alloc = allocation_bytes(() -> velocity!(vel, prob))
+        @test alloc <= 2_500
+    end
+
     @testset "Single-point velocity is allocation-light after warm-up" begin
         c = circular_patch(0.5, 32, 2π)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
