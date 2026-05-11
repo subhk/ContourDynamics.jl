@@ -14,6 +14,7 @@ makedocs(;
     doctest = false,
     draft = DRAFT,
     build = BUILD_DIR,
+    checkdocs = :exports,
     format = DocumenterVitepress.MarkdownVitepress(
         repo = "https://github.com/subhk/ContourDynamics.jl",
         devbranch = "main",
