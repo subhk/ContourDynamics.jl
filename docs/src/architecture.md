@@ -7,6 +7,7 @@ If you only want to understand how a simulation runs, read these files in order:
 1. [`src/core/problem_factory.jl`](https://github.com/subhk/ContourDynamics.jl/blob/main/src/core/problem_factory.jl)
 2. [`src/core/evolution.jl`](https://github.com/subhk/ContourDynamics.jl/blob/main/src/core/evolution.jl)
 3. [`src/velocity/common.jl`](https://github.com/subhk/ContourDynamics.jl/blob/main/src/velocity/common.jl)
+4. [`src/beta_plane.jl`](https://github.com/subhk/ContourDynamics.jl/blob/main/src/beta_plane.jl), for beta-plane QG problems
 
 ## Mental Model
 
@@ -22,18 +23,21 @@ Problem(...) -> ContourProblem / MultiLayerContourProblem
              -> optional surgery!
 ```
 
-Most code falls into one of five layers:
+Most code falls into one of six layers:
 
 - `src/core/`: types, problem construction, time integration, surgery, geometry helpers
+- `src/beta_plane.jl`: beta-plane QG velocity composition
 - `src/velocity/`: public velocity API and direct CPU policies
 - `src/velocity/periodic/`: Ewald cache and periodic single-layer corrections
 - `src/accel/gpu/`: KernelAbstractions-based direct kernels for CPU/GPU backends
+- `src/diagnostics/`: geometry and integral diagnostics
 
 ## Core Types
 
 The object model is split by responsibility under `src/core/`:
 
 - `kernel_types.jl`: `EulerKernel`, `QGKernel`, `SQGKernel`, `MultiLayerQGKernel`
+- `beta_plane_types.jl`: `BetaPlaneQGKernel`
 - `contour_types.jl`: `PVContour`
 - `domain_types.jl`: `UnboundedDomain`, `PeriodicDomain`
 - `problem_types.jl`: `ContourProblem`, `MultiLayerContourProblem`
@@ -59,8 +63,9 @@ The constructor in `src/core/problem_factory.jl` does four things:
 
 1. validates whether this is single-layer or multilayer
 2. builds the kernel and domain
-3. builds `ContourProblem` or `MultiLayerContourProblem`
-4. builds the time stepper and surgery settings
+3. attaches beta-plane reference contours when `kernel=:beta_plane_qg`
+4. builds `ContourProblem` or `MultiLayerContourProblem`
+5. builds the time stepper and surgery settings
 
 ### 2. Evolve in time
 
@@ -82,15 +87,19 @@ The low-level flat-buffer packing/scattering helpers live in
 
 For single-layer CPU problems the current policy is:
 
-- direct evaluation
+- direct evaluation, including beta-plane QG
 
 For multilayer CPU problems:
 
 - direct modal decomposition
 
-For supported GPU-tagged single-layer problems:
+For supported GPU-tagged single-layer Euler, QG, and SQG problems:
 
 - KernelAbstractions direct path
+
+Beta-plane QG currently uses the CPU direct path. Multi-layer `GPU()` velocity
+can be evaluated through the modal KernelAbstractions path, but multi-layer
+timestepping, periodic wrapping, and surgery are not device-resident yet.
 
 ## Velocity Backends
 
@@ -103,6 +112,7 @@ Implemented mostly in `src/velocity/common.jl`.
 - easiest to read
 - useful as the reference implementation
 - used for small problems and many tests
+- beta-plane QG adds its direct correction in `src/beta_plane.jl`
 
 ### Periodic / Ewald
 
@@ -146,6 +156,7 @@ The KA layer contains:
 - an unbounded single-layer `GPU()` surgery dispatch that uses device-side
   cleanup flags, close-pair scans, remeshing, reconnection planning, and contour
   rewrites, then updates the active `DeviceContourState`
+- multi-layer velocity evaluation through modal single-layer KA calls
 
 ## Threading and Parallelism
 
@@ -166,11 +177,12 @@ That is a separate execution path from the explicit threaded loops above.
 ### GPU parallelism
 
 When the CUDA extension is loaded and `dev=GPU()`, the active contour state is a
-device-resident `DeviceContourState`. Supported velocity, timestepping,
-single-layer surgery, and scalar diagnostics read that state directly. CPU
+device-resident `DeviceContourState`. Supported single-layer velocity,
+timestepping, surgery, and scalar diagnostics read that state directly. CPU
 contour reconstruction is reserved for explicit output boundaries such as
 `materialize_contours`, JLD2 snapshots, Makie animation frames, and interactive
-inspection.
+inspection. Multi-layer `GPU()` problems currently support velocity evaluation,
+but not device-resident timestepping, periodic wrapping, or surgery.
 
 ## Read This File If...
 
@@ -178,6 +190,8 @@ inspection.
   `src/core/problem_factory.jl`, then `src/core/evolution.jl`
 - “I want to understand velocity dispatch”:
   `src/velocity/common.jl`
+- “I want to understand beta-plane QG”:
+  `src/core/beta_plane_types.jl`, then `src/beta_plane.jl`
 - “I want to understand periodic domains”:
   `src/velocity/periodic/cache.jl`, then `src/velocity/periodic/single_layer.jl`
 - “I want to understand acceleration”:
@@ -191,6 +205,8 @@ inspection.
 
 - Add a new kernel:
   type in `src/core/kernel_types.jl`, direct segment logic, then diagnostics/tests
+- Change beta-plane QG:
+  `src/core/beta_plane_types.jl`, `src/beta_plane.jl`, `src/core/contours.jl`
 - Change default user construction:
   `src/core/problem_factory.jl`
 - Change time stepping:
