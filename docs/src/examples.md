@@ -14,9 +14,11 @@ Suggested reading order:
 Longer runnable scripts are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory. Those scripts save JLD2 snapshots, final PNG/SVG figures, and MP4 animations under `examples/output/`. The pages in this section provide shorter versions of the same setups, with smaller contour discretizations so the docs build stays fast.
 
 ::: tip GPU Acceleration
-All examples in this section can use GPU velocity evaluation on supported
-hardware. Add `using CUDA` and pass `dev=GPU()` to `Problem`.
-GPU velocity is currently available for single-layer Euler, QG, and SQG on unbounded or periodic domains, plus direct multi-layer QG on unbounded or periodic domains.
+Examples using single-layer Euler, QG, or SQG can use GPU velocity evaluation on
+supported hardware. Add `using CUDA` and pass `dev=GPU()` to `Problem`.
+`BetaPlaneQGKernel` currently requires `dev=CPU()`. Multi-layer QG has a GPU
+velocity path, but multi-layer GPU timestepping and surgery are not
+device-resident yet.
 :::
 
 Each example page includes:
