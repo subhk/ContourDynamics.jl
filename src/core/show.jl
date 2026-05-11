@@ -26,6 +26,13 @@ Base.show(io::IO, ::MIME"text/plain", k::EulerKernel) = show(io, k)
 Base.show(io::IO, k::QGKernel{T}) where {T} = print(io, "QGKernel{$T}: Ld = ", k.Ld)
 Base.show(io::IO, ::MIME"text/plain", k::QGKernel) = show(io, k)
 
+function Base.show(io::IO, k::BetaPlaneQGKernel{T}) where {T}
+    print(io, "BetaPlaneQGKernel{$T}: beta = ", k.beta,
+          ", Ld = ", k.Ld,
+          ", reference contours = ", length(k.reference_contours))
+end
+Base.show(io::IO, ::MIME"text/plain", k::BetaPlaneQGKernel) = show(io, k)
+
 Base.show(io::IO, k::SQGKernel{T}) where {T} = print(io, "SQGKernel{$T}: δ = ", k.delta)
 Base.show(io::IO, ::MIME"text/plain", k::SQGKernel) = show(io, k)
 
