@@ -893,6 +893,15 @@ function _is_corner_filament(c::PVContour{T}, area::T, perimeter::T, μ::T) wher
     return area <= μ^2 || width < μ
 end
 
+"""
+    remove_filaments!(contours, area_min[, μ])
+
+Remove unresolved closed contours from `contours` in place.
+
+Closed contours with area below `area_min` are discarded. When `μ` is supplied,
+very short or thin labelled-corner fragments produced by reconnection are also
+removed. Spanning contours are retained.
+"""
 function remove_filaments!(contours::Vector{PVContour{T}}, area_min, μ=nothing) where {T}
     # Remove unresolved closed debris. The optional μ cutoff also rejects very
     # short or thin labelled-corner fragments produced by reconnection.
