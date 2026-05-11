@@ -53,8 +53,9 @@ println("Circulation: $(round(circulation(prob); digits=6))");
     when constructing the `Problem`.
     
     GPU velocity evaluation is currently available for single-layer Euler, QG,
-    and SQG on unbounded or periodic domains, and for direct multi-layer QG on
-    unbounded or periodic domains.
+    and SQG on unbounded or periodic domains. `BetaPlaneQGKernel` currently
+    requires `dev=CPU()`. Multi-layer QG has a GPU velocity path, but
+    multi-layer GPU timestepping and surgery are not device-resident yet.
 
 At this stage, the only new ingredient compared with the Euler tutorial is the
 deformation radius `Ld`. Everything else about the high-level workflow is the
@@ -139,10 +140,12 @@ primarily relevant when higher periodic-kernel accuracy is required.
 
 The package includes a `beta_staircase` helper for constructing horizontal
 spanning contours in a periodic domain. With [`BetaPlaneQGKernel`](@ref), these
-contours represent material full-PV interfaces on a beta plane. The kernel keeps
-a reference copy of the initial straight staircase and subtracts that reference
-from the QG inversion, so an undeformed planetary PV gradient does not induce
-spurious flow.
+contours represent material regular-PV interfaces on a beta plane. The helper
+uses the Lam-Dritschel mid-step placement: `n_beta` contours at
+`-Ly + (k - 1/2) * 2Ly / n_beta`, each with jump `beta * 2Ly / n_beta`.
+The kernel keeps a reference copy of the initial straight staircase, subtracts
+that reference from the contour sum, then adds the analytic zonal correction for
+`reference staircase - beta*y`.
 
 ```@repl tutorial_qg_staircase
 using ContourDynamics
@@ -181,10 +184,11 @@ The beta-plane setup combines three features:
 - a periodic Green's function through the Ewald machinery
 - active spanning-contour geometry for material beta contours
 - reference straight beta staircase subtraction in `BetaPlaneQGKernel`
+- analytic contour-only correction for the continuous `beta*y` term
 
-The reference subtraction means that straight beta contours alone have zero
-velocity, while deformed beta contours contribute to the regular PV that drives
-the contour motion.
+The analytic correction is the finite-`n_beta` sawtooth residual from the
+discretized `q_r - beta*y` inversion. It keeps the implementation contour-based
+without replacing velocity evaluation by a grid solve.
 
 ## Multi-Layer QG
 
