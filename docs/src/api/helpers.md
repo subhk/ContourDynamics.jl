@@ -6,6 +6,8 @@
 nnodes
 nlayers
 total_nodes
+is_corner
+corner_indices
 arc_lengths
 next_node
 beta_staircase
