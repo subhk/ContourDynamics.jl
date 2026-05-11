@@ -73,6 +73,49 @@ end
     return (nodes, weights)
 end
 
+function _prepare_curvature_buffers!(buffers::Vector{Vector{T}},
+                                     contours::Vector{PVContour{T}}) where {T}
+    while length(buffers) < length(contours)
+        push!(buffers, T[])
+    end
+    resize!(buffers, length(contours))
+    @inbounds for i in eachindex(contours)
+        resize!(buffers[i], nnodes(contours[i]))
+        _signed_node_curvatures!(buffers[i], contours[i])
+    end
+    return buffers
+end
+
+function _prepare_layer_curvature_buffers!(buffers::Vector{Vector{Vector{T}}},
+                                           layers::NTuple{N, Vector{PVContour{T}}}) where {N, T}
+    while length(buffers) < N
+        push!(buffers, Vector{T}[])
+    end
+    resize!(buffers, N)
+    @inbounds for i in 1:N
+        _prepare_curvature_buffers!(buffers[i], layers[i])
+    end
+    return buffers
+end
+
+function _prepare_contour_offsets!(offsets::Vector{Int},
+                                   contours::Vector{PVContour{T}}) where {T}
+    resize!(offsets, length(contours) + 1)
+    offsets[1] = 0
+    @inbounds for ci in eachindex(contours)
+        offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
+    end
+    return offsets
+end
+
+function _max_layer_node_count(prob::MultiLayerContourProblem{N}) where {N}
+    max_nodes = 0
+    @inbounds for i in 1:N
+        max_nodes = max(max_nodes, sum(nnodes(c) for c in prob.layers[i]; init=0))
+    end
+    return max_nodes
+end
+
 @inline function _segment_velocity_with_geometry(kernel::AbstractKernel,
                                                  domain::AbstractDomain,
                                                  x::SVector{2,T},
@@ -106,16 +149,13 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
 
     # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
     ewald = _prefetch_ewald(domain, kernel)
-    source_curvatures = [_signed_node_curvatures(c) for c in contours]
+    scratch = prob.velocity_scratch
+    source_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures, contours)
 
     # Thread over target nodes only once the workload is large enough to pay for it.
     if _should_thread_velocity(N)
         n_contours = length(contours)
-        offsets = Vector{Int}(undef, n_contours + 1)
-        offsets[1] = 0
-        for ci in 1:n_contours
-            offsets[ci + 1] = offsets[ci] + nnodes(contours[ci])
-        end
+        offsets = _prepare_contour_offsets!(scratch.offsets, contours)
         Threads.@threads for i in 1:N
             ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
             ci = clamp(ci, 1, n_contours)
@@ -276,10 +316,8 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
     P = kernel.eigenvectors
     P_inv = kernel.eigenvectors_inv
     ewald = _prefetch_ewald(domain, EulerKernel())
-    source_curvatures = [
-        [_signed_node_curvatures(c) for c in prob.layers[layer]]
-        for layer in 1:N
-    ]
+    source_curvatures = _prepare_layer_curvature_buffers!(
+        prob.velocity_scratch.layer_curvatures, prob.layers)
 
     vel = MVector{N, SVector{2,T}}(ntuple(_ -> zero(SVector{2,T}), Val(N)))
 
@@ -430,14 +468,13 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     # Pre-fetch Ewald cache once (all modes use the Euler cache for periodic domains)
     ewald = _prefetch_ewald(domain, EulerKernel())
 
-    max_nodes = maximum(sum(nnodes(c) for c in prob.layers[i]; init=0) for i in 1:N)
-    target_nodes = Vector{SVector{2,T}}(undef, max_nodes)
-    mode_vel = Vector{SVector{2,T}}(undef, max_nodes)
+    scratch = prob.velocity_scratch
+    max_nodes = _max_layer_node_count(prob)
+    target_nodes = resize!(scratch.target_nodes, max_nodes)
+    mode_vel = resize!(scratch.mode_vel, max_nodes)
 
-    source_curvatures = [
-        [_signed_node_curvatures(c) for c in prob.layers[layer]]
-        for layer in 1:N
-    ]
+    source_curvatures = _prepare_layer_curvature_buffers!(
+        scratch.layer_curvatures, prob.layers)
     for mode in 1:N
         lam = evals[mode]
 
