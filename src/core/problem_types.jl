@@ -7,6 +7,8 @@ mutable struct _VelocityScratch{T<:AbstractFloat}
     offsets::Vector{Int}
     target_nodes::Vector{SVector{2,T}}
     mode_vel::Vector{SVector{2,T}}
+    modal_matrix::Matrix{T}
+    modal_matrix_inv::Matrix{T}
 end
 
 function _VelocityScratch{T}() where {T<:AbstractFloat}
@@ -15,7 +17,9 @@ function _VelocityScratch{T}() where {T<:AbstractFloat}
                                Vector{Vector{T}}[],
                                Int[],
                                SVector{2,T}[],
-                               SVector{2,T}[])
+                               SVector{2,T}[],
+                               Matrix{T}(undef, 0, 0),
+                               Matrix{T}(undef, 0, 0))
 end
 
 """
