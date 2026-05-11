@@ -3,6 +3,7 @@
 ## Kernels
 
 ```@docs
+AbstractKernel
 EulerKernel
 QGKernel
 BetaPlaneQGKernel
@@ -14,6 +15,7 @@ MultiLayerQGKernel
 
 ```@docs
 PVContour
+AbstractDomain
 UnboundedDomain
 PeriodicDomain
 ```
@@ -38,6 +40,7 @@ domain
 ## Time Steppers
 
 ```@docs
+AbstractTimeStepper
 RK4Stepper
 LeapfrogStepper
 ```
