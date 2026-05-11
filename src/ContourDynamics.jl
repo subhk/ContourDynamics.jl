@@ -42,13 +42,14 @@ include("diagnostics/periodic/multilayer_qg.jl")
 
 # Time integration and presentation helpers.
 include("core/evolution.jl")
+include("beta_plane.jl")
 include("core/show.jl")
 include("core/shapes.jl")
 
 # Public exports are grouped by concept so new API additions have an obvious
 # home and users can scan the surface area without reading implementation files.
 export AbstractDevice, CPU, GPU, device_array, device_zeros, to_cpu, to_device
-export AbstractKernel, EulerKernel, QGKernel, SQGKernel, MultiLayerQGKernel
+export AbstractKernel, EulerKernel, QGKernel, BetaPlaneQGKernel, SQGKernel, MultiLayerQGKernel
 export PVContour, nnodes, is_corner, corner_indices, is_spanning, next_node, beta_staircase
 export DeviceContourState, materialize_contours
 export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
@@ -182,12 +183,13 @@ export save_snapshot, load_snapshot, jld2_recorder, load_simulation
                           domain=:periodic, Lx=Float64(π), Ly=Float64(π))
         evolve!(probQP2; nsteps=2)
 
-        # beta_staircase + closed vortex on a periodic QG domain (example pages).
+        # beta_staircase + closed vortex on a contour beta-plane QG domain.
         # Keep small: this only has to specialize the methods; runtime cost
         # during precompilation scales with contour count × nsteps.
         sc = beta_staircase(1.0, PeriodicDomain(3.0), 2; nodes_per_contour=N)
         cV = circular_patch(0.3, N, 2π)
-        probBP = Problem(; contours=vcat(sc, [cV]), dt=0.005, kernel=:qg, Ld=1.0,
+        probBP = Problem(; contours=vcat(sc, [cV]), dt=0.005,
+                         kernel=:beta_plane_qg, beta=1.0, Ld=1.0,
                          domain=:periodic, Lx=3.0, Ly=3.0)
         evolve!(probBP; nsteps=2)
 
