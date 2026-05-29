@@ -153,6 +153,30 @@ end
     return curved_segment_velocity(kernel, domain, x, a, b, κa, κb, ewald)
 end
 
+# Sum the velocity at one target point `xi` from every source segment of every
+# contour. Shared by the threaded and serial branches of _direct_velocity! so the
+# inner loop lives in one place. @inline + concrete kernel/domain keep it
+# allocation-free and fully specialized.
+@inline function _accumulate_node_velocity(kernel, domain,
+                                           contours::Vector{PVContour{T}},
+                                           source_curvatures::Vector{Vector{T}},
+                                           ewald, xi::SVector{2,T}) where {T}
+    v = zero(SVector{2,T})
+    for (source_ci, c) in pairs(contours)
+        nc = nnodes(c)
+        nc < 2 && continue
+        pv = c.pv
+        κ = source_curvatures[source_ci]
+        @inbounds for j in 1:nc
+            a = c.nodes[j]
+            b = next_node(c, j)
+            v = v + pv * _segment_velocity_with_geometry(
+                kernel, domain, xi, a, b, κ[j], κ[mod1(j + 1, nc)], ewald)
+        end
+    end
+    return v
+end
+
 """
     _direct_velocity!(vel, prob::ContourProblem)
 
@@ -181,42 +205,14 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
             local_i = i - offsets[ci]
             (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
             xi = contours[ci].nodes[local_i]
-
-            v = zero(SVector{2,T})
-            for (source_ci, c) in pairs(contours)
-                local nc = nnodes(c)
-                nc < 2 && continue
-                pv = c.pv
-                κ = source_curvatures[source_ci]
-                @inbounds for j in 1:nc
-                    a = c.nodes[j]
-                    b = next_node(c, j)
-                    v = v + pv * _segment_velocity_with_geometry(
-                        kernel, domain, xi, a, b, κ[j], κ[mod1(j + 1, nc)], ewald)
-                end
-            end
-            vel[i] = v
+            vel[i] = _accumulate_node_velocity(kernel, domain, contours, source_curvatures, ewald, xi)
         end
     else
         idx = 1
         for target_contour in contours
             @inbounds for local_i in 1:nnodes(target_contour)
                 xi = target_contour.nodes[local_i]
-
-                v = zero(SVector{2,T})
-                for (source_ci, c) in pairs(contours)
-                    local nc = nnodes(c)
-                    nc < 2 && continue
-                    pv = c.pv
-                    κ = source_curvatures[source_ci]
-                    @inbounds for j in 1:nc
-                        a = c.nodes[j]
-                        b = next_node(c, j)
-                        v = v + pv * _segment_velocity_with_geometry(
-                            kernel, domain, xi, a, b, κ[j], κ[mod1(j + 1, nc)], ewald)
-                    end
-                end
-                vel[idx] = v
+                vel[idx] = _accumulate_node_velocity(kernel, domain, contours, source_curvatures, ewald, xi)
                 idx += 1
             end
         end
@@ -378,6 +374,36 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
     return ntuple(i -> vel[i], Val(N))
 end
 
+# Sum the modal velocity at one target point `x` from every source layer/segment,
+# weighted by the inverse modal projection. Shared by the threaded and serial
+# branches of _multilayer_mode_velocity!. Concrete mode_kernel type K keeps
+# segment_velocity fully specialized inside the loop.
+@inline function _accumulate_mode_node_velocity(mode_kernel::K, domain,
+                                                layers::NTuple{N, Vector{PVContour{T}}},
+                                                source_curvatures, ewald,
+                                                P_inv::Matrix{T}, mode::Int,
+                                                x::SVector{2,T}) where {N, T, K}
+    v_mode = zero(SVector{2,T})
+    for source_layer in 1:N
+        source_weight = P_inv[mode, source_layer]
+        abs(source_weight) < eps(T) && continue
+        for (sci, sc) in pairs(layers[source_layer])
+            nsc = nnodes(sc)
+            nsc < 2 && continue
+            κ = source_curvatures[source_layer][sci]
+            for sj in 1:nsc
+                a = sc.nodes[sj]
+                b = next_node(sc, sj)
+                v_mode = v_mode + source_weight * sc.pv *
+                    _segment_velocity_with_geometry(
+                        mode_kernel, domain, x, a, b,
+                        κ[sj], κ[mod1(sj + 1, nsc)], ewald)
+            end
+        end
+    end
+    return v_mode
+end
+
 # Function barrier: the concrete kernel type is resolved here so that
 # segment_velocity is fully specialised inside the @threads loop.
 function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
@@ -411,49 +437,15 @@ function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
 
         if _should_thread_velocity(n_target)
             @inbounds Threads.@threads for ti in 1:n_target
-                x = target_nodes[ti]
-                v_mode = zero(SVector{2,T})
-                for source_layer in 1:N
-                    source_weight = P_inv[mode, source_layer]
-                    abs(source_weight) < eps(T) && continue
-                    for (sci, sc) in pairs(prob.layers[source_layer])
-                        nsc = nnodes(sc)
-                        nsc < 2 && continue
-                        κ = source_curvatures[source_layer][sci]
-                        for sj in 1:nsc
-                            a = sc.nodes[sj]
-                            b = next_node(sc, sj)
-                            v_mode = v_mode + source_weight * sc.pv *
-                                _segment_velocity_with_geometry(
-                                    mode_kernel, domain, x, a, b,
-                                    κ[sj], κ[mod1(sj + 1, nsc)], ewald)
-                        end
-                    end
-                end
-                mode_vel[ti] = v_mode
+                mode_vel[ti] = _accumulate_mode_node_velocity(
+                    mode_kernel, domain, prob.layers, source_curvatures, ewald,
+                    P_inv, mode, target_nodes[ti])
             end
         else
             @inbounds for ti in 1:n_target
-                x = target_nodes[ti]
-                v_mode = zero(SVector{2,T})
-                for source_layer in 1:N
-                    source_weight = P_inv[mode, source_layer]
-                    abs(source_weight) < eps(T) && continue
-                    for (sci, sc) in pairs(prob.layers[source_layer])
-                        nsc = nnodes(sc)
-                        nsc < 2 && continue
-                        κ = source_curvatures[source_layer][sci]
-                        for sj in 1:nsc
-                            a = sc.nodes[sj]
-                            b = next_node(sc, sj)
-                            v_mode = v_mode + source_weight * sc.pv *
-                                _segment_velocity_with_geometry(
-                                    mode_kernel, domain, x, a, b,
-                                    κ[sj], κ[mod1(sj + 1, nsc)], ewald)
-                        end
-                    end
-                end
-                mode_vel[ti] = v_mode
+                mode_vel[ti] = _accumulate_mode_node_velocity(
+                    mode_kernel, domain, prob.layers, source_curvatures, ewald,
+                    P_inv, mode, target_nodes[ti])
             end
         end
 
