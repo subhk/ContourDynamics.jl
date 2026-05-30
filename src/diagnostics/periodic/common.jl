@@ -60,33 +60,11 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     # Analytical self-segment integral for the log(r²)/2 singularity
     self_seg_const = 4 * log(T(2)) - T(6)
 
-    # Precompute the limit of [-2π G_per(r) - log(r²)/2] as r→0.
-    # This is the smooth periodic correction at zero separation, needed for
-    # self-segment GL points where both quadrature indices coincide (r=0).
-    corr_at_zero = zero(T)
-    if is_self
-        alpha = cache.alpha
-        Lx, Ly = domain.Lx, domain.Ly
-        gamma_euler = T(Base.MathConstants.eulergamma)
-        # Central image: lim_{r→0} [-(1/2) E₁(α²r²) - log(r²)/2] = (γ + 2ln(α))/2
-        corr_at_zero = (gamma_euler + 2 * log(alpha)) / 2
-        # Non-central real-space images evaluated at r=0
-        for px in -cache.n_images:cache.n_images
-            for py in -cache.n_images:cache.n_images
-                (px == 0 && py == 0) && continue
-                shift_r2 = (2 * Lx * px)^2 + (2 * Ly * py)^2
-                corr_at_zero -= _expint_e1(alpha^2 * shift_r2) / 2
-            end
-        end
-        # Fourier-space sum at r=0 (cos(k·0) = 1)
-        for (mi, kxi) in enumerate(cache.kx)
-            for (ni, kyi) in enumerate(cache.ky)
-                coeff = cache.fourier_coeffs[mi, ni]
-                abs(coeff) < eps(T) && continue
-                corr_at_zero -= 2 * T(π) * coeff
-            end
-        end
-    end
+    # Assign the r→0 correction exactly once. Mutating it in place (`-=`) would
+    # force Julia to heap-box the variable so the @_energy_segment_loop
+    # Threads.@threads closure could capture it, and every boxed read inside the
+    # O(N²) segment loop below would then allocate (~350 KB for N=64).
+    corr_at_zero = is_self ? _periodic_euler_corr_at_zero(cache, domain) : zero(T)
 
     return @_energy_segment_loop partial _partial nci for i in 1:nci
         ai = ci.nodes[i]

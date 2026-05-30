@@ -55,8 +55,7 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
     if !stepper.initialized
         _bootstrap_leapfrog!(prob, stepper, nodes_current, vel, dt, ranges)
     else
-        _ka_stepper_update!(_leapfrog_step_ka!, N,
-                            stepper.nodes_prev, nodes_current, vel, dt, stepper.ra_coeff)
+        _cpu_leapfrog_step!(stepper.nodes_prev, nodes_current, vel, dt, stepper.ra_coeff)
         _scatter_nodes!(prob, nodes_current, ranges)
     end
 
@@ -118,8 +117,7 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::LeapfrogStepper{T
     if !stepper.initialized
         _bootstrap_leapfrog!(prob, stepper, nodes_current, flat_vel, vel_tuple, dt, all_ranges)
     else
-        _ka_stepper_update!(_leapfrog_step_ka!, Ntot,
-                            stepper.nodes_prev, nodes_current, flat_vel, dt, stepper.ra_coeff)
+        _cpu_leapfrog_step!(stepper.nodes_prev, nodes_current, flat_vel, dt, stepper.ra_coeff)
         _scatter_nodes!(prob, nodes_current, all_ranges)
     end
 
