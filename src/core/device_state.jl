@@ -86,6 +86,22 @@ end
 @inline _device_state_nnodes(state::DeviceContourState) = length(state.x)
 
 """
+    _layer_state_ranges(states)
+
+Flat index range of each layer's nodes when layers are concatenated in order.
+"""
+function _layer_state_ranges(states::NTuple{N, <:DeviceContourState}) where {N}
+    ranges = Vector{UnitRange{Int}}(undef, N)
+    idx = 1
+    for ℓ in 1:N
+        n = _device_state_nnodes(states[ℓ])
+        ranges[ℓ] = idx:(idx + n - 1)
+        idx += n
+    end
+    return ranges
+end
+
+"""
     materialize_contours(state::DeviceContourState)
 
 Copy a flat device contour state back to a CPU `Vector{PVContour}` while

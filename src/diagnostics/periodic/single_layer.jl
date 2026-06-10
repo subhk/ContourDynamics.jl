@@ -6,7 +6,7 @@ function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     inv4pi = one(T) / (4 * T(π))
     E = zero(T)
-    @_valid_contour_pairs ci cj partial contours T begin
+    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv *
              _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
     end
@@ -25,7 +25,7 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     kappa2 = one(T) / Ld^2
     area = 4 * prob.domain.Lx * prob.domain.Ly
     E = zero(T)
-    @_valid_contour_pairs ci cj partial contours T begin
+    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain; _partial=partial)
         pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area; _partial=partial)
         E += ci.pv * cj.pv * pair_E
@@ -88,7 +88,7 @@ function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where 
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     delta = prob.kernel.delta
     E = zero(T)
-    @_valid_contour_pairs ci cj partial contours T begin
+    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv *
              _energy_contour_pair_sqg_periodic(ci, cj, cache, prob.domain, delta; _partial=partial)
     end

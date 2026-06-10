@@ -29,7 +29,7 @@ Most code falls into one of six layers:
 - `src/beta_plane.jl`: beta-plane QG velocity composition
 - `src/velocity/`: public velocity API and direct CPU policies
 - `src/velocity/periodic/`: Ewald cache and periodic single-layer corrections
-- `src/accel/gpu/`: KernelAbstractions-based direct kernels for CPU/GPU backends
+- `src/accel/ka/`: KernelAbstractions-based direct kernels for CPU/GPU backends
 - `src/diagnostics/`: geometry and integral diagnostics
 
 ## Core Types
@@ -97,9 +97,11 @@ For supported GPU-tagged single-layer Euler, QG, and SQG problems:
 
 - KernelAbstractions direct path
 
-Beta-plane QG currently uses the CPU direct path. Multi-layer `GPU()` velocity
-can be evaluated through the modal KernelAbstractions path, but multi-layer
-timestepping, periodic wrapping, and surgery are not device-resident yet.
+Beta-plane QG currently uses the CPU direct path. Multi-layer `GPU()` problems
+are device-resident: modal velocity, RK4/leapfrog timestepping, and periodic
+wrapping run per-layer on `DeviceContourState`; surgery is supported on
+unbounded domains only (periodic surgery requires `dev=CPU()`, matching the
+single-layer GPU restriction).
 
 ## Velocity Backends
 
@@ -125,19 +127,23 @@ For periodic CPU direct velocity, the code prefetches the Ewald cache once per c
 
 ### KernelAbstractions (KA)
 
-Implemented in `src/accel/gpu/common.jl`, with experimental topology-surgery
-building blocks in `src/accel/gpu/surgery.jl`.
+Implemented under `src/accel/ka/`, split by concern:
 
-Despite the filename, this file handles both:
+- `packing.jl`: flat `SegmentData` layout and per-size workspace buffers
+- `kernels.jl`: scalar contribution helpers and the `@kernel` velocity kernels
+- `velocity.jl`: launch wrappers, dispatch, and the `_ka_velocity!` entry points
+- `surgery.jl`: experimental topology-surgery building blocks
 
-- CPU execution through `KernelAbstractions.CPU()`
+The KA layer runs on both backends:
+
+- CPU execution through `KernelAbstractions.CPU()` (used to validate the kernels
+  against the scalar reference in tests)
 - GPU execution through the CUDA extension
 
 The KA layer contains:
 
 - flat segment kernels
 - periodic KA variants
-- workspace reuse
 - flat contour topology buffers for future GPU surgery phases
 - device-side contour cleanup flags, close-pair candidate detection, and compact
   close-pair candidate buffers
@@ -153,10 +159,13 @@ The KA layer contains:
   order as the CPU reconnect path
 - device-side Dritschel weighted remeshing for closed contours, including
   fixed-corner span remeshing after topology surgery
-- an unbounded single-layer `GPU()` surgery dispatch that uses device-side
-  cleanup flags, close-pair scans, remeshing, reconnection planning, and contour
-  rewrites, then updates the active `DeviceContourState`
-- multi-layer velocity evaluation through modal single-layer KA calls
+- an unbounded `GPU()` surgery dispatch (single-layer, and per-layer for
+  multi-layer problems) that uses device-side cleanup flags, close-pair scans,
+  remeshing, reconnection planning, and contour rewrites, then updates the
+  active `DeviceContourState`
+- multi-layer velocity evaluation through the state-based modal evaluator,
+  which packs per-layer segments with modal PV weights and reuses the
+  single-layer KA kernels once per vertical mode
 
 ## Threading and Parallelism
 
@@ -181,8 +190,9 @@ device-resident `DeviceContourState`. Supported single-layer velocity,
 timestepping, surgery, and scalar diagnostics read that state directly. CPU
 contour reconstruction is reserved for explicit output boundaries such as
 `materialize_contours`, JLD2 snapshots, Makie animation frames, and interactive
-inspection. Multi-layer `GPU()` problems currently support velocity evaluation,
-but not device-resident timestepping, periodic wrapping, or surgery.
+inspection. Multi-layer `GPU()` problems support device-resident velocity,
+RK4/leapfrog timestepping, periodic wrapping, and unbounded surgery; periodic
+multi-layer surgery still requires `dev=CPU()`.
 
 ## Read This File If...
 
@@ -195,9 +205,9 @@ but not device-resident timestepping, periodic wrapping, or surgery.
 - “I want to understand periodic domains”:
   `src/velocity/periodic/cache.jl`, then `src/velocity/periodic/single_layer.jl`
 - “I want to understand acceleration”:
-  `src/accel/gpu/common.jl`
+  `src/accel/ka/packing.jl`, then `src/accel/ka/kernels.jl`
 - “I want to understand GPU / KA code”:
-  `src/accel/gpu/common.jl`, then `src/accel/gpu/surgery.jl`
+  `src/accel/ka/` (`packing.jl` → `kernels.jl` → `velocity.jl`), then `src/accel/ka/surgery.jl`
 - “I want to understand surgery”:
   `src/core/surgery.jl`
 
@@ -216,7 +226,7 @@ but not device-resident timestepping, periodic wrapping, or surgery.
 - Change public velocity selection policy:
   `src/velocity/common.jl`
 - Change GPU / KA direct kernels:
-  `src/accel/gpu/common.jl`
+  `src/accel/ka/kernels.jl` (math), `src/accel/ka/velocity.jl` (dispatch)
 
 ## Beginner Advice
 

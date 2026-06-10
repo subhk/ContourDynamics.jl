@@ -347,6 +347,7 @@ include("test_beta_plane.jl")
     include("test_merger.jl")
 
     include("test_periodic_qg_sqg.jl")
+    include("test_periodic_velocity_regression.jl")
 
     include("test_two_layer_qg_example.jl")
 

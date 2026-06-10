@@ -1,4 +1,15 @@
-# Domain-specific single-layer periodic velocity kernels.
+# Single-layer periodic velocity kernels.
+#
+# Every periodic segment velocity uses singular subtraction:
+#
+#     v_periodic = v_base  +  ∮_segment [G_per - G_base] ds
+#
+# where `v_base` is a singularity-handling base velocity (analytic unbounded
+# Euler/SQG, or the periodic-Euler velocity for QG) and the bracketed term is a
+# smooth periodic correction integrated with 5-point Gauss-Legendre quadrature.
+# The smooth correction for each kernel is computed at a single quadrature point
+# by `_periodic_{euler,qg,sqg}_green_correction`; both the straight and curved
+# segment paths call those helpers, so the correction math has exactly one home.
 
 @inline function _nearest_periodic_segment_image(domain::PeriodicDomain{T},
                                                  x::SVector{2,T},
@@ -47,86 +58,24 @@ function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                            cache::EwaldCache{T}) where {T}
     a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    alpha = cache.alpha
-    Lx, Ly = domain.Lx, domain.Ly
-
     ds = b - a
-    ds_len = sqrt(ds[1]^2 + ds[2]^2)
-    ds_len < eps(T) && return zero(SVector{2,T})
+    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
 
-    # Analytic unbounded Euler contribution (handles the log singularity exactly)
+    # Analytic unbounded Euler contribution (handles the log singularity exactly).
     v_unbounded = segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
 
-    # Smooth periodic correction: G_per(r) - G_∞(r)
-    # G_∞(r) = -(1/(4π)) log(r²), so we subtract it from the central Ewald image.
-    # All terms in the correction are bounded at r=0 → GL quadrature is accurate.
+    # Smooth periodic correction G_per - G_∞, integrated by 5-point Gauss-Legendre.
+    # The per-node correction lives in `_periodic_euler_green_correction` so the
+    # straight and curved segment paths share one implementation.
     g_nodes, g_weights = _gl5_nodes_weights(T)
     mid = (a + b) / 2
     half_ds = ds / 2
-
-    inv4pi = one(T) / (4 * T(π))
-    gamma_euler = T(Base.MathConstants.eulergamma)
-    zero_mode = _periodic_euler_zero_mode(cache, domain)
-
-    corr_integral = zero(T)
-
+    corr = zero(T)
     for q in eachindex(g_nodes)
         s_pt = mid + g_nodes[q] * half_ds
-        r_vec0 = x - s_pt
-        G_corr = zero(T)
-
-        # Real-space Ewald sum with central-image singularity subtracted
-        for px in -cache.n_images:cache.n_images
-            for py in -cache.n_images:cache.n_images
-                shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-                r_vec = r_vec0 - shift
-                r2 = r_vec[1]^2 + r_vec[2]^2
-                if px == 0 && py == 0
-                    # Central image: compute E₁(α²r²) + log(r²) which is smooth at r=0.
-                    # Limit as r→0: E₁(x) + log(x) → -γ, and log(r²) = log(x/α²),
-                    # so E₁(α²r²) + log(r²) → -γ - 2*log(α).
-                    if r2 > eps(T)
-                        G_corr += inv4pi * (_expint_e1(alpha^2 * r2) + log(r2))
-                    else
-                        G_corr += inv4pi * (-gamma_euler - 2 * log(alpha))
-                    end
-                else
-                    # Non-central images: already smooth
-                    if r2 > eps(T)
-                        G_corr += inv4pi * _expint_e1(alpha^2 * r2)
-                    end
-                end
-            end
-        end
-
-        # Fourier-space sum (smooth). The segment image is chosen once before
-        # singular subtraction so the analytic and correction terms use the
-        # same displacement.
-        # Use cos(kx*rx + ky*ry) = cos(kx*rx)*cos(ky*ry) - sin(kx*rx)*sin(ky*ry)
-        # to reduce trig calls from O(nk²) to O(nk).
-        rx, ry = r_vec0[1], r_vec0[2]
-        nkx = length(cache.kx)
-        nky = length(cache.ky)
-        for mi in 1:nkx
-            kxi = cache.kx[mi]
-            cx = cos(kxi * rx)
-            sx = sin(kxi * rx)
-            for ni in 1:nky
-                coeff = cache.fourier_coeffs[mi, ni]
-                abs(coeff) < eps(T) && continue
-                kyi = cache.ky[ni]
-                # cos(kx*rx + ky*ry) = cx*cos(ky*ry) - sx*sin(ky*ry)
-                G_corr += coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
-            end
-        end
-
-        G_corr -= zero_mode
-        corr_integral += g_weights[q] * G_corr
+        corr += g_weights[q] * _periodic_euler_green_correction(kernel, domain, cache, x, s_pt)
     end
-
-    # v_periodic = v_unbounded + ds * ∫₀¹ [G_per - G_∞] dt
-    # The ∫₀¹ dt = (1/2) ∫_{-1}^{1} dt' gives the half_ds factor.
-    return v_unbounded + half_ds * corr_integral
+    return v_unbounded + half_ds * corr
 end
 
 """
@@ -157,52 +106,23 @@ function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                            euler_cache::EwaldCache{T}) where {T}
     a, b = _nearest_periodic_segment_image(domain, x, a, b)
     ds = b - a
-    ds_len = sqrt(ds[1]^2 + ds[2]^2)
-    ds_len < eps(T) && return zero(SVector{2,T})
+    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
 
-    # Euler periodic part (handles the log singularity via Ewald)
+    # Euler periodic part handles the log singularity via Ewald.
     v_euler = segment_velocity(EulerKernel(), domain, x, a, b, euler_cache)
 
-    # Smooth QG–Euler correction via Fourier sum.
-    # G_QG_per - G_Euler_per = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
-    # The sign is negative because the QG kernel (K₀) is screened relative
-    # to the Euler kernel (log): F{K₀(κr)/(2π)} = 1/(k²+κ²) < 1/k² = F{-log(r)/(2π)}.
-    # NOTE: These coefficients are computed inline (without Gaussian damping)
-    # because the correction is smooth and converges without Ewald splitting.
-    # The precomputed QG fourier_coeffs from build_ewald_cache include Gaussian
-    # damping and are therefore not used here.
-    kappa2 = one(T) / kernel.Ld^2
-    area = 4 * domain.Lx * domain.Ly
-
+    # Smooth QG–Euler correction (Fourier series), integrated by Gauss-Legendre.
+    # The per-node correction lives in `_periodic_qg_green_correction` so the
+    # straight and curved segment paths share one implementation.
     g_nodes, g_weights = _gl5_nodes_weights(T)
     mid = (a + b) / 2
     half_ds = ds / 2
-
-    nkx = length(euler_cache.kx)
-    nky = length(euler_cache.ky)
-
-    corr_integral = zero(T)
+    corr = zero(T)
     for q in eachindex(g_nodes)
         s_pt = mid + g_nodes[q] * half_ds
-        r_vec = x - s_pt
-        rx, ry = r_vec[1], r_vec[2]
-        G_corr = zero(T)
-        @inbounds for mi in 1:nkx
-            kxi = euler_cache.kx[mi]
-            cx = cos(kxi * rx)
-            sx = sin(kxi * rx)
-            for ni in 1:nky
-                kyi = euler_cache.ky[ni]
-                k2 = kxi^2 + kyi^2
-                k2 < eps(T) && continue
-                coeff = kappa2 / (k2 * (k2 + kappa2) * area)
-                G_corr -= coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
-            end
-        end
-        corr_integral += g_weights[q] * G_corr
+        corr += g_weights[q] * _periodic_qg_green_correction(kernel, domain, euler_cache, x, s_pt)
     end
-
-    return v_euler + half_ds * corr_integral
+    return v_euler + half_ds * corr
 end
 
 """
@@ -236,83 +156,27 @@ function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                            cache::EwaldCache{T}) where {T}
     a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    alpha = cache.alpha
-    delta = kernel.delta
-    delta_sq = delta * delta
-    Lx, Ly = domain.Lx, domain.Ly
-
     ds = b - a
-    ds_len = sqrt(ds[1]^2 + ds[2]^2)
-    ds_len < eps(T) && return zero(SVector{2,T})
+    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
 
-    # Exact unbounded regularized SQG velocity (handles the 1/r singularity via δ)
+    # Exact unbounded regularized SQG velocity (handles the 1/r singularity via δ).
     v_unbounded = segment_velocity(kernel, UnboundedDomain(), x, a, b)
 
-    # Smooth periodic correction: G_per_SQG(r) - G_∞_SQG_reg(r)
-    # G_∞_SQG_reg(r) = (1/(2π))/√(r²+δ²) is the regularized unbounded Green's function.
-    # All correction terms are finite at GL quadrature points (r > 0).
+    # Smooth periodic correction G_per - G_∞, integrated by Gauss-Legendre.
+    # The per-node correction lives in `_periodic_sqg_green_correction` so the
+    # straight and curved segment paths share one implementation.
     g_nodes, g_weights = _gl5_nodes_weights(T)
     mid = (a + b) / 2
     half_ds = ds / 2
-
-    inv2pi = one(T) / (2 * T(π))
-
-    corr_integral = zero(T)
-
+    corr = zero(T)
     for q in eachindex(g_nodes)
         s_pt = mid + g_nodes[q] * half_ds
-        r_vec0 = x - s_pt
-        G_corr = zero(T)
-
-        # Real-space Ewald sum with central-image singularity subtracted
-        for px in -cache.n_images:cache.n_images
-            for py in -cache.n_images:cache.n_images
-                shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-                r_vec = r_vec0 - shift
-                r2 = r_vec[1]^2 + r_vec[2]^2
-                if px == 0 && py == 0
-                    # Central image: evaluate Ewald real-space at √(r²+δ²) instead
-                    # of r so the subtraction erfc(α·r_reg)/r_reg - 1/r_reg
-                    # = -erf(α·r_reg)/r_reg is bounded by 1/δ for all r ≥ 0.
-                    # This is an O(δ²/r) perturbation, within the existing
-                    # regularization error. Avoids 1/r divergence when contour
-                    # nodes from different PV levels pass very close together.
-                    r_reg = sqrt(r2 + delta_sq)
-                    G_corr -= inv2pi * erf(alpha * r_reg) / r_reg
-                else
-                    # Non-central images: (1/(2π)) erfc(α|r|)/|r|  (smooth)
-                    if r2 > eps(T)
-                        r = sqrt(r2)
-                        G_corr += inv2pi * erfc(alpha * r) / r
-                    end
-                end
-            end
-        end
-
-        # Fourier-space sum: (1/(2π)) Σ fourier_coeffs cos(k·r)
-        # Factored trig: cos(kx*rx + ky*ry) = cos(kx*rx)*cos(ky*ry) - sin(kx*rx)*sin(ky*ry)
-        rx, ry = r_vec0[1], r_vec0[2]
-        nkx = length(cache.kx)
-        nky = length(cache.ky)
-        for mi in 1:nkx
-            kxi = cache.kx[mi]
-            cx = cos(kxi * rx)
-            sx = sin(kxi * rx)
-            for ni in 1:nky
-                coeff = cache.fourier_coeffs[mi, ni]
-                abs(coeff) < eps(T) && continue
-                kyi = cache.ky[ni]
-                G_corr += inv2pi * coeff * (cx * cos(kyi * ry) - sx * sin(kyi * ry))
-            end
-        end
-
-        corr_integral += g_weights[q] * G_corr
+        corr += g_weights[q] * _periodic_sqg_green_correction(kernel, domain, cache, x, s_pt)
     end
-
-    return v_unbounded + half_ds * corr_integral
+    return v_unbounded + half_ds * corr
 end
 
-function _periodic_euler_green_correction(::EulerKernel, domain::PeriodicDomain{T},
+@inline function _periodic_euler_green_correction(::EulerKernel, domain::PeriodicDomain{T},
                                           cache::EwaldCache{T},
                                           x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     alpha = cache.alpha
@@ -359,7 +223,7 @@ function _periodic_euler_green_correction(::EulerKernel, domain::PeriodicDomain{
     return G_corr - zero_mode
 end
 
-function _periodic_qg_green_correction(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+@inline function _periodic_qg_green_correction(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                                        euler_cache::EwaldCache{T},
                                        x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     kappa2 = one(T) / kernel.Ld^2
@@ -386,7 +250,7 @@ function _periodic_qg_green_correction(kernel::QGKernel{T}, domain::PeriodicDoma
     return G_corr
 end
 
-function _periodic_sqg_green_correction(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
+@inline function _periodic_sqg_green_correction(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                         cache::EwaldCache{T},
                                         x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     alpha = cache.alpha

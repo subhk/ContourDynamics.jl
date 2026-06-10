@@ -79,12 +79,12 @@ wrap_nodes!(prob::ContourProblem{<:AbstractKernel, UnboundedDomain}) = prob
 wrap_nodes!(prob::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain}) = prob
 
 """
-    wrap_nodes!(prob::MultiLayerContourProblem)
+    wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, CPU})
 
 Wrap all non-spanning contours in every layer of a periodic multi-layer problem
 into the fundamental domain. Spanning contours are left untouched.
 """
-function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}}) where {N, K, T}
+function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, CPU}) where {N, K, T}
     domain = prob.domain
     for layer in prob.layers
         for c in layer

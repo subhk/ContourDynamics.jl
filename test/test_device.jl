@@ -343,35 +343,22 @@ end
         end
     end
 
-    @testset "CPU velocity! uses KA path without changing results" begin
+    @testset "CPU velocity! agrees with the KA evaluator" begin
         c = circular_patch(0.5, 32, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c]; dev=CPU())
         N = total_nodes(prob)
 
-        vel_ref = zeros(SVector{2,Float64}, N)
-        vel = similar(vel_ref)
-        ContourDynamics._direct_velocity!(vel_ref, prob)
+        # CPU velocity! uses the allocation-free direct evaluator; it must still
+        # match the KA workspace path (reserved for GPU) to machine precision.
+        vel_ka = zeros(SVector{2,Float64}, N)
+        vel = similar(vel_ka)
+        ContourDynamics._ka_velocity!(vel_ka, prob, prob.dev)
         velocity!(vel, prob)
 
         for i in 1:N
-            @test isapprox(vel[i][1], vel_ref[i][1]; atol=1e-12)
-            @test isapprox(vel[i][2], vel_ref[i][2]; atol=1e-12)
+            @test isapprox(vel[i][1], vel_ka[i][1]; atol=1e-12)
+            @test isapprox(vel[i][2], vel_ka[i][2]; atol=1e-12)
         end
-    end
-
-    @testset "CPU KA workspace eviction removes cached entry" begin
-        c = circular_patch(0.5, 37, 1.0)
-        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c]; dev=CPU())
-        N = total_nodes(prob)
-        vel = zeros(SVector{2,Float64}, N)
-
-        velocity!(vel, prob)
-        key = ContourDynamics._gpu_ws_key(prob, N)
-        @test haskey(ContourDynamics._gpu_ws_cache_f64_cpu, N)
-
-        ContourDynamics._evict_gpu_workspace!(key)
-        @test !haskey(ContourDynamics._gpu_ws_cache_f64_cpu, N)
-        @test N ∉ ContourDynamics._gpu_ws_order_f64_cpu
     end
 
     @testset "Device surgery filament flags match Dritschel cleanup predicates" begin
@@ -981,7 +968,13 @@ end
         vel_ka = (similar(vel_ref[1]), similar(vel_ref[2]))
 
         ContourDynamics._direct_velocity!(vel_ref, prob)
-        ContourDynamics._ka_multilayer_velocity!(vel_ka, prob, CPU())
+        let _states = (ContourDynamics.DeviceContourState(prob.layers[1], CPU()),
+                       ContourDynamics.DeviceContourState(prob.layers[2], CPU()))
+            _flat = zeros(SVector{2,Float64}, nnodes(c1) + nnodes(c2))
+            ContourDynamics._ka_multilayer_velocity_from_states!(_flat, _states, prob.kernel, prob.domain, CPU())
+            vel_ka[1] .= _flat[1:nnodes(c1)]
+            vel_ka[2] .= _flat[nnodes(c1)+1:end]
+        end
 
         for i in eachindex(vel_ref[1])
             @test isapprox(vel_ka[1][i][1], vel_ref[1][i][1]; atol=1e-8, rtol=1e-8)
@@ -993,4 +986,311 @@ end
         end
     end
 
+end
+
+@testset "Multi-layer device state" begin
+    @testset "Scaled segment pack multiplies PV only" begin
+        c = circular_patch(0.4, 12, 2.0)
+        state = ContourDynamics.DeviceContourState([c], CPU())
+        seg1 = ContourDynamics._state_segment_data(state, CPU())
+        n = ContourDynamics._device_state_nnodes(state)
+
+        ax = zeros(n); ay = zeros(n); bx = zeros(n); by = zeros(n)
+        pv = zeros(n); ka = zeros(n); kb = zeros(n)
+        ContourDynamics.@_ka_launch CPU() n ContourDynamics._state_segment_data_kernel!(
+            ax, ay, bx, by, pv, ka, kb,
+            state.x, state.y, state.pv, state.wrapx, state.wrapy,
+            state.offsets, state.lengths, state.corners,
+            state.contour_of_node, state.local_index, 0.5, n)
+
+        @test pv ≈ 0.5 .* seg1.pv
+        @test ax == seg1.ax && ay == seg1.ay && bx == seg1.bx && by == seg1.by
+        @test ka == seg1.ka && kb == seg1.kb
+    end
+
+    @testset "Layer state ranges partition flat index space" begin
+        c1 = circular_patch(0.5, 24, 1.0)
+        c2 = circular_patch(0.3, 16, -0.7)
+        states = (ContourDynamics.DeviceContourState([c1], CPU()),
+                  ContourDynamics.DeviceContourState([c2], CPU()))
+        ranges = ContourDynamics._layer_state_ranges(states)
+        @test ranges == [1:24, 25:40]
+
+        # A layer with 0 nodes produces an empty range and the next layer starts at the same cursor.
+        states3 = (ContourDynamics.DeviceContourState(PVContour{Float64}[], CPU()),
+                   ContourDynamics.DeviceContourState([circular_patch(0.2, 8, 1.0)], CPU()))
+        ranges3 = ContourDynamics._layer_state_ranges(states3)
+        @test ranges3[1] == 1:0
+        @test ranges3[2] == 1:8
+    end
+
+    @testset "State-based multi-layer velocity matches CPU modal velocity (unbounded)" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        ml_layers = (
+            [circular_patch(0.5, 24, 1.0)],
+            [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)],
+        )
+
+        cpu_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(), deepcopy(ml_layers))
+        vel_t = (zeros(SVector{2,Float64}, 24), zeros(SVector{2,Float64}, 16))
+        velocity!(vel_t, cpu_prob)
+        expected = vcat(vel_t[1], vel_t[2])
+
+        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
+        flat = zeros(SVector{2,Float64}, 40)
+        ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
+                                                             UnboundedDomain(), CPU())
+        @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+    end
+
+    @testset "State-based multi-layer velocity matches CPU modal velocity (periodic)" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        ml_layers = (
+            [circular_patch(0.5, 24, 1.0)],
+            [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)],
+        )
+        domain = PeriodicDomain(4.0, 4.0)
+        setup_ewald_cache!(domain, EulerKernel())
+
+        cpu_prob = MultiLayerContourProblem(ml_kernel, domain, deepcopy(ml_layers))
+        vel_t = (zeros(SVector{2,Float64}, 24), zeros(SVector{2,Float64}, 16))
+        velocity!(vel_t, cpu_prob)
+        expected = vcat(vel_t[1], vel_t[2])
+
+        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
+        flat = zeros(SVector{2,Float64}, 40)
+        ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
+                                                             domain, CPU())
+        @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+    end
+
+    @testset "State-based 3-layer velocity matches CPU modal velocity (asymmetric P)" begin
+        # Distinct tridiagonal couplings give an orthogonal but NON-symmetric
+        # eigenvector matrix, so P != P_inv and a swapped/transposed projection
+        # would fail this test (the 2-layer equal-F fixture cannot catch that).
+        #
+        # Coupling matrix is the tridiagonal nearest-neighbor form
+        #   C = [-F1  F1   0 ]
+        #       [ F1 -(F1+F2)  F2]
+        #       [  0   F2  -F2]
+        # with F1 != F2.  F1, F2 are chosen so that the two non-zero
+        # eigenvalues are exactly -1 and -4, consistent with Ld = [1.0, 0.5].
+        # (F1+F2 = 2.5, F1*F2 = 4/3 → F = (2.5 ± √(11/12)) / 2)
+        let F1 = (2.5 + sqrt(11.0/12.0)) / 2,
+            F2 = (2.5 - sqrt(11.0/12.0)) / 2
+            ml_Ld      = SVector(1.0, 0.5)
+            ml_coupling = SMatrix{3,3,Float64}(
+                -F1,  F1,       0,
+                 F1, -(F1+F2), F2,
+                  0,  F2,      -F2)
+            ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+            P = ml_kernel.eigenvectors
+            @test !(P ≈ ml_kernel.eigenvectors_inv)  # fixture sanity: orientation distinguishable
+
+            ml_layers = (
+                [circular_patch(0.5, 24, 1.0)],
+                [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)],
+                [PVContour([p + SVector(-0.4, 0.5) for p in circular_patch(0.25, 12, 0.9).nodes], 0.9)],
+            )
+
+            cpu_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(), deepcopy(ml_layers))
+            vel_t = (zeros(SVector{2,Float64}, 24), zeros(SVector{2,Float64}, 16), zeros(SVector{2,Float64}, 12))
+            velocity!(vel_t, cpu_prob)
+            expected = vcat(vel_t[1], vel_t[2], vel_t[3])
+
+            states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                      ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()),
+                      ContourDynamics.DeviceContourState(deepcopy(ml_layers[3]), CPU()))
+            flat = zeros(SVector{2,Float64}, 52)
+            ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
+                                                                 UnboundedDomain(), CPU())
+            @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+        end
+    end
+
+    @testset "Multi-layer state RK4 matches CPU multi-layer RK4" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        ml_layers = (
+            [circular_patch(0.5, 24, 1.0)],
+            [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)],
+        )
+        dt = 0.002
+
+        cpu_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(), deepcopy(ml_layers))
+        cpu_stepper = RK4Stepper(dt, total_nodes(cpu_prob))
+        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
+        state_stepper = RK4Stepper(dt, 40; dev=CPU())
+
+        for _ in 1:3
+            timestep!(cpu_prob, cpu_stepper)
+            ContourDynamics._rk4_multilayer_state_step!(states, ml_kernel,
+                                                        UnboundedDomain(), state_stepper, CPU())
+        end
+
+        for ℓ in 1:2
+            actual = materialize_contours(states[ℓ])
+            expected = cpu_prob.layers[ℓ]
+            @test all(zip(actual, expected)) do (a, e)
+                all(isapprox.(a.nodes, e.nodes; rtol=1e-8, atol=1e-10))
+            end
+        end
+    end
+
+    @testset "Multi-layer state leapfrog matches CPU multi-layer leapfrog" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        ml_layers = (
+            [circular_patch(0.5, 24, 1.0)],
+            [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)],
+        )
+        dt = 0.002
+
+        cpu_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(), deepcopy(ml_layers))
+        cpu_stepper = LeapfrogStepper(dt, total_nodes(cpu_prob); ra_coeff=0.05)
+        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
+        state_stepper = LeapfrogStepper(dt, 40; dev=CPU(), ra_coeff=0.05)
+
+        # 3 steps covers the bootstrap half-step plus two regular leapfrog steps.
+        for _ in 1:3
+            timestep!(cpu_prob, cpu_stepper)
+            ContourDynamics._leapfrog_multilayer_state_step!(states, ml_kernel,
+                                                             UnboundedDomain(), state_stepper, CPU())
+        end
+
+        for ℓ in 1:2
+            actual = materialize_contours(states[ℓ])
+            expected = cpu_prob.layers[ℓ]
+            @test all(zip(actual, expected)) do (a, e)
+                all(isapprox.(a.nodes, e.nodes; rtol=1e-8, atol=1e-10))
+            end
+        end
+    end
+
+    @testset "State-based multi-layer velocity ignores stale host contours" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        layer1 = [circular_patch(0.5, 24, 1.0)]
+        layer2 = [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)]
+
+        states = (ContourDynamics.DeviceContourState(layer1, CPU()),
+                  ContourDynamics.DeviceContourState(layer2, CPU()))
+        flat_before = zeros(SVector{2,Float64}, 40)
+        ContourDynamics._ka_multilayer_velocity_from_states!(flat_before, states, ml_kernel,
+                                                             UnboundedDomain(), CPU())
+
+        # Mutate the host contours the states were built from.
+        # DeviceContourState copies node data into its own arrays, so the state
+        # is immune to host-side mutations — flat_after must equal flat_before.
+        for i in eachindex(layer1[1].nodes)
+            layer1[1].nodes[i] += SVector(10.0, 10.0)
+        end
+
+        flat_after = zeros(SVector{2,Float64}, 40)
+        ContourDynamics._ka_multilayer_velocity_from_states!(flat_after, states, ml_kernel,
+                                                             UnboundedDomain(), CPU())
+        @test flat_after == flat_before
+    end
+
+    @testset "Multi-layer state periodic wrap matches CPU wrap" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        domain = PeriodicDomain(2.0, 2.0)
+        # Patches whose centroids sit outside the box, so wrapping moves them.
+        ml_layers = (
+            [PVContour([p + SVector(2.5, 0.0) for p in circular_patch(0.3, 16, 1.0).nodes], 1.0)],
+            [PVContour([p + SVector(0.0, -2.5) for p in circular_patch(0.2, 12, -0.5).nodes], -0.5)],
+        )
+
+        cpu_prob = MultiLayerContourProblem(ml_kernel, domain, deepcopy(ml_layers))
+        wrap_nodes!(cpu_prob)
+        # Guard against double-no-op: wrapping must actually displace both layers.
+        @test abs(cpu_prob.layers[1][1].nodes[1][1] - ml_layers[1][1].nodes[1][1]) > 0.5
+        @test abs(cpu_prob.layers[2][1].nodes[1][2] - ml_layers[2][1].nodes[1][2]) > 0.5
+
+        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
+        for s in states
+            ContourDynamics._wrap_state_nodes!(s, domain, CPU())
+        end
+
+        for ℓ in 1:2
+            actual = materialize_contours(states[ℓ])
+            expected = cpu_prob.layers[ℓ]
+            @test all(zip(actual, expected)) do (a, e)
+                all(isapprox.(a.nodes, e.nodes; rtol=1e-12, atol=1e-12))
+            end
+        end
+    end
+
+    @testset "Multi-layer device surgery matches CPU multi-layer surgery (unbounded)" begin
+        ml_Ld = SVector(1.0)
+        ml_F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
+        # Layer 1: a healthy patch plus a tiny filament that surgery must remove.
+        # Layer 2: a single healthy patch.
+        tiny = PVContour([SVector(2.0, 0.0), SVector(2.0 + 1e-6, 0.0), SVector(2.0, 1e-6)], 1.0)
+        ml_layers = (
+            [circular_patch(0.5, 32, 1.0), tiny],
+            [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 24, -0.7).nodes], -0.7)],
+        )
+        params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100)
+
+        cpu_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(), deepcopy(ml_layers))
+        surgery!(cpu_prob, params)
+
+        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
+                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
+        ContourDynamics._device_multilayer_surgery!(states, params, UnboundedDomain(), CPU())
+
+        for ℓ in 1:2
+            actual = materialize_contours(states[ℓ])
+            expected = cpu_prob.layers[ℓ]
+            @test length(actual) == length(expected)
+            @test all(zip(actual, expected)) do (a, e)
+                length(a.nodes) == length(e.nodes) &&
+                    all(isapprox.(a.nodes, e.nodes; rtol=1e-8, atol=1e-10))
+            end
+        end
+    end
+
+    @testset "Periodic multi-layer GPU surgery still errors" begin
+        if _TEST_CUDA_LOADED[]
+            ml_Ld = SVector(1.0)
+            ml_F = 1.0 / (2 * ml_Ld[1]^2)
+            ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
+            prob = MultiLayerContourProblem(MultiLayerQGKernel(ml_Ld, ml_coupling),
+                                            PeriodicDomain(4.0, 4.0),
+                                            ([circular_patch(0.3, 16, 1.0)], PVContour{Float64}[]);
+                                            dev=GPU())
+            @test_throws ArgumentError surgery!(prob, SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100))
+        else
+            # Without CUDA the GPU periodic method is unreachable at runtime,
+            # but we can verify it exists in the method table.
+            @test any(methods(surgery!)) do m
+                occursin("PeriodicDomain", string(m.sig)) &&
+                    occursin("GPU", string(m.sig)) &&
+                    occursin("MultiLayer", string(m.sig))
+            end
+        end
+    end
 end

@@ -28,8 +28,10 @@ include("velocity/common.jl")
 include("velocity/unbounded/single_layer.jl")
 include("velocity/periodic/cache.jl")
 include("velocity/periodic/single_layer.jl")
-include("accel/gpu/common.jl")
-include("accel/gpu/surgery.jl")
+include("accel/ka/packing.jl")
+include("accel/ka/kernels.jl")
+include("accel/ka/velocity.jl")
+include("accel/ka/surgery.jl")
 
 # Diagnostics.
 include("diagnostics/geometry.jl")

@@ -13,6 +13,17 @@ struct EwaldCache{T<:AbstractFloat}
     n_images::Int
 end
 
+# Shared Ewald setup: splitting parameter, Fourier wavenumbers, and domain area.
+# The three build_ewald_cache methods differ only in the coefficient formula.
+function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
+    Lx, Ly = domain.Lx, domain.Ly
+    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
+    kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
+    ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
+    area = 4 * Lx * Ly
+    return alpha, kx, ky, area
+end
+
 """
     build_ewald_cache(domain::PeriodicDomain, kernel::EulerKernel; n_fourier=8, n_images=2)
 
@@ -20,16 +31,9 @@ Precompute Fourier-space coefficients for Ewald summation.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
                            n_fourier::Int=8, n_images::Int=2) where {T}
-    Lx, Ly = domain.Lx, domain.Ly
-    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
-
-    kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
-    ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
-
+    alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
-    area = 4 * Lx * Ly
-
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
@@ -38,7 +42,6 @@ function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
             end
         end
     end
-
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
@@ -53,16 +56,9 @@ fractional Laplacian's half-order (`1/|k|` vs Euler's `1/k²`).
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
-    Lx, Ly = domain.Lx, domain.Ly
-    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
-
-    kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
-    ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
-
+    alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
-    area = 4 * Lx * Ly
-
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
@@ -73,7 +69,6 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
             end
         end
     end
-
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
@@ -84,17 +79,10 @@ Ewald cache for QG kernel in periodic domain.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
-    Lx, Ly = domain.Lx, domain.Ly
     Ld = kernel.Ld
-    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
-
-    kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
-    ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
-
+    alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
-    area = 4 * Lx * Ly
-
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
@@ -104,7 +92,6 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
             end
         end
     end
-
     return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
 end
 
@@ -128,6 +115,20 @@ const _ewald_key_order_f32 = _EwaldCacheKey{Float32}[]
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
+# Insert `cache` under `key`, evicting oldest FIFO entries past the cap.
+# Caller holds _ewald_cache_lock. Order is only touched for new keys, so
+# overwriting an existing key leaves its FIFO position unchanged.
+function _store_ewald_cache!(caches::AbstractDict, order::AbstractVector, key, cache)
+    if !haskey(caches, key)
+        while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
+            delete!(caches, popfirst!(order))
+        end
+        push!(order, key)
+    end
+    caches[key] = cache
+    return cache
+end
+
 function _cache_key(domain::PeriodicDomain{T}, ::EulerKernel) where {T}
     (_snap(domain.Lx), _snap(domain.Ly), EulerKernel, zero(T))::_EwaldCacheKey{T}
 end
@@ -148,10 +149,10 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
     # Fast path: quick read under lock to check if cache already exists.
-    # After warm-up, this is the only lock acquisition needed per call.
-    cached = lock(_ewald_cache_lock) do
-        get(caches, key, nothing)
-    end
+    # After warm-up, this is the only lock acquisition needed per call. Use the
+    # `@lock` macro (lock/try/finally, no closure) rather than `lock(f) do ... end`,
+    # which would box `caches`/`key` into a closure (~48 B per velocity! call).
+    cached = Base.@lock _ewald_cache_lock get(caches, key, nothing)
     cached !== nothing && return cached
 
     # Slow path: build outside the lock, then store under the lock.
@@ -198,14 +199,8 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
     lock(_ewald_cache_lock) do
-        if !haskey(caches, key)
-            while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
-                old_key = popfirst!(order)
-                delete!(caches, old_key)
-            end
-            push!(order, key)
-        end
-        caches[key] = build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images)
+        _store_ewald_cache!(caches, order, key,
+            build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images))
     end
     return nothing
 end
@@ -226,14 +221,8 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
     lock(_ewald_cache_lock) do
-        if !haskey(caches, key)
-            while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
-                old_key = popfirst!(order)
-                delete!(caches, old_key)
-            end
-            push!(order, key)
-        end
-        caches[key] = build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images)
+        _store_ewald_cache!(caches, order, key,
+            build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images))
     end
     # Also build the Euler cache that the QG velocity path actually uses
     setup_ewald_cache!(domain, EulerKernel(); n_fourier=n_fourier, n_images=n_images)
