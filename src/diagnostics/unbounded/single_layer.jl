@@ -5,7 +5,7 @@ function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     contours = prob.contours
     inv4pi = one(T) / (4 * T(π))
     E = zero(T)
-    @_valid_contour_pairs ci cj partial contours T begin
+    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj; _partial=partial)
     end
     # Factor 1/2: the double sum counts both (i,j) and (j,i) for the symmetric integrand.
@@ -79,7 +79,7 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     contours = prob.contours
     delta = prob.kernel.delta
     E = zero(T)
-    @_valid_contour_pairs ci cj partial contours T begin
+    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta; _partial=partial)
     end
     # E_SQG = -(1/(4π)) × (1/2) × Σ q_i q_j ∮∮ Φδ(r) ds·ds'
@@ -134,7 +134,7 @@ function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     Ld = prob.kernel.Ld
     inv4pi = one(T) / (4 * T(π))
     E = zero(T)
-    @_valid_contour_pairs ci cj partial contours T begin
+    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld; _partial=partial)
     end
     return -inv4pi * E / 2

@@ -9,8 +9,10 @@ copy for output, plotting, file writing, or interactive inspection.
 
 Single-layer Euler, QG, and SQG support GPU velocity and timestepping on
 unbounded and periodic domains. `BetaPlaneQGKernel` currently requires
-`dev=CPU()`. Multi-layer QG has a GPU velocity path, but multi-layer GPU
-timestepping, periodic wrapping, and surgery are not device-resident yet.
+`dev=CPU()`. Multi-layer QG supports device-resident GPU velocity, RK4/leapfrog
+timestepping, periodic wrapping, and unbounded surgery; periodic multi-layer
+surgery still requires `dev=CPU()` (GPU surgery is unbounded-only, matching the
+single-layer restriction).
 
 ```@docs
 AbstractDevice

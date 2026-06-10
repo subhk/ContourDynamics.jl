@@ -56,7 +56,10 @@ makedocs(;
             "Extensions" => "api/extensions.md",
             "Internals" => "api/internals.md",
         ],
-        "Architecture" => "architecture.md",
+        "Architecture" => [
+            "Overview" => "architecture.md",
+            "A velocity! Call, Step by Step" => "velocity_walkthrough.md",
+        ],
         "Contributing" => "contributing.md",
     ],
     warnonly = true,

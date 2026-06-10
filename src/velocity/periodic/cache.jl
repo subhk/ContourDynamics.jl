@@ -149,10 +149,10 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
     # Fast path: quick read under lock to check if cache already exists.
-    # After warm-up, this is the only lock acquisition needed per call.
-    cached = lock(_ewald_cache_lock) do
-        get(caches, key, nothing)
-    end
+    # After warm-up, this is the only lock acquisition needed per call. Use the
+    # `@lock` macro (lock/try/finally, no closure) rather than `lock(f) do ... end`,
+    # which would box `caches`/`key` into a closure (~48 B per velocity! call).
+    cached = Base.@lock _ewald_cache_lock get(caches, key, nothing)
     cached !== nothing && return cached
 
     # Slow path: build outside the lock, then store under the lock.

@@ -69,12 +69,16 @@ function timestep!(prob::ContourProblem{K, D, T, GPU},
     return prob
 end
 
-function timestep!(prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU},
-                   stepper::AbstractTimeStepper) where {N, T}
-    throw(ArgumentError(
-        "GPU timestepping for MultiLayerContourProblem is not device-resident yet. " *
-        "Use dev=CPU() or avoid timestepping multi-layer GPU problems until the " *
-        "multi-layer state path is implemented."))
+function timestep!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, D, T, GPU},
+                   stepper::RK4Stepper{T}) where {N, T, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
+    _rk4_multilayer_state_step!(prob.device_state, prob.kernel, prob.domain, stepper, prob.dev)
+    return prob
+end
+
+function timestep!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, D, T, GPU},
+                   stepper::LeapfrogStepper{T}) where {N, T, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
+    _leapfrog_multilayer_state_step!(prob.device_state, prob.kernel, prob.domain, stepper, prob.dev)
+    return prob
 end
 
 function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) where {N, T}
@@ -291,12 +295,6 @@ function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:A
     return prob
 end
 
-function surgery!(::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:AbstractDomain, T, GPU},
-                  ::SurgeryParams) where {N, T}
-    throw(ArgumentError(
-        "GPU surgery for MultiLayerContourProblem is not device-resident yet. " *
-        "Use dev=CPU() or disable surgery for multi-layer GPU() problems."))
-end
 
 _maybe_wrap_nodes!(::ContourProblem{<:AbstractKernel, UnboundedDomain}) = nothing
 _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = wrap_nodes!(prob)
@@ -304,10 +302,8 @@ _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, 
     _wrap_state_nodes!(prob.device_state, prob.domain, prob.dev)
 _maybe_wrap_nodes!(::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain}) = nothing
 _maybe_wrap_nodes!(::MultiLayerContourProblem{N, K, UnboundedDomain, T, GPU}) where {N, K, T} = nothing
-_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D, T, GPU}) where {N, K, D, T} =
-    throw(ArgumentError(
-        "GPU periodic wrapping for MultiLayerContourProblem is not device-resident yet. " *
-        "Use dev=CPU() or avoid periodic multi-layer GPU() timestepping."))
+_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain, T, GPU}) where {N, K, T} =
+    wrap_nodes!(prob)
 _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLayerQGKernel{N}, D<:PeriodicDomain} = wrap_nodes!(prob)
 
 function wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T}
@@ -317,10 +313,11 @@ end
 
 wrap_nodes!(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T, GPU}) where {N, K, T} = prob
 
-function wrap_nodes!(::MultiLayerContourProblem{N, K, D, T, GPU}) where {N, K, D, T}
-    throw(ArgumentError(
-        "GPU wrap_nodes! for MultiLayerContourProblem is not device-resident yet. " *
-        "Use dev=CPU() or materialize explicitly for inspection/output."))
+function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, GPU}) where {N, K, T}
+    for ℓ in 1:N
+        _wrap_state_nodes!(prob.device_state[ℓ], prob.domain, prob.dev)
+    end
+    return prob
 end
 
 @inline function _run_callbacks(callbacks, prob, step::Int)
@@ -333,7 +330,6 @@ end
 
 @inline function _handle_post_surgery!(prob::ContourProblem, stepper, old_N::Int)
     if total_nodes(prob) != old_N
-        _evict_gpu_workspace!(_gpu_ws_key(prob, old_N))
         resize_buffers!(stepper, prob)
     end
     return nothing

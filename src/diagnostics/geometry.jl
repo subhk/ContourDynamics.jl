@@ -42,12 +42,22 @@ macro _energy_segment_loop(partial, workspace, n, loop)
         @inbounds for k in 1:$(esc(n))
             $(esc(partial))[k] = zero(eltype($(esc(partial))))
         end
-        if $(esc(n)) >= _THREADING_THRESHOLD
+        # Match the velocity threading policy: only spawn tasks when more than one
+        # thread is available. `Threads.@threads` allocates task/partition
+        # machinery even at nthreads()==1, which is pure overhead repeated on
+        # every contour-pair term of the O(C²) energy double sum.
+        if Threads.nthreads() > 1 && $(esc(n)) >= _THREADING_THRESHOLD
             $threaded
         else
             $serial
         end
-        sum(@view $(esc(partial))[1:$(esc(n))])
+        # Reduce partial[1:n] without materializing a SubArray — `sum(@view ...)`
+        # allocated ~600 B per term on the hot energy path.
+        local _energy_acc = zero(eltype($(esc(partial))))
+        @inbounds for k in 1:$(esc(n))
+            _energy_acc += $(esc(partial))[k]
+        end
+        _energy_acc
     end
 end
 
@@ -60,16 +70,19 @@ function _max_valid_energy_nnodes(contours)
 end
 
 """
-    @_valid_contour_pairs ci cj partial contours T begin ... end
+    @_valid_contour_pairs ci cj partial contours scratch begin ... end
 
-Loop over valid closed contour pairs, with a reusable per-pair workspace
-`partial` sized to the largest valid contour.
+Loop over valid closed contour pairs, reusing the caller-owned `scratch` vector
+as the per-pair workspace `partial`, resized to the largest valid contour.
 """
-macro _valid_contour_pairs(ci, cj, partial, contours, T, body)
+macro _valid_contour_pairs(ci, cj, partial, contours, scratch, body)
     contours_var = gensym(:contours)
     quote
         local $contours_var = $(esc(contours))
-        local $(esc(partial)) = zeros($(esc(T)), _max_valid_energy_nnodes($contours_var))
+        # Reuse the caller's scratch buffer instead of allocating a fresh
+        # workspace on every energy() call.
+        local $(esc(partial)) = $(esc(scratch))
+        resize!($(esc(partial)), _max_valid_energy_nnodes($contours_var))
         for $(esc(ci)) in $contours_var
             _valid_energy_contour($(esc(ci))) || continue
             for $(esc(cj)) in $contours_var

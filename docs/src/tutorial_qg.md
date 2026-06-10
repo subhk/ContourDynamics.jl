@@ -54,8 +54,9 @@ println("Circulation: $(round(circulation(prob); digits=6))");
     
     GPU velocity evaluation is currently available for single-layer Euler, QG,
     and SQG on unbounded or periodic domains. `BetaPlaneQGKernel` currently
-    requires `dev=CPU()`. Multi-layer QG has a GPU velocity path, but
-    multi-layer GPU timestepping and surgery are not device-resident yet.
+    requires `dev=CPU()`. Multi-layer QG supports device-resident GPU velocity,
+    RK4/leapfrog timestepping, periodic wrapping, and unbounded surgery;
+    periodic multi-layer surgery still requires `dev=CPU()`.
 
 At this stage, the only new ingredient compared with the Euler tutorial is the
 deformation radius `Ld`. Everything else about the high-level workflow is the

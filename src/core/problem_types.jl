@@ -9,6 +9,7 @@ mutable struct _VelocityScratch{T<:AbstractFloat}
     mode_vel::Vector{SVector{2,T}}
     modal_matrix::Matrix{T}
     modal_matrix_inv::Matrix{T}
+    energy_partial::Vector{T}
 end
 
 function _VelocityScratch{T}() where {T<:AbstractFloat}
@@ -19,7 +20,8 @@ function _VelocityScratch{T}() where {T<:AbstractFloat}
                                SVector{2,T}[],
                                SVector{2,T}[],
                                Matrix{T}(undef, 0, 0),
-                               Matrix{T}(undef, 0, 0))
+                               Matrix{T}(undef, 0, 0),
+                               T[])
 end
 
 """

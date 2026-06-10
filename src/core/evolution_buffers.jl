@@ -471,6 +471,102 @@ function _leapfrog_state_step!(state::DeviceContourState{T}, kernel, domain,
     return state
 end
 
+# ---------------------------------------------------------------------------
+# Multi-layer device stepping
+# ---------------------------------------------------------------------------
+
+# Multi-layer twin of _rk4_state_stage! — keep the two in lockstep.
+@inline function _ml_rk4_stage!(k, states::NTuple{N, <:DeviceContourState}, kernel, domain,
+                                nodes_orig, increment, scale::T,
+                                ranges::Vector{UnitRange{Int}},
+                                dev::AbstractDevice) where {N, T}
+    for ℓ in 1:N
+        r = ranges[ℓ]
+        isempty(r) && continue
+        _scatter_state_shifted!(states[ℓ], view(nodes_orig, r), view(increment, r), scale, dev)
+    end
+    _ka_multilayer_velocity_from_states!(k, states, kernel, domain, dev)
+    return k
+end
+
+# Multi-layer twin of _rk4_state_step! — keep the two in lockstep.
+function _rk4_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, kernel, domain,
+                                     stepper::RK4Stepper{T},
+                                     dev::AbstractDevice) where {N, T}
+    dt = stepper.dt
+    ranges = _layer_state_ranges(states)
+    Ntot = sum(length, ranges)
+    length(stepper.k1) >= Ntot || throw(DimensionMismatch("Stepper buffer size ($(length(stepper.k1))) < total nodes ($Ntot). Call resize_buffers! first."))
+    Ntot == 0 && return states
+    nodes_orig = stepper.nodes_buf
+
+    for ℓ in 1:N
+        r = ranges[ℓ]
+        isempty(r) && continue
+        _collect_state_nodes!(view(nodes_orig, r), states[ℓ], dev)
+    end
+    _ka_multilayer_velocity_from_states!(stepper.k1, states, kernel, domain, dev)
+    _ml_rk4_stage!(stepper.k2, states, kernel, domain, nodes_orig, stepper.k1, dt / 2, ranges, dev)
+    _ml_rk4_stage!(stepper.k3, states, kernel, domain, nodes_orig, stepper.k2, dt / 2, ranges, dev)
+    _ml_rk4_stage!(stepper.k4, states, kernel, domain, nodes_orig, stepper.k3, dt, ranges, dev)
+
+    for ℓ in 1:N
+        r = ranges[ℓ]
+        isempty(r) && continue
+        _finish_rk4_state_step!(states[ℓ], view(nodes_orig, r), view(stepper.k1, r),
+                                view(stepper.k2, r), view(stepper.k3, r),
+                                view(stepper.k4, r), dt, dev)
+    end
+    return states
+end
+
+# Multi-layer twin of _leapfrog_state_step! — keep the two in lockstep.
+function _leapfrog_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, kernel, domain,
+                                          stepper::LeapfrogStepper{T},
+                                          dev::AbstractDevice) where {N, T}
+    dt = stepper.dt
+    ranges = _layer_state_ranges(states)
+    Ntot = sum(length, ranges)
+    nodes_current = stepper.nodes_buf
+    length(nodes_current) >= Ntot || throw(DimensionMismatch("Stepper buffer size ($(length(nodes_current))) < total nodes ($Ntot). Call resize_buffers! first."))
+    Ntot == 0 && return states
+
+    for ℓ in 1:N
+        r = ranges[ℓ]
+        isempty(r) && continue
+        _collect_state_nodes!(view(nodes_current, r), states[ℓ], dev)
+    end
+    _ka_multilayer_velocity_from_states!(stepper.vel_buf, states, kernel, domain, dev)
+
+    if !stepper.initialized
+        for ℓ in 1:N
+            r = ranges[ℓ]
+            isempty(r) && continue
+            _scatter_state_shifted!(states[ℓ], view(nodes_current, r),
+                                    view(stepper.vel_buf, r), dt / 2, dev)
+        end
+        _ka_multilayer_velocity_from_states!(stepper.vel_mid, states, kernel, domain, dev)
+        _ka_stepper_update!(dev, _leapfrog_bootstrap_ka!, Ntot,
+                            stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
+        for ℓ in 1:N
+            r = ranges[ℓ]
+            isempty(r) && continue
+            _scatter_state_nodes!(states[ℓ], view(nodes_current, r), dev)
+        end
+        stepper.initialized = true
+    else
+        _ka_stepper_update!(dev, _leapfrog_step_ka!, Ntot,
+                            stepper.nodes_prev, nodes_current, stepper.vel_buf,
+                            dt, stepper.ra_coeff)
+        for ℓ in 1:N
+            r = ranges[ℓ]
+            isempty(r) && continue
+            _scatter_state_nodes!(states[ℓ], view(nodes_current, r), dev)
+        end
+    end
+    return states
+end
+
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
     _check_flat_buffer_length("buffer", length(buf), N)

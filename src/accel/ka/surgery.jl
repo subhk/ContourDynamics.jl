@@ -2931,13 +2931,15 @@ function _check_spanning_proximity(state::DeviceContourState{T}, δ,
     return nothing
 end
 
-function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
-                                       UnboundedDomain, T, GPU},
-                  params::SurgeryParams) where {T}
-    state = prob.device_state
-    domain = prob.domain
-    dev = prob.dev
+"""
+    _device_surgery_pipeline!(state, params, domain, dev)
 
+Device-resident surgery pipeline for one `DeviceContourState`: filament removal,
+corner demotion/promotion, remesh, reconnection loop with artifact cleanup, final
+filament sweep, and spanning-proximity check.
+"""
+function _device_surgery_pipeline!(state::DeviceContourState, params::SurgeryParams,
+                                   domain::UnboundedDomain, dev::AbstractDevice)
     _device_remove_filaments!(state, params, dev)
     _demote_obtuse_corners!(state, dev)
     _promote_high_curvature_corners!(state, params.δ, dev)
@@ -2952,6 +2954,13 @@ function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
 
     _device_remove_filaments!(state, params, dev)
     _check_spanning_proximity(state, params.δ, domain, dev)
+    return state
+end
+
+function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
+                                       UnboundedDomain, T, GPU},
+                  params::SurgeryParams) where {T}
+    _device_surgery_pipeline!(prob.device_state, params, prob.domain, prob.dev)
     return prob
 end
 
@@ -2967,4 +2976,34 @@ function surgery!(::ContourProblem{K, D, T, GPU}, ::SurgeryParams) where {K, D, 
     throw(ArgumentError(
         "GPU surgery is not implemented for $(K) on $(D). " *
         "Use dev=CPU() or a supported unbounded single-layer Euler/QG/SQG problem."))
+end
+
+"""
+    _device_multilayer_surgery!(states, params, domain, dev)
+
+Run the device-resident surgery pipeline independently on each layer's state.
+Layers never reconnect across layer boundaries (the CPU multi-layer surgery has
+the same per-layer structure).
+"""
+function _device_multilayer_surgery!(states::NTuple{N, <:DeviceContourState},
+                                     params::SurgeryParams,
+                                     domain::UnboundedDomain,
+                                     dev::AbstractDevice) where {N}
+    for ℓ in 1:N
+        _device_surgery_pipeline!(states[ℓ], params, domain, dev)
+    end
+    return states
+end
+
+function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, UnboundedDomain, T, GPU},
+                  params::SurgeryParams) where {N, T}
+    _device_multilayer_surgery!(prob.device_state, params, prob.domain, prob.dev)
+    return prob
+end
+
+function surgery!(::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:PeriodicDomain, T, GPU},
+                  ::SurgeryParams) where {N, T}
+    throw(ArgumentError(
+        "GPU surgery is device-resident only for unbounded multi-layer problems. " *
+        "Use dev=CPU() for periodic surgery, or disable surgery for this GPU() problem."))
 end
