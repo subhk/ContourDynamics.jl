@@ -69,6 +69,67 @@ using Test, ContourDynamics, StaticArrays, Logging
         @test vortex_area(c_new) ≈ vortex_area(c) rtol=1e-12 atol=1e-12
     end
 
+    @testset "Remesh Preserves Closed Area With Fixed Corners" begin
+        # Post-reconnection contours carry fixed surgery corners and route
+        # through `_remesh_with_fixed_corners`. That path must also conserve
+        # polygon area; otherwise every merge/split accrues unmeasured drift.
+        nodes = SVector{2,Float64}[
+            SVector(1.0, 0.0),
+            SVector(0.2, 0.9),
+            SVector(-0.9, 0.4),
+            SVector(-0.7, -0.8),
+            SVector(0.6, -0.7),
+        ]
+        corners = falses(length(nodes))
+        corners[1] = true
+        corners[3] = true
+        c = PVContour(nodes, 1.0, zero(SVector{2,Float64}), corners)
+        params = SurgeryParams(0.001, 0.08, 0.4, 1e-8, 10)
+
+        # Confirm this fixture actually exercises the fixed-corner remesh path.
+        @test any(c.corners) && !ContourDynamics.is_spanning(c)
+
+        c_new = remesh(c, params)
+
+        @test any(c_new.corners)  # corners survive
+        @test vortex_area(c_new) ≈ vortex_area(c) rtol=1e-10 atol=1e-12
+        # Area is restored by moving only free nodes; corners stay bit-exact.
+        new_corner_pts = c_new.nodes[corner_indices(c_new)]
+        @test SVector(1.0, 0.0) in new_corner_pts
+        @test SVector(-0.9, 0.4) in new_corner_pts
+    end
+
+    @testset "Surgery Pass Conserves Area Through Cleanup Remesh" begin
+        # A high-aspect ellipse develops promoted corners at its tips, routing the
+        # surgery cleanup remesh through the fixed-corner path. Total enclosed
+        # area must survive a full surgery! pass (guards corner-remesh drift).
+        c = elliptical_patch(2.0, 0.3, 80, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        A0 = sum(abs(vortex_area(cc)) for cc in prob.contours)
+        surgery!(prob, SurgeryParams(0.002, 0.02, 0.2, 1e-8, 1))
+        A1 = sum(abs(vortex_area(cc)) for cc in prob.contours)
+        @test A1 ≈ A0 rtol=1e-4
+    end
+
+    @testset "Spanning Proximity Warning" begin
+        L = 2.0
+        domain = PeriodicDomain(L)
+        n = 16
+        spanning = PVContour([SVector(-L + 2L * (k - 1) / n, 0.0) for k in 1:n],
+                             1.0, SVector(2L, 0.0), falses(n))
+        @test is_spanning(spanning)
+
+        # Closed contour with a node ~0.005 below the spanning line (within δ).
+        near = circular_patch(0.1, 12, 1.0; cx=0.0, cy=0.105)
+        # Well-separated closed contour.
+        far = circular_patch(0.1, 12, 1.0; cx=0.0, cy=1.0)
+
+        @test_logs (:warn,) match_mode=:any ContourDynamics._check_spanning_proximity(
+            [spanning, near], 0.05, domain)
+        @test_logs min_level=Logging.Warn ContourDynamics._check_spanning_proximity(
+            [spanning, far], 0.05, domain)
+    end
+
     @testset "Dritschel Redistribution Resolves High Curvature" begin
         c = elliptical_patch(2.0, 0.5, 64, 1.0)
         params = SurgeryParams(0.001, 0.02, 0.4, 1e-8, 10)
@@ -157,7 +218,7 @@ using Test, ContourDynamics, StaticArrays, Logging
             (QGKernel(1.0), UnboundedDomain(), nothing),
             (SQGKernel(0.02), UnboundedDomain(), nothing),
             (EulerKernel(), PeriodicDomain(2.0, 2.0), ContourDynamics._get_ewald_cache(PeriodicDomain(2.0, 2.0), EulerKernel())),
-            (QGKernel(1.0), PeriodicDomain(2.0, 2.0), ContourDynamics._get_ewald_cache(PeriodicDomain(2.0, 2.0), EulerKernel())),
+            (QGKernel(1.0), PeriodicDomain(2.0, 2.0), ContourDynamics._get_ewald_cache(PeriodicDomain(2.0, 2.0), QGKernel(1.0))),
             (SQGKernel(0.02), PeriodicDomain(2.0, 2.0), ContourDynamics._get_ewald_cache(PeriodicDomain(2.0, 2.0), SQGKernel(0.02))),
         )
 
