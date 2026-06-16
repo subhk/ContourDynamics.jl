@@ -310,8 +310,7 @@ function _device_compact_kept_contours_outputs(flat::FlatContourTopology{T},
     keep_slots = device_zeros(dev, Int, ncontours)
     count_store = device_zeros(dev, Int, 1)
     if ncontours > 0
-        @_ka_launch dev ncontours _prefix_u8_kernel!(
-            keep_slots, count_store, keep, ncontours)
+        _device_compact_scan!(keep_slots, count_store, keep, ncontours, dev)
     end
     nout = ncontours == 0 ? 0 : to_cpu(count_store)[1]
 
@@ -514,7 +513,7 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
-    @_ka_launch dev npairs _prefix_u8_kernel!(slots, count_store, valid, npairs)
+    _device_compact_scan!(slots, count_store, valid, npairs, dev)
     ncandidates = to_cpu(count_store)[1]
 
     pair_ci = device_zeros(dev, Int, ncandidates)
@@ -658,7 +657,7 @@ function _device_admissible_close_segment_buffer(flat::FlatContourTopology{T}, �
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
-    @_ka_launch dev npairs _prefix_u8_kernel!(slots, count_store, valid, npairs)
+    _device_compact_scan!(slots, count_store, valid, npairs, dev)
     nadmissible = to_cpu(count_store)[1]
 
     out_ci = device_zeros(dev, Int, nadmissible)
@@ -901,7 +900,7 @@ function _device_select_reconnection_pair_buffer(flat::FlatContourTopology{T},
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
-    @_ka_launch dev npairs _prefix_u8_kernel!(slots, count_store, plan.selected, npairs)
+    _device_compact_scan!(slots, count_store, plan.selected, npairs, dev)
     nselected = to_cpu(count_store)[1]
 
     out_ci = device_zeros(dev, Int, nselected)
@@ -1552,19 +1551,59 @@ end
     end
 end
 
-@kernel function _prefix_u8_kernel!(slots, total, flags, n)
-    idx = @index(Global)
-    if idx <= n
-        s = 0
-        @inbounds for i in 1:(idx - 1)
-            s += Int(flags[i])
-        end
-        slots[idx] = !iszero(flags[idx]) ? s + 1 : 0
-        if idx == n
-            count = s + Int(flags[idx])
-            total[1] = count
+# Stream-compaction prefix sum over a 0/1 `flags` array, replacing an earlier
+# kernel where every workitem summed flags[1..idx-1] (O(n) per item → O(n²) total,
+# and O(N⁴) when launched over the N² close-pair candidate buffer). This uses a
+# ping-pong Hillis–Steele inclusive scan: O(n log n) work, O(log n) launches, and
+# — because each pass reads `in` and writes a separate `out` — there is no
+# intra-pass aliasing, so the result is independent of workitem execution order.
+#
+# Output matches the previous kernel exactly: for a kept item (flag ≠ 0),
+# `slots[i]` is its 1-based compacted position (= number of kept items in 1..i);
+# dropped items get 0; `total[1]` is the total kept count.
+@kernel function _scan_init_kernel!(out, flags, n)
+    i = @index(Global)
+    if i <= n
+        @inbounds out[i] = iszero(flags[i]) ? 0 : 1
+    end
+end
+
+@kernel function _scan_step_kernel!(out, in, offset, n)
+    i = @index(Global)
+    if i <= n
+        @inbounds out[i] = i > offset ? in[i] + in[i - offset] : in[i]
+    end
+end
+
+@kernel function _scan_compact_finalize_kernel!(slots, total, scan, flags, n)
+    i = @index(Global)
+    if i <= n
+        @inbounds begin
+            incl = scan[i]                     # inclusive prefix count at i
+            slots[i] = iszero(flags[i]) ? 0 : incl
+            if i == n
+                total[1] = incl
+            end
         end
     end
+end
+
+# Host driver for the compaction scan. `slots` and `total` are caller-allocated;
+# `total` must be zero-initialized so the n == 0 case leaves a 0 count.
+function _device_compact_scan!(slots, total, flags, n::Int, dev::AbstractDevice)
+    n == 0 && return slots
+    a = device_zeros(dev, Int, n)
+    b = device_zeros(dev, Int, n)
+    @_ka_launch dev n _scan_init_kernel!(a, flags, n)
+    cur, other = a, b
+    offset = 1
+    while offset < n
+        @_ka_launch dev n _scan_step_kernel!(other, cur, offset, n)
+        cur, other = other, cur
+        offset *= 2
+    end
+    @_ka_launch dev n _scan_compact_finalize_kernel!(slots, total, cur, flags, n)
+    return slots
 end
 
 @kernel function _full_rewrite_fill_main_layout_kernel!(out_lengths, out_op_index,
@@ -2294,6 +2333,95 @@ end
     end
 end
 
+# Smallest-magnitude real root of a t² + b t + c = 0, device-friendly twin of
+# `_smallest_quadratic_root`. Returns `(t, ok)`; `ok=false` means no usable root.
+@inline function _device_smallest_quadratic_root(a::T, b::T, c::T) where {T}
+    if abs(a) <= eps(T)
+        abs(b) <= eps(T) && return (zero(T), false)
+        return (-c / b, true)
+    end
+    disc = b * b - 4 * a * c
+    disc < zero(T) && return (zero(T), false)
+    sd = sqrt(disc)
+    q = -(b + (b >= zero(T) ? sd : -sd)) / 2
+    r1 = q / a
+    abs(q) <= eps(T) && return (r1, true)
+    r2 = c / q
+    return (abs(r1) <= abs(r2) ? r1 : r2, true)
+end
+
+# Corner-mode area preservation. The corner-free path (`_preserve_remesh_area_kernel!`,
+# remesh_mode 0) rescales about the centroid, but that moves fixed corners. For
+# the fixed-corner modes (1 and 2) restore the area by displacing only the free
+# (non-corner) nodes along d = (p - centroid); the signed area is quadratic in
+# the scalar step `t`. This kernel computes that `t` per contour (corners pinned),
+# mirroring the CPU `_preserve_closed_area_fixed_corners!`.
+@kernel function _remesh_corner_area_step_kernel!(step, target_area, out_area,
+                                                  out_centroid_x, out_centroid_y,
+                                                  out_x, out_y, out_corners,
+                                                  out_offsets, out_lengths,
+                                                  wrapx, wrapy, remesh_mode, ncontours)
+    ci = @index(Global)
+    if ci <= ncontours
+        T = eltype(out_x)
+        step[ci] = zero(T)
+        mode = remesh_mode[ci]
+        if (mode == UInt8(1) || mode == UInt8(2)) &&
+           iszero(wrapx[ci]) && iszero(wrapy[ci])
+            target = target_area[ci]
+            A0 = out_area[ci]
+            if abs(target) > eps(target) && abs(A0) > eps(A0) &&
+               ((target > zero(target)) == (A0 > zero(A0)))
+                rhs = target - A0
+                if abs(rhs) > sqrt(eps(T)) * abs(target)
+                    cx = out_centroid_x[ci]
+                    cy = out_centroid_y[ci]
+                    off = out_offsets[ci]
+                    n = out_lengths[ci]
+                    B = zero(T)
+                    C = zero(T)
+                    @inbounds for li in 1:n
+                        g = off + li - 1
+                        ng = li < n ? g + 1 : off
+                        pix = out_x[g]
+                        piy = out_y[g]
+                        pjx = out_x[ng]
+                        pjy = out_y[ng]
+                        dix = iszero(out_corners[g]) ? pix - cx : zero(T)
+                        diy = iszero(out_corners[g]) ? piy - cy : zero(T)
+                        djx = iszero(out_corners[ng]) ? pjx - cx : zero(T)
+                        djy = iszero(out_corners[ng]) ? pjy - cy : zero(T)
+                        B += (pix * djy - djx * piy) + (dix * pjy - pjx * diy)
+                        C += dix * djy - djx * diy
+                    end
+                    B /= 2
+                    C /= 2
+                    t, ok = _device_smallest_quadratic_root(C, B, -rhs)
+                    if ok && isfinite(t) && abs(t) <= T(1) / 2
+                        step[ci] = t
+                    end
+                end
+            end
+        end
+    end
+end
+
+@kernel function _apply_corner_area_step_kernel!(out_x, out_y, out_node_contour,
+                                                 out_centroid_x, out_centroid_y,
+                                                 out_corners, step, total_out_nodes)
+    g = @index(Global)
+    if g <= total_out_nodes
+        ci = out_node_contour[g]
+        t = step[ci]
+        if !iszero(t) && iszero(out_corners[g])
+            cx = out_centroid_x[ci]
+            cy = out_centroid_y[ci]
+            out_x[g] = out_x[g] + t * (out_x[g] - cx)
+            out_y[g] = out_y[g] + t * (out_y[g] - cy)
+        end
+    end
+end
+
 function _device_remesh_supported(contours::Vector{PVContour{T}}) where {T}
     @inbounds for c in contours
         nnodes(c) < 3 && return false
@@ -2388,6 +2516,16 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
         out_centroid_y, target_area, out_wrapx, out_wrapy, remesh_mode,
         total_out_nodes)
 
+    # Fixed-corner modes (1, 2) preserve area by moving only free nodes.
+    corner_area_step = device_zeros(dev, T, ncontours)
+    @_ka_launch dev ncontours _remesh_corner_area_step_kernel!(
+        corner_area_step, target_area, out_area, out_centroid_x, out_centroid_y,
+        out_x, out_y, out_corners, out_offsets, out_lengths,
+        out_wrapx, out_wrapy, remesh_mode, ncontours)
+    @_ka_launch dev total_out_nodes _apply_corner_area_step_kernel!(
+        out_x, out_y, out_node_contour, out_centroid_x, out_centroid_y,
+        out_corners, corner_area_step, total_out_nodes)
+
     return DeviceRewriteOutputs(out_x, out_y, out_pv, out_wrapx, out_wrapy,
                                 out_offsets, out_lengths, out_corners)
 end
@@ -2439,12 +2577,10 @@ function _device_full_rewrite_output_layout(flat::FlatContourTopology{T},
     main_count = device_zeros(dev, Int, 1)
     extra_count = device_zeros(dev, Int, 1)
     if ncontours > 0
-        @_ka_launch dev ncontours _prefix_u8_kernel!(
-            main_slot, main_count, main_keep, ncontours)
+        _device_compact_scan!(main_slot, main_count, main_keep, ncontours, dev)
     end
     if npairs > 0
-        @_ka_launch dev npairs _prefix_u8_kernel!(
-            extra_slot, extra_count, extra_keep, npairs)
+        _device_compact_scan!(extra_slot, extra_count, extra_keep, npairs, dev)
     end
 
     nmain = ncontours == 0 ? 0 : to_cpu(main_count)[1]
@@ -2923,7 +3059,7 @@ function _check_spanning_proximity(state::DeviceContourState{T}, δ,
         state.lengths, state.contour_of_node, total_nodes, ncontours, T(δ)^2)
     slots = device_zeros(dev, Int, total_nodes)
     count_store = device_zeros(dev, Int, 1)
-    @_ka_launch dev total_nodes _prefix_u8_kernel!(slots, count_store, flags, total_nodes)
+    _device_compact_scan!(slots, count_store, flags, total_nodes, dev)
     nclose = to_cpu(count_store)[1]
     if nclose > 0
         @warn "surgery!: closed contour node within δ of spanning contour — this cannot be resolved by reconnection" δ maxlog=1
