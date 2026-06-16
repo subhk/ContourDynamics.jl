@@ -132,8 +132,8 @@ end
     resize_buffers!(stepper::RK4Stepper, prob::ContourProblem)
 
 Resize RK4 work arrays after surgery changes node count.
-Stepper buffers are always CPU Vector (even for GPU problems), since the GPU
-velocity path handles its own device allocation internally.
+The buffers live on the stepper's device (a `Vector` for CPU problems, a device
+array for GPU problems — see [`RK4Stepper`](@ref)); `resize!` preserves that type.
 """
 function resize_buffers!(stepper::RK4Stepper{T}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
@@ -164,8 +164,8 @@ end
     resize_buffers!(stepper::LeapfrogStepper, prob::ContourProblem)
 
 Resize leapfrog work arrays after surgery. Resets initialization flag
-since node correspondence is lost.
-Stepper buffers are always CPU Vector (even for GPU problems).
+since node correspondence is lost. Buffers live on the stepper's device (CPU
+`Vector` or device array) and `resize!` preserves that type.
 """
 function resize_buffers!(stepper::LeapfrogStepper{T}, prob::ContourProblem) where {T}
     N = total_nodes(prob)
@@ -201,96 +201,17 @@ reconnections are not attempted; coupling enters through velocity and energy
 diagnostics, not through topology changes.
 """
 function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:AbstractDomain, T}, params::SurgeryParams) where {N, T}
+    # Each layer gets the same Dritschel surgery pass used for single-layer
+    # problems; cross-layer reconnections are not attempted. Workspace buffers
+    # are shared across layers. The shared `_surgery_pass!` driver lives in
+    # surgery.jl so single- and multi-layer surgery cannot silently diverge.
     domain = prob.domain
     remesh_buf = SVector{2, T}[]
     arc_buf = T[]
     vnodes_buf = SVector{2, T}[]
     for i in 1:N
-        contours = prob.layers[i]
-        remove_filaments!(contours, params.area_min, params.μ)
-        _demote_obtuse_corners!(contours)
-        _promote_high_curvature_corners!(contours, params.δ)
-        density_sources = copy(contours)
-        for j in eachindex(contours)
-            contours[j] = remesh(contours[j], params;
-                                  _buf=remesh_buf,
-                                  _arc_buf=arc_buf,
-                                  _vnodes_buf=vnodes_buf,
-                                  _density_sources=density_sources)
-        end
-        _demote_obtuse_corners!(contours)
-        reconnected = false
-        max_reconnect_iter = 100
-        stall_warning_pairs = 100
-        prev_n_pairs = typemax(Int)
-        min_n_pairs = typemax(Int)
-        stall_count = 0
-        no_improve_count = 0
-        reconnection_bin_size = max(T(params.δ), T(params.μ))
-        cleanup_reconnect_artifacts!() = begin
-            density_sources = copy(contours)
-            for j in eachindex(contours)
-                contours[j] = remesh(contours[j], params;
-                                      _buf=remesh_buf,
-                                      _arc_buf=arc_buf,
-                                      _vnodes_buf=vnodes_buf,
-                                      _density_sources=density_sources)
-            end
-            _demote_obtuse_corners!(contours)
-        end
-        for iter in 1:max_reconnect_iter
-            idx = build_spatial_index(contours, reconnection_bin_size, domain)
-            close_pairs = find_close_segments(contours, idx, params.δ, domain)
-            isempty(close_pairs) && break
-            n_pairs = length(close_pairs)
-            if n_pairs > prev_n_pairs
-                stall_count += 1
-            else
-                stall_count = 0
-            end
-            if n_pairs < min_n_pairs
-                min_n_pairs = n_pairs
-                no_improve_count = 0
-            else
-                no_improve_count += 1
-            end
-            if stall_count >= 3 || no_improve_count >= 6
-                if reconnected
-                    cleanup_reconnect_artifacts!()
-                    remove_filaments!(contours, params.area_min, params.μ)
-                    idx = build_spatial_index(contours, reconnection_bin_size, domain)
-                    close_pairs = find_close_segments(contours, idx, params.δ, domain)
-                    isempty(close_pairs) && break
-                    remeshed_n_pairs = length(close_pairs)
-                    if remeshed_n_pairs < n_pairs
-                        prev_n_pairs = remeshed_n_pairs
-                        min_n_pairs = min(min_n_pairs, remeshed_n_pairs)
-                        stall_count = 0
-                        no_improve_count = 0
-                        continue
-                    end
-                    n_pairs = remeshed_n_pairs
-                end
-                if n_pairs >= stall_warning_pairs
-                    @warn "surgery!: layer $i reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
-                end
-                break
-            end
-            prev_n_pairs = n_pairs
-            reconnect!(contours, close_pairs, domain)
-            reconnected = true
-            remove_filaments!(contours, params.area_min, params.μ)
-            cleanup_reconnect_artifacts!()
-            remove_filaments!(contours, params.area_min, params.μ)
-            if iter == max_reconnect_iter
-                @warn "surgery!: layer $i reconnection limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
-            end
-        end
-        if reconnected
-            cleanup_reconnect_artifacts!()
-        end
-        remove_filaments!(contours, params.area_min, params.μ)
-        _check_spanning_proximity(contours, params.δ, domain)
+        _surgery_pass!(prob.layers[i], domain, params, remesh_buf, arc_buf, vnodes_buf;
+                       layer_label=" layer $i")
     end
     return prob
 end
