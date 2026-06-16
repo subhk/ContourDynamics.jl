@@ -16,30 +16,31 @@ end
 function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = prob.contours
-    Ld = prob.kernel.Ld
     # Decompose: G_QG_per = G_Euler_per + G_correction, where the signed
-    # correction has coefficients -κ²/(k²(k²+κ²)).
-    # Use Euler periodic energy + QG correction via Fourier sum.
-    euler_cache = _get_ewald_cache(prob.domain, EulerKernel())
+    # correction has coefficients -κ²/(k²(k²+κ²)). The QG cache carries both the
+    # Euler periodic coefficients and the precomputed correction coefficients.
+    cache = _get_ewald_cache(prob.domain, prob.kernel)
     inv4pi = one(T) / (4 * T(π))
-    kappa2 = one(T) / Ld^2
-    area = 4 * prob.domain.Lx * prob.domain.Ly
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
-        pair_E = _energy_contour_pair_euler_periodic(ci, cj, euler_cache, prob.domain; _partial=partial)
-        pair_E += _energy_contour_pair_qg_correction(ci, cj, euler_cache, kappa2, area; _partial=partial)
+        pair_E = _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
+        pair_E += _energy_contour_pair_qg_correction(ci, cj, cache; _partial=partial)
         E += ci.pv * cj.pv * pair_E
     end
     return -inv4pi * E / 2
 end
 
-"""QG-Euler correction for periodic energy: smooth Fourier series with -κ²/(k²(k²+κ²)) coefficients."""
+"""QG-Euler correction for periodic energy: smooth Fourier series with -κ²/(k²(k²+κ²)) coefficients (precomputed in `cache.corr_coeffs`)."""
 function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
-                                             euler_cache::EwaldCache{T},
-                                             kappa2::T, area::T;
+                                             cache::EwaldCache{T};
                                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     nci = nnodes(ci)
     ncj = nnodes(cj)
+    corr_coeffs = cache.corr_coeffs
+    kx = cache.kx
+    ky = cache.ky
+    nkx = length(kx)
+    nky = length(ky)
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
     return @_energy_segment_loop partial _partial nci for i in 1:nci
@@ -64,12 +65,12 @@ function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
                     dx = pi_pt[1] - pj_pt[1]
                     dy = pi_pt[2] - pj_pt[2]
                     G_corr = zero(T)
-                    for kxi in euler_cache.kx
-                        for kyi in euler_cache.ky
-                            k2 = kxi^2 + kyi^2
-                            k2 < eps(T) && continue
-                            coeff = kappa2 / (k2 * (k2 + kappa2) * area)
-                            phase = kxi * dx + kyi * dy
+                    for mi in 1:nkx
+                        kxi = kx[mi]
+                        for ni in 1:nky
+                            coeff = corr_coeffs[mi, ni]
+                            iszero(coeff) && continue
+                            phase = kxi * dx + ky[ni] * dy
                             G_corr -= coeff * cos(phase)
                         end
                     end
