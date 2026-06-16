@@ -242,11 +242,29 @@ function _get_state_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
     return ws
 end
 
-"""Drop the calling task's cached device velocity workspace (frees its buffers)."""
+# Task-local cache for the multi-layer modal velocity workspace. Same rationale
+# and lifetime as `_get_state_workspace`: one workspace per (task, T, device),
+# rebuilt when surgery changes the concatenated node count.
+const _MULTILAYER_WS_TLS_KEY = :contourdynamics_multilayer_velocity_workspace
+
+function _get_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int) where {T}
+    store = task_local_storage()
+    key = (_MULTILAYER_WS_TLS_KEY, T, typeof(dev))
+    ws = get(store, key, nothing)
+    if ws === nothing || (ws::_MultilayerWorkspace).n != total
+        ws = _create_multilayer_workspace(dev, T, total)
+        store[key] = ws
+    end
+    return ws
+end
+
+"""Drop the calling task's cached device velocity workspaces (frees their buffers)."""
 function clear_state_workspace_cache!()
     store = task_local_storage()
     for key in collect(keys(store))
-        key isa Tuple && length(key) == 3 && key[1] === _STATE_WS_TLS_KEY && delete!(store, key)
+        key isa Tuple && length(key) == 3 &&
+            (key[1] === _STATE_WS_TLS_KEY || key[1] === _MULTILAYER_WS_TLS_KEY) &&
+            delete!(store, key)
     end
     return nothing
 end
@@ -332,16 +350,33 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
     length(vel) >= total || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($total)"))
     total == 0 && return vel
 
+    # Reuse a task-local workspace across RK stages instead of allocating 13
+    # device arrays per evaluation. `ws` is `Any` from the cache; the concrete-
+    # typed barrier `_multilayer_velocity_with_ws!` restores typing for the hot launches.
+    ws = _get_multilayer_workspace(dev, T, total)
+    return _multilayer_velocity_with_ws!(vel, ws, states, kernel, domain, dev, ranges, total)
+end
+
+function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
+                                       ws::_MultilayerWorkspace{T},
+                                       states::NTuple{N, <:DeviceContourState},
+                                       kernel::MultiLayerQGKernel{N},
+                                       domain::AbstractDomain, dev::AbstractDevice,
+                                       ranges, total::Int) where {N, T}
     evals = kernel.eigenvalues
     P = kernel.eigenvectors
     P_inv = kernel.eigenvectors_inv
 
-    ax = device_zeros(dev, T, total); ay = device_zeros(dev, T, total)
-    bx = device_zeros(dev, T, total); by = device_zeros(dev, T, total)
-    pv = device_zeros(dev, T, total); ka = device_zeros(dev, T, total); kb = device_zeros(dev, T, total)
-    tx = device_zeros(dev, T, total); ty = device_zeros(dev, T, total)
-    mode_vx = device_zeros(dev, T, total); mode_vy = device_zeros(dev, T, total)
-    vel_x = device_zeros(dev, T, total); vel_y = device_zeros(dev, T, total)
+    ax, ay, bx, by = ws.ax, ws.ay, ws.bx, ws.by
+    pv, ka, kb = ws.pv, ws.ka, ws.kb
+    tx, ty = ws.tx, ws.ty
+    mode_vx, mode_vy = ws.mode_vx, ws.mode_vy
+    vel_x, vel_y = ws.vel_x, ws.vel_y
+
+    # `vel_x`/`vel_y` are accumulated into across modes via `_modal_accumulate_ka!`,
+    # so the reused buffers must start at zero (a fresh `device_zeros` did this
+    # implicitly before). The other buffers are fully overwritten before use.
+    fill!(vel_x, zero(T)); fill!(vel_y, zero(T))
 
     for ℓ in 1:N
         r = ranges[ℓ]
