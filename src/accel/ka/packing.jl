@@ -226,6 +226,24 @@ end
     return dev_kx, dev_ky
 end
 
+# In-place segment packing into a reused workspace's device buffers (avoids the
+# per-evaluation allocation of `_state_segment_data`). The workspace must be
+# sized for `state`'s node count. `pv_scale` rescales the per-segment PV weight
+# (1 for single-layer; the modal weight for a multi-layer mode).
+function _state_segment_data!(ws::_GPUWorkspace{T}, state::DeviceContourState{T},
+                              dev::AbstractDevice, pv_scale::T=one(T)) where {T}
+    N = _device_state_nnodes(state)
+    seg = SegmentData(ws.dev_ax, ws.dev_ay, ws.dev_bx, ws.dev_by,
+                      ws.dev_pv, ws.dev_ka, ws.dev_kb)
+    N == 0 && return seg
+    @_ka_launch dev N _state_segment_data_kernel!(
+        ws.dev_ax, ws.dev_ay, ws.dev_bx, ws.dev_by, ws.dev_pv, ws.dev_ka, ws.dev_kb,
+        state.x, state.y, state.pv, state.wrapx, state.wrapy,
+        state.offsets, state.lengths, state.corners,
+        state.contour_of_node, state.local_index, pv_scale, N)
+    return seg
+end
+
 @inline function _launch_ka_segment_kernel!(kernel_builder,
                                             vel_x, vel_y, target_x, target_y,
                                             seg::SegmentData,
