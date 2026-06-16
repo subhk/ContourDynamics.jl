@@ -89,16 +89,18 @@ end
     _layer_state_ranges(states)
 
 Flat index range of each layer's nodes when layers are concatenated in order.
+Returns an `NTuple{N, UnitRange{Int}}` so the per-step velocity/RK paths can call
+it without heap-allocating a `Vector` (`N` = layer count is small and static).
 """
 function _layer_state_ranges(states::NTuple{N, <:DeviceContourState}) where {N}
-    ranges = Vector{UnitRange{Int}}(undef, N)
-    idx = 1
-    for ℓ in 1:N
-        n = _device_state_nnodes(states[ℓ])
-        ranges[ℓ] = idx:(idx + n - 1)
-        idx += n
+    lens = ntuple(ℓ -> _device_state_nnodes(states[ℓ]), Val(N))
+    return ntuple(Val(N)) do ℓ
+        off = 1
+        @inbounds for k in 1:(ℓ - 1)
+            off += lens[k]
+        end
+        @inbounds off:(off + lens[ℓ] - 1)
     end
-    return ranges
 end
 
 """
