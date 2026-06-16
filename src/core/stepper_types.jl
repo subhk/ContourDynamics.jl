@@ -27,6 +27,7 @@ struct RK4Stepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: Abstract
 end
 
 function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:AbstractFloat}
+    dt > 0 || throw(ArgumentError("RK4Stepper requires dt > 0, got dt = $dt"))
     k1 = device_zeros(dev, SVector{2,T}, n)
     A = typeof(k1)
     RK4Stepper(dt, k1,
@@ -57,6 +58,7 @@ mutable struct LeapfrogStepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}
 end
 
 function LeapfrogStepper(dt::T, n::Int; dev::AbstractDevice=CPU(), ra_coeff::Real=0.05) where {T<:AbstractFloat}
+    dt > 0 || throw(ArgumentError("LeapfrogStepper requires dt > 0, got dt = $dt"))
     # `nodes_prev` stores the filtered previous level; `initialized` records
     # whether the midpoint bootstrap has already supplied that history.
     nodes_prev = device_zeros(dev, SVector{2,T}, n)
