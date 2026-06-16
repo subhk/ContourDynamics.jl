@@ -344,6 +344,34 @@ include("test_beta_plane.jl")
         @test all(rel1[i] ≈ rel0[i] for i in eachindex(rel0))
     end
 
+    @testset "Periodic shift recenters straddling contour" begin
+        # Contour stored straddling the x = L seam with nonzero area. Its raw
+        # area-weighted centroid lands (wrongly) inside the domain, so the naive
+        # `iszero(ref)` fallback never fires and a zero shift leaves it
+        # straddling. The minimum-image reference is just outside the domain
+        # (x ≈ 1), so the correct lattice shift is nonzero.
+        domain = PeriodicDomain(1.0, 1.0)
+        nodes = SVector{2,Float64}[
+            SVector(0.9, 0.0), SVector(-0.9, 0.4), SVector(-0.9, -0.2),
+        ]
+        c = PVContour(nodes, 1.0)
+
+        shift = ContourDynamics.contour_periodic_shift(c, domain)
+        @test shift[1] ≈ -2.0 atol=1e-12
+        @test shift[2] ≈ 0.0 atol=1e-12
+
+        # After shifting, the minimum-image centroid lies inside [-L, L).
+        shifted = [n + shift for n in nodes]
+        p0 = shifted[1]
+        acc = sum(shifted) do p
+            d = p - p0
+            SVector(d[1] - 2 * round(d[1] / 2), d[2] - 2 * round(d[2] / 2))
+        end
+        ref = p0 + acc / length(shifted)
+        @test -1.0 <= ref[1] < 1.0
+        @test -1.0 <= ref[2] < 1.0
+    end
+
     include("test_merger.jl")
 
     include("test_periodic_qg_sqg.jl")
