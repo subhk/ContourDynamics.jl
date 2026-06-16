@@ -214,6 +214,56 @@ function _copy_velocity_output!(vel::AbstractVector{SVector{2,T}}, vel_x, vel_y,
     return vel
 end
 
+# Reused workspace for the device-resident velocity path. Reusing one workspace
+# across RK stages avoids reallocating the 7 segment buffers + 2 velocity
+# buffers every evaluation (4×/RK4 step), and — by passing the workspace to
+# `_ka_apply_velocity!` — keeps the periodic Ewald tables on-device across
+# stages (via `_ensure_device_ewald!`) instead of re-uploading them each call.
+#
+# Held in TASK-LOCAL storage (not a process-global) so concurrent velocity
+# evaluation of independent problems on separate tasks/threads each get their
+# own workspace and cannot race on the shared device buffers; within one task
+# the RK stages reuse it. Returned as `Any` because the device array type is
+# only known once an array backend (e.g. CUDA) is loaded; the function barrier
+# `_state_velocity_with_ws!` restores concrete typing before the hot launches.
+const _STATE_WS_TLS_KEY = :contourdynamics_state_velocity_workspace
+
+function _get_state_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
+    store = task_local_storage()
+    key = (_STATE_WS_TLS_KEY, T, typeof(dev))
+    ws = get(store, key, nothing)
+    # Rebuild when absent or when surgery changed the node count. The velocity
+    # kernels derive their segment count from the buffer length, so the
+    # workspace must be sized exactly N (not merely ≥ N).
+    if ws === nothing || (ws::_GPUWorkspace).n != N
+        ws = _create_gpu_workspace(dev, T, N)
+        store[key] = ws
+    end
+    return ws
+end
+
+"""Drop the calling task's cached device velocity workspace (frees its buffers)."""
+function clear_state_workspace_cache!()
+    store = task_local_storage()
+    for key in collect(keys(store))
+        key isa Tuple && length(key) == 3 && key[1] === _STATE_WS_TLS_KEY && delete!(store, key)
+    end
+    return nothing
+end
+
+# Concrete-typed barrier: `ws` is `Any` from the cache, so resolve it here once
+# (per evaluation) and let the kernel launches specialize on the concrete types.
+function _state_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
+                                  ws::_GPUWorkspace{T},
+                                  state::DeviceContourState{T}, kernel,
+                                  domain::AbstractDomain, dev::AbstractDevice,
+                                  N::Int) where {T}
+    seg = _state_segment_data!(ws, state, dev)
+    _ka_apply_velocity!(ws.dev_vel_x, ws.dev_vel_y, state.x, state.y, seg,
+                        kernel, domain, dev, ws)
+    return _copy_velocity_output!(vel, ws.dev_vel_x, ws.dev_vel_y, dev, N)
+end
+
 function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
                                   state::DeviceContourState{T},
                                   kernel::Union{EulerKernel,QGKernel{T},SQGKernel{T}},
@@ -223,11 +273,8 @@ function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
     N == 0 && return vel
 
-    seg = _state_segment_data(state, dev)
-    vel_x = device_zeros(dev, T, N)
-    vel_y = device_zeros(dev, T, N)
-    _ka_apply_velocity!(vel_x, vel_y, state.x, state.y, seg, kernel, domain, dev)
-    return _copy_velocity_output!(vel, vel_x, vel_y, dev, N)
+    ws = _get_state_workspace(dev, T, N)
+    return _state_velocity_with_ws!(vel, ws, state, kernel, domain, dev, N)
 end
 
 """
@@ -305,8 +352,6 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
 
     for m in 1:N
         lam = evals[m]
-        mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
-                                                 QGKernel(one(T) / sqrt(abs(lam)))
         # Repack segments with this mode's per-layer PV weights. Geometry
         # (a, b, curvatures) is identical across modes; only seg_pv changes.
         for ℓ in 1:N
@@ -323,7 +368,14 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
         end
         seg = SegmentData(ax, ay, bx, by, pv, ka, kb)
         # Velocity kernels overwrite mode_vx/mode_vy, so they are reused across modes.
-        _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg, mode_kernel, domain, dev)
+        # Branch to a concrete kernel type so the launch is statically dispatched
+        # (no Union-typed `mode_kernel` per mode).
+        if abs(lam) < eps(T) * 100
+            _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg, EulerKernel(), domain, dev)
+        else
+            _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg,
+                                QGKernel(one(T) / sqrt(abs(lam))), domain, dev)
+        end
 
         for ℓ in 1:N
             w = P[ℓ, m]
