@@ -1001,68 +1001,45 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, δ,
     end
 end
 
-"""
-    surgery!(prob::ContourProblem, params::SurgeryParams)
+# Remesh every contour in `contours` (mutating the vector in place) using a
+# single shared `density_sources` snapshot, then demote obtuse corners. Taking
+# `contours` and the scratch buffers as explicit arguments — rather than
+# capturing them in a closure that reassigns `density_sources` — keeps this
+# allocation-free and type-stable (no `Core.Box`).
+function _remesh_all!(contours::Vector{PVContour{T}}, params::SurgeryParams,
+                      remesh_buf::Vector{SVector{2,T}}, arc_buf::Vector{T},
+                      vnodes_buf::Vector{SVector{2,T}}) where {T}
+    density_sources = copy(contours)
+    for i in eachindex(contours)
+        contours[i] = remesh(contours[i], params;
+                             _buf=remesh_buf, _arc_buf=arc_buf,
+                             _vnodes_buf=vnodes_buf, _density_sources=density_sources)
+    end
+    _demote_obtuse_corners!(contours)
+    return contours
+end
 
-Dritschel-style contour-surgery pass:
-pre-clean unresolved debris → update corner labels → remesh → reconnect close
-compatible contour parts until exhausted → post-remesh → remove unresolved
-filaments.
-
-This implements the standard topological surgery loop from Dritschel's contour
-surgery algorithm (Dritschel 1988, Table III): identify admissible close contour
-parts enclosing the same interior vorticity, split or merge them, repeat until
-exhausted, and redistribute nodes afterward. Reconnection creates labelled
-corner nodes that remain fixed during remeshing until they become obtuse.
-Remeshing uses the Dritschel nonlocal node-density rule with cubic interpolation
-arcs; the velocity paths use the same signed-curvature geometry when evaluating
-curved segments.
-Mutates `prob.contours` in place.
-"""
-function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, params::SurgeryParams) where {T}
-    contours = prob.contours
-    domain = prob.domain
-
-    # Drop already-subgrid closed contours before remeshing so tiny filaments
-    # do not trigger degenerate redistribution warnings.
+# One full Dritschel surgery pass over a single vector of contours: pre-clean →
+# corner labelling → remesh → reconnect close compatible parts until exhausted
+# (with stall detection) → post-remesh → filament removal → spanning-proximity
+# check. Shared by single-layer `surgery!` and each layer of the multi-layer
+# `surgery!`; `layer_label` (e.g. " layer 2") is interpolated into warnings.
+function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
+                        params::SurgeryParams, remesh_buf::Vector{SVector{2,T}},
+                        arc_buf::Vector{T}, vnodes_buf::Vector{SVector{2,T}};
+                        layer_label::AbstractString="") where {T}
     remove_filaments!(contours, params.area_min, params.μ)
     _demote_obtuse_corners!(contours)
     _promote_high_curvature_corners!(contours, params.δ)
 
-    # 1. Remesh all contours. This corresponds to Dritschel's node
-    # redistribution step: fixed surgery corners divide the contour into spans,
-    # while non-corner contours keep one reference node fixed.
-    # Pre-allocate workspace buffers to avoid per-contour allocations in remesh.
-    _remesh_buf = SVector{2, T}[]
-    _arc_buf = T[]
-    _vnodes_buf = SVector{2, T}[]
-    density_sources = copy(contours)
-    for i in eachindex(contours)
-        contours[i] = remesh(contours[i], params;
-                             _buf=_remesh_buf,
-                             _arc_buf=_arc_buf,
-                             _vnodes_buf=_vnodes_buf,
-                             _density_sources=density_sources)
-    end
-    _demote_obtuse_corners!(contours)
+    # 1. Remesh all contours (Dritschel node redistribution).
+    _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
 
-    _cleanup_reconnect_artifacts!() = begin
-        density_sources = copy(contours)
-        for i in eachindex(contours)
-            contours[i] = remesh(contours[i], params;
-                                 _buf=_remesh_buf,
-                                 _arc_buf=_arc_buf,
-                                 _vnodes_buf=_vnodes_buf,
-                                 _density_sources=density_sources)
-        end
-        _demote_obtuse_corners!(contours)
-    end
     reconnection_bin_size = max(T(params.δ), T(params.μ))
 
-    # 2. Reconnection — iterate until no more close pairs remain.
-    #    Stall detection: stop early if close-pair count is not making progress.
-    #    We track both consecutive increases and failure to improve the minimum,
-    #    catching both monotone growth and oscillation (e.g. 10→12→10→12).
+    # 2. Reconnection — iterate until no more close pairs remain. Stall detection
+    #    stops early if the close-pair count is not making progress, catching
+    #    both monotone growth and oscillation (e.g. 10→12→10→12).
     reconnected = false
     max_reconnect_iter = 100
     stall_warning_pairs = 100
@@ -1088,10 +1065,10 @@ function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, p
         end
         if stall_count >= 3 || no_improve_count >= 6
             # Reconnection creates near-duplicate stitch nodes by construction.
-            # Before warning about a stall, run the cleanup remesh that surgery!
-            # would perform after a successful reconnect and re-check proximity.
+            # Before warning about a stall, run the cleanup remesh that follows a
+            # successful reconnect and re-check proximity.
             if reconnected
-                _cleanup_reconnect_artifacts!()
+                _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
                 remove_filaments!(contours, params.area_min, params.μ)
                 idx = build_spatial_index(contours, reconnection_bin_size, domain)
                 close_pairs = find_close_segments(contours, idx, params.δ, domain)
@@ -1107,7 +1084,7 @@ function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, p
                 n_pairs = remeshed_n_pairs
             end
             if n_pairs >= stall_warning_pairs
-                @warn "surgery!: reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
+                @warn "surgery!:$(layer_label) reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
             end
             break
         end
@@ -1115,24 +1092,50 @@ function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, p
         reconnect!(contours, close_pairs, domain)
         reconnected = true
         remove_filaments!(contours, params.area_min, params.μ)
-        _cleanup_reconnect_artifacts!()
+        _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
         remove_filaments!(contours, params.area_min, params.μ)
         if iter == max_reconnect_iter
-            @warn "surgery!: reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
+            @warn "surgery!:$(layer_label) reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
         end
     end
 
-    # 3. Re-remesh after reconnection to clean up short/long segments
-    #    created at stitch junctions during merge or split.
+    # 3. Re-remesh after reconnection to clean up short/long stitch segments.
     if reconnected
-        _cleanup_reconnect_artifacts!()
+        _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
     end
 
-    # 4. Remove filaments
+    # 4. Remove filaments.
     remove_filaments!(contours, params.area_min, params.μ)
 
-    # 5. Warn if closed contours are too close to spanning contours
+    # 5. Warn if closed contours are too close to spanning contours.
     _check_spanning_proximity(contours, params.δ, domain)
+    return contours
+end
 
+"""
+    surgery!(prob::ContourProblem, params::SurgeryParams)
+
+Dritschel-style contour-surgery pass:
+pre-clean unresolved debris → update corner labels → remesh → reconnect close
+compatible contour parts until exhausted → post-remesh → remove unresolved
+filaments.
+
+This implements the standard topological surgery loop from Dritschel's contour
+surgery algorithm (Dritschel 1988, Table III): identify admissible close contour
+parts enclosing the same interior vorticity, split or merge them, repeat until
+exhausted, and redistribute nodes afterward. Reconnection creates labelled
+corner nodes that remain fixed during remeshing until they become obtuse.
+Remeshing uses the Dritschel nonlocal node-density rule with cubic interpolation
+arcs; the velocity paths use the same signed-curvature geometry when evaluating
+curved segments.
+Mutates `prob.contours` in place.
+"""
+function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, params::SurgeryParams) where {T}
+    # Pre-allocate workspace buffers once to avoid per-contour allocations in
+    # remesh, then run the shared Dritschel surgery pass over `prob.contours`.
+    remesh_buf = SVector{2, T}[]
+    arc_buf = T[]
+    vnodes_buf = SVector{2, T}[]
+    _surgery_pass!(prob.contours, prob.domain, params, remesh_buf, arc_buf, vnodes_buf)
     return prob
 end
