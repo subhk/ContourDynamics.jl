@@ -145,9 +145,21 @@ by the JLD2 extension.
 """
 function load_simulation end
 
+"""
+    load_problem(filename, step; dev=CPU())
+
+Reconstruct a runnable [`ContourProblem`](@ref) from a JLD2 snapshot, using the
+kernel/domain metadata saved by [`save_snapshot`](@ref). Supported for
+single-layer `EulerKernel`, `QGKernel`, and `SQGKernel`. Stepper and surgery
+state are not persisted, so the returned object is a `ContourProblem` (not a
+[`Problem`](@ref)); recreate the stepper/`SurgeryParams` to continue a run.
+Implemented by the JLD2 extension.
+"""
+function load_problem end
+
 export flatten_nodes, unflatten_nodes!, to_ode_problem, record_evolution
 export recorded_diagnostics
-export save_snapshot, load_snapshot, jld2_recorder, load_simulation
+export save_snapshot, load_snapshot, jld2_recorder, load_simulation, load_problem
 
 # ── Precompile workload ─────────────────────────────────────────────────
 # Drives the hot paths — velocity, timestep, surgery, diagnostics — for
