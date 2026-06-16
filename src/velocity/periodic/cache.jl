@@ -11,6 +11,11 @@ struct EwaldCache{T<:AbstractFloat}
     ky::Vector{T}
     fourier_coeffs::Matrix{T}
     n_images::Int
+    # QG-only: precomputed correction coefficients κ²/(k²(k²+κ²)A) aligned to
+    # `kx`/`ky`, so the periodic QG velocity/energy correction reads them instead
+    # of recomputing a division per wavenumber per quadrature point. Empty
+    # (0×0) for the Euler and SQG caches, which do not use a correction series.
+    corr_coeffs::Matrix{T}
 end
 
 # Shared Ewald setup: splitting parameter, Fourier wavenumbers, and domain area.
@@ -42,7 +47,7 @@ function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
             end
         end
     end
-    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
+    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
 end
 
 """
@@ -69,30 +74,38 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
             end
         end
     end
-    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
+    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
 end
 
 """
     build_ewald_cache(domain::PeriodicDomain, kernel::QGKernel; n_fourier=8, n_images=2)
 
-Ewald cache for QG kernel in periodic domain.
+Ewald cache for the QG kernel in a periodic domain.
+
+The periodic QG velocity/energy decompose as `G_QG = G_Euler - G_correction`, so
+this cache carries **two** coefficient tables: `fourier_coeffs` are the periodic
+Euler coefficients (identical to the Euler cache, for the `G_Euler` part), and
+`corr_coeffs` are the QG correction coefficients `κ²/(k²(k²+κ²)A)` with `κ=1/Ld`.
+Precomputing the correction here lets the velocity/energy hot loops read it
+instead of recomputing a division per wavenumber per quadrature point.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
-    Ld = kernel.Ld
+    kappa2 = one(T) / kernel.Ld^2
     alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
+    corr_coeffs = zeros(T, nk, nk)
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
             if k2 > eps(T)
-                fourier_coeffs[mi, ni] = exp(-k2 / (4 * alpha^2)) /
-                    ((k2 + one(T) / Ld^2) * area)
+                fourier_coeffs[mi, ni] = exp(-k2 / (4 * alpha^2)) / (k2 * area)
+                corr_coeffs[mi, ni] = kappa2 / (k2 * (k2 + kappa2) * area)
             end
         end
     end
-    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images)
+    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images, corr_coeffs)
 end
 
 # Cache storage — keyed by (Lx, Ly, kernel_type, Ld) tuples with snapped values.
@@ -182,7 +195,7 @@ _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T<:Ab
 # Returns `nothing` for unbounded domains (no cache needed).
 _prefetch_ewald(::UnboundedDomain, ::AbstractKernel) = nothing
 _prefetch_ewald(domain::PeriodicDomain, ::EulerKernel) = _get_ewald_cache(domain, EulerKernel())
-_prefetch_ewald(domain::PeriodicDomain, kernel::QGKernel) = _get_ewald_cache(domain, EulerKernel())
+_prefetch_ewald(domain::PeriodicDomain, kernel::QGKernel) = _get_ewald_cache(domain, kernel)
 _prefetch_ewald(domain::PeriodicDomain, kernel::SQGKernel) = _get_ewald_cache(domain, kernel)
 
 """
@@ -208,11 +221,11 @@ end
 """
     setup_ewald_cache!(domain, kernel::QGKernel; n_fourier=8, n_images=2)
 
-Pre-build Ewald caches for QG velocity computation.  The periodic QG velocity
-decomposes as `G_QG_per = G_Euler_per - G_correction`, so the velocity path
-uses an Euler Ewald cache internally.  This method builds both the QG-specific
-cache and the Euler cache that the velocity path actually reads, ensuring that
-custom `n_fourier`/`n_images` parameters take effect.
+Pre-build the Ewald cache for QG velocity computation.  The periodic QG cache
+carries both the Euler periodic coefficients and the QG correction coefficients
+(see [`build_ewald_cache`](@ref)), so the velocity path reads everything it needs
+from this single cache.  An Euler-keyed cache is also stored so pure-Euler
+evaluations on the same domain share the warmed `n_fourier`/`n_images` setup.
 """
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                             n_fourier::Int=8, n_images::Int=2) where {T<:Union{Float64, Float32}}
