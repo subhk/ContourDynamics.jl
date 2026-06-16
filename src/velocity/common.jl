@@ -358,7 +358,6 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
     evals = kernel.eigenvalues
     scratch = prob.velocity_scratch
     P, P_inv = _prepare_modal_matrices!(scratch, kernel)
-    ewald = _prefetch_ewald(domain, EulerKernel())
     source_curvatures = _prepare_layer_curvature_buffers!(
         scratch.layer_curvatures, prob.layers)
 
@@ -367,27 +366,17 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
 
     for mode in 1:N
         lam = evals[mode]
-        mode_kernel = abs(lam) < eps(T) * 100 ? EulerKernel() :
-                      QGKernel(one(T) / sqrt(abs(lam)))
-
-        # Accumulate the modal velocity at x from every source layer, weighted
-        # by the inverse eigenvector matrix.
-        v_mode = zero(SVector{2,T})
-        for source_layer in 1:N
-            source_weight = P_inv[mode, source_layer]
-            abs(source_weight) < eps(T) && continue
-            for (sci, sc) in pairs(prob.layers[source_layer])
-                nsc = nnodes(sc)
-                nsc < 2 && continue
-                κ = source_curvatures[source_layer][sci]
-                for sj in 1:nsc
-                    a = sc.nodes[sj]
-                    b = next_node(sc, sj)
-                    v_mode = v_mode + source_weight * sc.pv *
-                        _segment_velocity_with_geometry(
-                            mode_kernel, domain, x, a, b, κ[sj], κ[mod1(sj + 1, nsc)], ewald)
-                end
-            end
+        # Resolve a concrete mode kernel via a function barrier so the inner
+        # segment_velocity is fully specialised (no Union-typed dynamic
+        # dispatch per segment). Each mode fetches its own cache: QG modes need
+        # their Ld-specific correction coefficients, the Euler mode does not.
+        v_mode = if abs(lam) < eps(T) * 100
+            _accumulate_mode_node_velocity(EulerKernel(), domain, prob.layers,
+                source_curvatures, _prefetch_ewald(domain, EulerKernel()), P_inv, mode, x)
+        else
+            mode_kernel = QGKernel(one(T) / sqrt(abs(lam)))
+            _accumulate_mode_node_velocity(mode_kernel, domain, prob.layers,
+                source_curvatures, _prefetch_ewald(domain, mode_kernel), P_inv, mode, x)
         end
 
         # Project the completed modal velocity back onto each physical target
@@ -503,9 +492,6 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
 
     evals = kernel.eigenvalues
 
-    # Pre-fetch Ewald cache once (all modes use the Euler cache for periodic domains)
-    ewald = _prefetch_ewald(domain, EulerKernel())
-
     scratch = prob.velocity_scratch
     P, P_inv = _prepare_modal_matrices!(scratch, kernel)
     max_nodes = _max_layer_node_count(prob)
@@ -519,15 +505,17 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
 
         # Zero eigenvalues represent barotropic Euler modes; nonzero
         # eigenvalues become QG modes with deformation radius 1/sqrt(abs(lambda)).
+        # Each mode fetches its own cache so the QG modes read their Ld-specific
+        # correction coefficients (the Euler cache has none).
         if abs(lam) < eps(T) * 100
             _multilayer_mode_velocity!(vel, prob, mode, EulerKernel(),
                                        target_nodes, mode_vel, source_curvatures,
-                                       ewald, P, P_inv)
+                                       _prefetch_ewald(domain, EulerKernel()), P, P_inv)
         else
-            Ld_mode = one(T) / sqrt(abs(lam))
-            _multilayer_mode_velocity!(vel, prob, mode, QGKernel(Ld_mode),
+            mode_kernel = QGKernel(one(T) / sqrt(abs(lam)))
+            _multilayer_mode_velocity!(vel, prob, mode, mode_kernel,
                                        target_nodes, mode_vel, source_curvatures,
-                                       ewald, P, P_inv)
+                                       _prefetch_ewald(domain, mode_kernel), P, P_inv)
         end
     end
 
