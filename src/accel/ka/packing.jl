@@ -197,6 +197,30 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
     )
 end
 
+# Reused workspace for the device-resident MULTI-LAYER modal velocity path.
+# Mirrors `_GPUWorkspace`/`_get_state_workspace` but is sized to the concatenated
+# node count `total` and carries the extra per-mode velocity scratch
+# (`mode_vx`/`mode_vy`). Reusing it across RK stages avoids reallocating 13 device
+# arrays every modal-velocity evaluation (≥4×/RK4 step). Held in TASK-LOCAL
+# storage by `_get_multilayer_workspace`, like the single-layer workspace.
+mutable struct _MultilayerWorkspace{T, DA<:AbstractVector{T}}
+    ax::DA; ay::DA; bx::DA; by::DA; pv::DA; ka::DA; kb::DA  # 7 segment buffers
+    tx::DA; ty::DA                                          # concatenated targets
+    mode_vx::DA; mode_vy::DA                                # per-mode velocity scratch
+    vel_x::DA; vel_y::DA                                    # accumulated flat output
+    n::Int
+end
+
+function _create_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int) where {T}
+    # Probe allocation captures the concrete device array type so every field is
+    # concrete and type-stable (Vector{T} on CPU, CuVector{T} on GPU).
+    da = device_zeros(dev, T, total)
+    DA = typeof(da)
+    mk() = device_zeros(dev, T, total)
+    _MultilayerWorkspace{T, DA}(da, mk(), mk(), mk(), mk(), mk(), mk(),
+                                mk(), mk(), mk(), mk(), mk(), mk(), total)
+end
+
 function _ensure_device_ewald!(ws::_GPUWorkspace{T}, cache::EwaldCache{T},
                                dev::AbstractDevice) where {T}
     # Fourier/Ewald data depends only on the domain/kernel cache. Reuse the
