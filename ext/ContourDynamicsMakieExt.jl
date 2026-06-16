@@ -156,4 +156,8 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
     return fig
 end
 
+# Forwarder so the high-level `Problem` wrapper can be recorded directly.
+ContourDynamics.record_evolution(prob::ContourDynamics.Problem, stepper, params; kwargs...) =
+    ContourDynamics.record_evolution(prob.contour_problem, stepper, params; kwargs...)
+
 end # module
