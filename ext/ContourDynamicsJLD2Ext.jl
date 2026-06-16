@@ -183,6 +183,11 @@ function ContourDynamics.save_snapshot(filename::String,
     return nothing
 end
 
+# Forwarder so the high-level `Problem` wrapper works directly with snapshots.
+ContourDynamics.save_snapshot(filename::String, prob::ContourDynamics.Problem,
+                              step::Int; kwargs...) =
+    ContourDynamics.save_snapshot(filename, prob.contour_problem, step; kwargs...)
+
 """
     load_snapshot(filename, step) -> NamedTuple
 
@@ -300,6 +305,86 @@ function ContourDynamics.load_simulation(filename::String)
         end
     end
     return snapshots
+end
+
+# Reconstruct a domain from saved metadata.
+function _load_domain(mg)
+    dtype = mg["domain_type"]::String
+    if dtype == "UnboundedDomain"
+        return UnboundedDomain()
+    elseif dtype == "PeriodicDomain"
+        return PeriodicDomain(mg["domain_Lx"], mg["domain_Ly"])
+    else
+        error("Unknown domain_type \"$dtype\" in snapshot metadata")
+    end
+end
+
+# Reconstruct a single-layer kernel from saved metadata. The saved scalar
+# parameters already carry the original float type, so the rebuilt kernel
+# matches the loaded contours' coordinate type.
+function _load_single_layer_kernel(mg)
+    ktype = mg["kernel_type"]::String
+    if ktype == "EulerKernel"
+        return EulerKernel()
+    elseif ktype == "QGKernel"
+        return QGKernel(mg["kernel_Ld"])
+    elseif ktype == "SQGKernel"
+        return SQGKernel(mg["kernel_delta"])
+    elseif ktype == "BetaPlaneQGKernel"
+        throw(ArgumentError(
+            "load_problem cannot rebuild a BetaPlaneQGKernel: its reference contours " *
+            "are not persisted (only their count). Use load_snapshot to read the state " *
+            "and reconstruct the kernel/problem manually."))
+    elseif ktype == "MultiLayerQGKernel"
+        throw(ArgumentError(
+            "load_problem rebuilds single-layer problems only. This snapshot is multi-layer; " *
+            "use load_snapshot to read the layers and rebuild the MultiLayerContourProblem manually."))
+    else
+        error("Unknown kernel_type \"$ktype\" in snapshot metadata")
+    end
+end
+
+"""
+    load_problem(filename, step; dev=CPU()) -> ContourProblem
+
+Reconstruct a runnable single-layer [`ContourProblem`](@ref) from the snapshot at
+`step`, using the kernel/domain metadata written by [`save_snapshot`](@ref).
+
+Supported kernels: `EulerKernel`, `QGKernel`, `SQGKernel`. `BetaPlaneQGKernel`
+(reference contours not persisted) and `MultiLayerQGKernel` (multi-layer) throw
+an informative `ArgumentError` — read those with [`load_snapshot`](@ref) and
+rebuild the problem manually. Stepper and surgery state are not persisted, so the
+caller recreates the time stepper and [`SurgeryParams`](@ref) to continue a run.
+"""
+function ContourDynamics.load_problem(filename::String, step::Int; dev=ContourDynamics.CPU())
+    group = "step_" * lpad(step, 6, '0')
+    jldopen(filename, "r") do f
+        haskey(f, group) || error("Step $step not found in $filename")
+        g = f[group]
+        haskey(g, "nlayers") && throw(ArgumentError(
+            "load_problem rebuilds single-layer problems only; this snapshot is multi-layer. " *
+            "Use load_snapshot to read the layers and rebuild the MultiLayerContourProblem manually."))
+        haskey(g, "metadata") || error(
+            "Snapshot at step $step has no metadata group; cannot rebuild the problem")
+        mg = g["metadata"]
+        domain = _load_domain(mg)
+        kernel = _load_single_layer_kernel(mg)
+        nc = g["ncontours"]::Int
+        # Use the kernel/domain float type as the fallback so a zero-contour
+        # snapshot rebuilds contours matching the kernel type (avoids a spurious
+        # float-type mismatch error for empty non-Float64 problems).
+        contours = _load_contours(g, nc; fallback_T=_metadata_float_type(mg))
+        return ContourProblem(kernel, domain, contours; dev=dev)
+    end
+end
+
+# Float type recorded in the metadata (matches the original contour coordinate
+# type, since construction enforced kernel/domain/contour type agreement).
+function _metadata_float_type(mg)
+    haskey(mg, "kernel_Ld") && return typeof(mg["kernel_Ld"])
+    haskey(mg, "kernel_delta") && return typeof(mg["kernel_delta"])
+    haskey(mg, "domain_Lx") && return typeof(mg["domain_Lx"])
+    return Float64
 end
 
 """
