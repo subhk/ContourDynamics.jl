@@ -129,7 +129,9 @@ prob = MultiLayerContourProblem(
 )
 
 stepper = RK4Stepper(0.01, total_nodes(prob))
-params = SurgeryParams(0.01, 0.005, 0.2, 1e-6, 201)
+# SurgeryParams(δ, μ, Δ_max, area_min, n_surgery): keep δ ≤ μ/4, and
+# n_surgery < nsteps so surgery actually runs during the integration.
+params = SurgeryParams(0.001, 0.005, 0.2, 1e-6, 10)
 evolve!(prob, stepper, params; nsteps=200)
 ```
 
