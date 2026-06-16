@@ -139,8 +139,7 @@ function _pack_energy_segments(state::DeviceContourState{T}, dev::AbstractDevice
     if ncontours > 0
         @_ka_launch dev ncontours _state_energy_valid_kernel!(
             valid, state.lengths, state.wrapx, state.wrapy, ncontours)
-        @_ka_launch dev ncontours _prefix_u8_kernel!(
-            valid_slots, valid_count, valid, ncontours)
+        _device_compact_scan!(valid_slots, valid_count, valid, ncontours, dev)
     end
     nvalid = ncontours == 0 ? 0 : to_cpu(valid_count)[1]
 
