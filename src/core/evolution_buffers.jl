@@ -95,57 +95,51 @@ end
         n = lengths[ci]
         if iszero(wrapx[ci]) && iszero(wrapy[ci]) && n > 0
             off = offsets[ci]
+            Lx2 = T(2) * Lx
+            Ly2 = T(2) * Ly
 
+            # Area-weighted centroid on minimum-image-unwrapped coordinates
+            # (anchored at the first node), matching the CPU
+            # `_periodic_reference_point`. Unwrapping makes this robust to
+            # contours stored straddling a periodic seam; for a contiguous
+            # contour the unwrap is the identity.
+            p0x = x[off]
+            p0y = y[off]
             area2 = zero(T)
             cx_num = zero(T)
             cy_num = zero(T)
-            if n >= 3
-                for li in 1:n
-                    g = off + li - 1
-                    ng = li < n ? g + 1 : off
-                    cross = x[g] * y[ng] - x[ng] * y[g]
-                    area2 += cross
-                    cx_num += (x[g] + x[ng]) * cross
-                    cy_num += (y[g] + y[ng]) * cross
-                end
+            sx = zero(T)
+            sy = zero(T)
+            for li in 1:n
+                g = off + li - 1
+                ng = li < n ? g + 1 : off
+                dxi = x[g] - p0x
+                dyi = y[g] - p0y
+                uix = p0x + dxi - Lx2 * round(dxi / Lx2)
+                uiy = p0y + dyi - Ly2 * round(dyi / Ly2)
+                dxj = x[ng] - p0x
+                dyj = y[ng] - p0y
+                ujx = p0x + dxj - Lx2 * round(dxj / Lx2)
+                ujy = p0y + dyj - Ly2 * round(dyj / Ly2)
+                cross = uix * ujy - ujx * uiy
+                area2 += cross
+                cx_num += (uix + ujx) * cross
+                cy_num += (uiy + ujy) * cross
+                sx += uix
+                sy += uiy
             end
 
             refx = zero(T)
             refy = zero(T)
-            if abs(area2) >= T(2) * eps(T)
+            if n < 3 || abs(area2) <= T(2) * eps(T)
+                refx = sx / T(n)
+                refy = sy / T(n)
+            else
                 inv3A2 = one(T) / (T(3) * area2)
                 refx = cx_num * inv3A2
                 refy = cy_num * inv3A2
-            else
-                for li in 1:n
-                    g = off + li - 1
-                    refx += x[g]
-                    refy += y[g]
-                end
-                refx /= T(n)
-                refy /= T(n)
             end
 
-            if iszero(refx) && iszero(refy)
-                p0x = x[off]
-                p0y = y[off]
-                Lx2 = T(2) * Lx
-                Ly2 = T(2) * Ly
-                sumdx = zero(T)
-                sumdy = zero(T)
-                for li in 2:n
-                    g = off + li - 1
-                    dx = x[g] - p0x
-                    dy = y[g] - p0y
-                    sumdx += dx - Lx2 * round(dx / Lx2)
-                    sumdy += dy - Ly2 * round(dy / Ly2)
-                end
-                refx = p0x + sumdx / T(n)
-                refy = p0y + sumdy / T(n)
-            end
-
-            Lx2 = T(2) * Lx
-            Ly2 = T(2) * Ly
             wrapped_x = refx - Lx2 * floor((refx + Lx) / Lx2)
             wrapped_y = refy - Ly2 * floor((refy + Ly) / Ly2)
             shiftx[ci] = wrapped_x - refx
