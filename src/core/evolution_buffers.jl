@@ -472,7 +472,7 @@ end
 # Multi-layer twin of _rk4_state_stage! — keep the two in lockstep.
 @inline function _ml_rk4_stage!(k, states::NTuple{N, <:DeviceContourState}, kernel, domain,
                                 nodes_orig, increment, scale::T,
-                                ranges::Vector{UnitRange{Int}},
+                                ranges::NTuple{N, UnitRange{Int}},
                                 dev::AbstractDevice) where {N, T}
     for ℓ in 1:N
         r = ranges[ℓ]
