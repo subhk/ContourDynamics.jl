@@ -130,4 +130,8 @@ function ContourDynamics.recorded_diagnostics(prob::MultiLayerContourProblem{N,K
             angular_momentum=angmom_rec, clock=clock, callback=callback)
 end
 
+# Forwarder so the high-level `Problem` wrapper can be recorded directly.
+ContourDynamics.recorded_diagnostics(prob::ContourDynamics.Problem; kwargs...) =
+    ContourDynamics.recorded_diagnostics(prob.contour_problem; kwargs...)
+
 end # module
