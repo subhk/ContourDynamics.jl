@@ -141,6 +141,24 @@ using LinearAlgebra: norm
         @test alloc <= 32
     end
 
+    @testset "Device-resident multilayer velocity reuses workspace" begin
+        # The GPU-tagged modal velocity kernel is device-generic, so exercise it on
+        # a CPU device. Before task-local workspace caching it allocated 13 device
+        # arrays + a ranges Vector (~23.5 KB) every evaluation; it must now stay
+        # flat across RK stages (residual is KA CPU-backend launch overhead).
+        F = 0.5
+        coupling = SMatrix{2,2,Float64}(-F, F, F, -F)
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), coupling)
+        dev = ContourDynamics.CPU()
+        states = (ContourDynamics.DeviceContourState([circular_patch(1.0, 64, 1.0)], dev),
+                  ContourDynamics.DeviceContourState([circular_patch(1.2, 64, -1.0; cx=0.5)], dev))
+        vel = zeros(SVector{2,Float64}, 128)
+        f() = ContourDynamics._ka_multilayer_velocity_from_states!(vel, states, kernel,
+                                                                   UnboundedDomain(), dev)
+        alloc = allocation_bytes(f)
+        @test alloc <= 12_288
+    end
+
     @testset "Single-point velocity is allocation-light after warm-up" begin
         c = circular_patch(0.5, 32, 2π)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
