@@ -85,6 +85,34 @@ function _make_rhs(prob::ContourProblem{K,D,T}) where {K,D,T}
     return rhs!
 end
 
+# Warn (once) if the integrator uses adaptive stepping. The mutation-based RHS is
+# unsafe with step rejection: a rejected trial step's mutations to prob.contours
+# survive into the next attempt. Checked at solver initialization so the warning
+# fires even when no surgery callback is attached.
+function _warn_if_adaptive(integrator)
+    opts = integrator.opts
+    if hasfield(typeof(opts), :adaptive) && opts.adaptive
+        @warn "to_ode_problem: adaptive solver detected — unsafe with the mutation-based RHS. Use adaptive=false or a fixed-step solver." maxlog=1
+    end
+    return nothing
+end
+
+# Callback `initialize` hook: warn on adaptive stepping, then restore the
+# `u_modified!(integrator, false)` that the default initializer performs. A
+# custom `initialize` replaces that default, and omitting the reset leaves the
+# integrator's modified flag set at t0 — forcing a spurious save of a duplicate
+# initial point into the solution.
+_guard_initialize(c, u, t, integrator) =
+    (_warn_if_adaptive(integrator); u_modified!(integrator, false))
+
+# A callback that never triggers an effect; it exists only to run the
+# adaptive-solver guard at initialization for the no-surgery code path.
+_adaptive_guard_callback() = DiscreteCallback(
+    (u, t, integrator) -> false,
+    integrator -> nothing;
+    initialize = _guard_initialize,
+    save_positions = (false, false))
+
 """
     to_ode_problem(prob::ContourProblem, tspan; surgery_params=nothing, surgery_dt=nothing)
 
@@ -126,7 +154,9 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     rhs! = _make_rhs(prob)
 
     if surgery_params === nothing
-        return ODEProblem(rhs!, u0, tspan, prob)
+        # Embed the adaptive-solver guard so `solve(ode_prob, Tsit5())` still
+        # warns even though no surgery callback is supplied.
+        return ODEProblem(rhs!, u0, tspan, prob; callback=_adaptive_guard_callback())
     end
 
     # Determine surgery time interval
@@ -145,12 +175,7 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         t_f = float(t)
         return t_f >= next_surgery_time[] - eps(typeof(t_f)) * abs(next_surgery_time[])
     end
-    _adaptive_warned = Ref(false)
     function affect!(integrator)
-        if !_adaptive_warned[] && hasfield(typeof(integrator.opts), :adaptive) && integrator.opts.adaptive
-            @warn "to_ode_problem: adaptive solver detected — this is unsafe with the mutation-based RHS. Use adaptive=false or a fixed-step solver." maxlog=1
-            _adaptive_warned[] = true
-        end
         ContourDynamics.unflatten_nodes!(integrator.p, integrator.u)
         surgery!(integrator.p, surgery_params)
         new_u = ContourDynamics.flatten_nodes(integrator.p)
@@ -164,7 +189,10 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
             next_surgery_time[] += dt_surgery
         end
     end
-    cb = DiscreteCallback(condition, affect!)
+    # Guard adaptivity at initialization (fires regardless of whether/when the
+    # surgery condition triggers); `_guard_initialize` also preserves the
+    # default `u_modified!(false)` so the initial point is not double-saved.
+    cb = DiscreteCallback(condition, affect!; initialize = _guard_initialize)
 
     return (ode_prob=ODEProblem(rhs!, u0, tspan, prob), callback=cb)
 end
@@ -173,6 +201,10 @@ function ContourDynamics.to_ode_problem(::ContourProblem{<:Any,<:Any,<:Any,GPU},
                                          args...; kwargs...)
     throw(ArgumentError(_GPU_ODE_MSG))
 end
+
+# Forwarder so the high-level `Problem` wrapper can be passed directly.
+ContourDynamics.to_ode_problem(prob::ContourDynamics.Problem, tspan; kwargs...) =
+    ContourDynamics.to_ode_problem(prob.contour_problem, tspan; kwargs...)
 
 # Informative errors for unsupported multi-layer problems
 const _MULTILAYER_MSG = "MultiLayerContourProblem is not yet supported by the OrdinaryDiffEq extension. Use evolve!() with the built-in time steppers instead."
