@@ -62,6 +62,72 @@ end
 @inline _cross2(a::SVector{2,T}, b::SVector{2,T}) where {T} = a[1] * b[2] - a[2] * b[1]
 @inline _norm2(a::SVector{2,T}) where {T} = sqrt(a[1]^2 + a[2]^2)
 
+# Smallest-magnitude real root of a t² + b t + c = 0, or `nothing` when there is
+# no usable root. Uses the numerically stable form (compute the large root via
+# the standard formula, the small one via c/q) so the near-zero root we want is
+# not lost to cancellation when c is small.
+@inline function _smallest_quadratic_root(a::T, b::T, c::T) where {T}
+    if abs(a) <= eps(T)
+        abs(b) <= eps(T) && return nothing
+        return -c / b
+    end
+    disc = b * b - 4 * a * c
+    disc < 0 && return nothing
+    sd = sqrt(disc)
+    q = -(b + (b >= 0 ? sd : -sd)) / 2
+    r1 = q / a
+    abs(q) <= eps(T) && return r1
+    r2 = c / q
+    return abs(r1) <= abs(r2) ? r1 : r2
+end
+
+function _preserve_closed_area_fixed_corners!(nodes::Vector{SVector{2,T}},
+                                              corners::AbstractVector{Bool},
+                                              target_area::T) where {T}
+    # Area-preserving rescale for contours with fixed surgery corners. The
+    # corner-free path scales every node about the centroid, but that moves the
+    # corners; here the corners must stay exactly put (they are reconnection
+    # break points). So only the free (non-corner) nodes move, along
+    # d_i = (p_i - centroid). The signed area is a quadratic A0 + B·t + C·t² in
+    # the scalar step `t`; solve for the root nearest zero and apply it. Corners
+    # keep d_i = 0 and therefore do not move at all.
+    n = length(nodes)
+    n < 3 && return nodes
+    (abs(target_area) <= eps(T)) && return nodes
+    A0 = _raw_polygon_area(nodes)
+    abs(A0) <= eps(T) && return nodes
+    sign(target_area) == sign(A0) || return nodes
+
+    rhs = target_area - A0
+    abs(rhs) <= sqrt(eps(T)) * abs(target_area) && return nodes  # already conserved
+
+    ctr = _raw_polygon_centroid(nodes)
+    B = zero(T)
+    C = zero(T)
+    @inbounds for i in 1:n
+        j = i < n ? i + 1 : 1
+        pi = nodes[i]
+        pj = nodes[j]
+        di = corners[i] ? zero(SVector{2,T}) : pi - ctr
+        dj = corners[j] ? zero(SVector{2,T}) : pj - ctr
+        B += _cross2(pi, dj) + _cross2(di, pj)
+        C += _cross2(di, dj)
+    end
+    B /= 2
+    C /= 2
+
+    t = _smallest_quadratic_root(C, B, -rhs)
+    # Skip when the correction is ill-conditioned (no real root, or so large it
+    # would distort the geometry); a small unmeasured drift is safer than that.
+    (t === nothing || !isfinite(t) || abs(t) > T(1) / 2) && return nodes
+
+    @inbounds for i in 1:n
+        corners[i] && continue
+        nodes[i] = nodes[i] + t * (nodes[i] - ctr)
+    end
+    return nodes
+end
+
 @inline function _signed_node_curvature(c::PVContour{T}, i::Int) where {T}
     n = nnodes(c)
     n < 3 && return zero(T)
@@ -417,6 +483,14 @@ function _remesh_with_fixed_corners(c::PVContour{T}, params::SurgeryParams, sour
     end
 
     length(new_nodes) < 3 && return c
+
+    # Redistributing interior nodes onto cubic arcs changes the enclosed area
+    # even though the corners stay fixed. Restore the original polygon area by
+    # moving only the free nodes (corners stay exactly put), so reconnection
+    # cleanup does not accrue drift. (Non-spanning here, so `c.wrap` is zero and
+    # the default-wrap area applies.)
+    _preserve_closed_area_fixed_corners!(new_nodes, new_corners, _raw_polygon_area(c.nodes))
+
     return PVContour(new_nodes, c.pv, c.wrap, new_corners)
 end
 
