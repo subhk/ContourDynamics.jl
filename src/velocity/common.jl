@@ -252,7 +252,7 @@ device-agnostic.
     _direct_velocity!(vel, prob)
 
 @inline _small_velocity!(vel::Vector{SVector{2,T}},
-                         prob::ContourProblem{K, D, T, GPU}) where {K<:Union{EulerKernel,QGKernel,SQGKernel}, D<:AbstractDomain, T} =
+                         prob::ContourProblem{K, D, T, GPU}) where {K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel}, D<:AbstractDomain, T} =
     _ka_velocity!(vel, prob, prob.dev)
 
 """
@@ -539,12 +539,12 @@ end
 # GPU dispatch — velocity computed in SoA layout via KernelAbstractions from the
 # device-resident contour state, then repacked into the CPU vel buffer.
 function velocity!(vel::Vector{SVector{2,T}},
-                   prob::ContourProblem{K, D, T, GPU}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel}, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
+                   prob::ContourProblem{K, D, T, GPU}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}}, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
     return _velocity_policy!(vel, prob)
 end
 
 function velocity!(vel::AbstractVector{SVector{2,T}},
-                   prob::ContourProblem{K, D, T, GPU}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel}, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
+                   prob::ContourProblem{K, D, T, GPU}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}}, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
     return _ka_velocity!(vel, prob, prob.dev)
 end
 

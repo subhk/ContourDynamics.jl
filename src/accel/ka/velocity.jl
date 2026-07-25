@@ -326,7 +326,7 @@ end
 
 function _ka_velocity!(vel::AbstractVector{SVector{2,T}},
                        prob::ContourProblem{K, D, T, GPU},
-                       dev::GPU) where {K<:Union{EulerKernel,QGKernel,SQGKernel}, D<:AbstractDomain, T}
+                       dev::GPU) where {K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel}, D<:AbstractDomain, T}
     return _ka_velocity_from_state!(vel, prob.device_state, prob.kernel,
                                     prob.domain, dev)
 end
@@ -425,4 +425,113 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
     end
 
     return _copy_velocity_output!(vel, vel_x, vel_y, dev, total)
+end
+
+# ── Beta-plane device velocity ───────────────────────────────────────────
+
+# Combined live+reference segment buffers for the beta-plane path. The frozen
+# reference staircase is packed once on the host (with signed node curvatures)
+# with NEGATED pv into the tail of the buffers, so one periodic-QG launch over
+# the concatenated segments yields `current - reference` directly; the analytic
+# sawtooth zonal term is then added per target. Task-local like the other
+# velocity workspaces.
+mutable struct _BetaPlaneWorkspace{T, DA<:AbstractVector{T}}
+    ax::DA; ay::DA; bx::DA; by::DA; pv::DA; ka::DA; kb::DA
+    live_n::Int
+    ref_n::Int
+    last_reference::Union{Nothing, Vector{PVContour{T}}}
+end
+
+const _BETA_WS_TLS_KEY = :contourdynamics_beta_plane_velocity_workspace
+
+function _pack_reference_segments(contours::Vector{PVContour{T}}) where {T}
+    n = sum(c -> nnodes(c) >= 2 ? nnodes(c) : 0, contours; init=0)
+    ax = Vector{T}(undef, n); ay = Vector{T}(undef, n)
+    bx = Vector{T}(undef, n); by = Vector{T}(undef, n)
+    pv = Vector{T}(undef, n)
+    ka = Vector{T}(undef, n); kb = Vector{T}(undef, n)
+    curvatures = _prepare_curvature_buffers!(Vector{Vector{T}}(), contours)
+    idx = 1
+    @inbounds for (ci, c) in pairs(contours)
+        nc = nnodes(c)
+        nc < 2 && continue
+        κ = curvatures[ci]
+        for j in 1:nc
+            a = c.nodes[j]
+            b = next_node(c, j)
+            ax[idx] = a[1]; ay[idx] = a[2]
+            bx[idx] = b[1]; by[idx] = b[2]
+            pv[idx] = -c.pv                    # negated: subtracts the reference field
+            ka[idx] = κ[j]
+            kb[idx] = κ[mod1(j + 1, nc)]
+            idx += 1
+        end
+    end
+    return ax, ay, bx, by, pv, ka, kb
+end
+
+function _create_beta_plane_workspace(dev::AbstractDevice, ::Type{T}, live_n::Int,
+                                      reference::Vector{PVContour{T}}) where {T}
+    rax, ray, rbx, rby, rpv, rka, rkb = _pack_reference_segments(reference)
+    ref_n = length(rax)
+    total = live_n + ref_n
+    function mk(tail::Vector{T})
+        host = zeros(T, total)
+        copyto!(view(host, (live_n + 1):total), tail)
+        return to_device(dev, host)
+    end
+    da = mk(rax)
+    _BetaPlaneWorkspace{T, typeof(da)}(da, mk(ray), mk(rbx), mk(rby),
+                                       mk(rpv), mk(rka), mk(rkb),
+                                       live_n, ref_n, reference)
+end
+
+function _get_beta_plane_workspace(dev::AbstractDevice, ::Type{T}, live_n::Int,
+                                   reference::Vector{PVContour{T}}) where {T}
+    store = task_local_storage()
+    key = (_BETA_WS_TLS_KEY, T, typeof(dev))
+    ws = get(store, key, nothing)
+    if ws === nothing || (ws::_BetaPlaneWorkspace).live_n != live_n ||
+       (ws::_BetaPlaneWorkspace).last_reference !== reference
+        ws = _create_beta_plane_workspace(dev, T, live_n, reference)
+        store[key] = ws
+    end
+    return ws
+end
+
+function _beta_plane_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
+                                       gws::_GPUWorkspace{T},
+                                       bws::_BetaPlaneWorkspace{T},
+                                       state::DeviceContourState{T},
+                                       kernel::BetaPlaneQGKernel{T},
+                                       domain::PeriodicDomain{T},
+                                       dev::AbstractDevice, N::Int) where {T}
+    live = 1:N
+    @_ka_launch dev N _state_segment_data_kernel!(
+        view(bws.ax, live), view(bws.ay, live), view(bws.bx, live), view(bws.by, live),
+        view(bws.pv, live), view(bws.ka, live), view(bws.kb, live),
+        state.x, state.y, state.pv, state.wrapx, state.wrapy,
+        state.offsets, state.lengths, state.corners,
+        state.contour_of_node, state.local_index, one(T), N)
+    seg = SegmentData(bws.ax, bws.ay, bws.bx, bws.by, bws.pv, bws.ka, bws.kb)
+    _ka_apply_velocity!(gws.dev_vel_x, gws.dev_vel_y, state.x, state.y, seg,
+                        QGKernel(kernel.Ld), domain, dev, gws)
+    dy = 2 * domain.Ly / T(length(kernel.reference_contours))
+    @_ka_launch dev N _beta_sawtooth_add_ka!(gws.dev_vel_x, state.y,
+                                             kernel.beta, inv(kernel.Ld), dy,
+                                             domain.Ly, N)
+    return _copy_velocity_output!(vel, gws.dev_vel_x, gws.dev_vel_y, dev, N)
+end
+
+function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
+                                  state::DeviceContourState{T},
+                                  kernel::BetaPlaneQGKernel{T},
+                                  domain::PeriodicDomain{T},
+                                  dev::AbstractDevice) where {T}
+    N = _device_state_nnodes(state)
+    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    N == 0 && return vel
+    gws = _get_state_workspace(dev, T, N)
+    bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours)
+    return _beta_plane_velocity_with_ws!(vel, gws, bws, state, kernel, domain, dev, N)
 end
