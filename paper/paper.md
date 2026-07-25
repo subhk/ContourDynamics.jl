@@ -14,7 +14,7 @@ authors:
     orcid: 0000-0001-9737-3345
     affiliation: 1
 affiliations:
-  - name: Tel Aviv University
+  - name: University of Maryland
     index: 1
 date: 4 April 2026
 bibliography: paper.bib
