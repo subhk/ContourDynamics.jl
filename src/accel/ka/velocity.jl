@@ -406,10 +406,10 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
         # Branch to a concrete kernel type so the launch is statically dispatched
         # (no Union-typed `mode_kernel` per mode).
         if abs(lam) < eps(T) * 100
-            _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg, EulerKernel(), domain, dev)
+            _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg, EulerKernel(), domain, dev, ws)
         else
             _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg,
-                                QGKernel(one(T) / sqrt(abs(lam))), domain, dev)
+                                QGKernel(one(T) / sqrt(abs(lam))), domain, dev, ws)
         end
 
         for ℓ in 1:N
