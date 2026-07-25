@@ -14,7 +14,7 @@ authors:
     orcid: 0000-0001-9737-3345
     affiliation: 1
 affiliations:
-  - name: University of Maryland, United States
+  - name: University of Maryland, College Park, Maryland
     index: 1
 date: 25 July 2026
 bibliography: paper.bib
