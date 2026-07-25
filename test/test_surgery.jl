@@ -407,6 +407,31 @@ using Test, ContourDynamics, StaticArrays, Logging
         @test nnodes(prob.contours[1]) >= 3
     end
 
+    @testset "Reconnection: Merge Across Periodic Seam Stays In One Frame" begin
+        # Two patches touching through the x-seam are stored in different
+        # periodic images. The merge must shift one contour into the other's
+        # frame; otherwise the merged polygon contains a ~period-long segment
+        # and its area is garbage.
+        domain = PeriodicDomain(2.0, 2.0)
+        δ = 0.05
+        cA = circular_patch(0.3, 32, 1.0; cx=1.95, cy=0.0)
+        cB = circular_patch(0.3, 32, 1.0; cx=-1.95, cy=0.0)
+        contours = [cA, cB]
+        A0 = abs(vortex_area(cA)) + abs(vortex_area(cB))
+
+        idx = ContourDynamics.build_spatial_index(contours, δ, domain)
+        close_pairs = ContourDynamics.find_close_segments(contours, idx, δ, domain)
+        @test any(p -> p[1] != p[3], close_pairs)
+
+        ContourDynamics.reconnect!(contours, close_pairs, domain)
+        @test length(contours) == 1
+        merged = contours[1]
+        maxseg = maximum(hypot((next_node(merged, k) - merged.nodes[k])...)
+                         for k in 1:nnodes(merged))
+        @test maxseg < 1.0
+        @test abs(vortex_area(merged)) ≈ A0 rtol=0.2
+    end
+
     @testset "No Reconnection: Different PV" begin
         # Two contours with different PV within δ → should NOT merge
         δ = 0.1
