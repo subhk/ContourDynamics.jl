@@ -177,13 +177,24 @@ function _node_curvatures(c::PVContour{T}) where {T}
     return κ
 end
 
+function _prepare_density_sources(sources)
+    return map(sources) do source
+        (contour=source,
+         lengths=arc_lengths(source),
+         curvatures=_node_curvatures(source),
+         abs_pv=abs(source.pv))
+    end
+end
+
 function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
-                                      sources=(c,)) where {T}
+                                      sources=(c,);
+                                      _arc_buf::Union{Nothing,Vector{T}}=nothing,
+                                      _source_data=nothing) where {T}
     n = nnodes(c)
     densities = Vector{T}(undef, n)
     n == 0 && return densities
 
-    lengths = arc_lengths(c)
+    lengths = _arc_buf === nothing ? arc_lengths(c) : _arc_lengths!(_arc_buf, c)
     perimeter = sum(lengths)
     if perimeter <= eps(T)
         fill!(densities, one(T) / T(params.Δ_max))
@@ -198,12 +209,7 @@ function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
     inv_μL = inv(μ * L)
     sqrt2 = sqrt(T(2))
     d2_floor = eps(T) * max(one(T), L)^2
-    source_data = map(sources) do source
-        (contour=source,
-         lengths=arc_lengths(source),
-         curvatures=_node_curvatures(source),
-         abs_pv=abs(source.pv))
-    end
+    source_data = _source_data === nothing ? _prepare_density_sources(sources) : _source_data
 
     # Dritschel (1988), Eqs. (2a)-(2d).  First form the nonlocal
     # vorticity-weighted curvature K_j at each node of this contour, using all
@@ -331,6 +337,12 @@ end
 
 function _path_segment_lengths(path::Vector{SVector{2,T}}) where {T}
     lengths = Vector{T}(undef, max(0, length(path) - 1))
+    return _path_segment_lengths!(lengths, path)
+end
+
+function _path_segment_lengths!(lengths::Vector{T},
+                                path::Vector{SVector{2,T}}) where {T}
+    resize!(lengths, max(0, length(path) - 1))
     @inbounds for i in eachindex(lengths)
         lengths[i] = _norm2(path[i + 1] - path[i])
     end
@@ -358,12 +370,14 @@ function _point_at_weighted_measure(path::Vector{SVector{2,T}},
 end
 
 function _resample_fixed_corner_path(path::Vector{SVector{2,T}}, densities::Vector{T},
-                                     μ::T, Δ_max::T) where {T}
+                                     μ::T, Δ_max::T;
+                                     _arc_buf::Union{Nothing,Vector{T}}=nothing) where {T}
     # Used after reconnection. The first and last nodes are surgery corners and
     # stay fixed; only interior points are redistributed by weighted measure.
     length(path) >= 2 || return copy(path), trues(length(path))
 
-    lengths = _path_segment_lengths(path)
+    lengths = _arc_buf === nothing ? _path_segment_lengths(path) :
+              _path_segment_lengths!(_arc_buf, path)
     total_length = sum(lengths)
     total_length <= eps(T) && return copy(path), trues(length(path))
     measure = _weighted_measure(lengths, densities)
@@ -392,7 +406,8 @@ end
 
 function _resample_closed_weighted(c::PVContour{T}, densities::Vector{T}, μ::T, Δ_max::T;
                                    _buf::Union{Nothing, Vector{SVector{2,T}}}=nothing,
-                                   _vnodes_buf::Union{Nothing, Vector{SVector{2,T}}}=nothing) where {T}
+                                   _vnodes_buf::Union{Nothing, Vector{SVector{2,T}}}=nothing,
+                                   _arc_buf::Union{Nothing, Vector{T}}=nothing) where {T}
     # Treat closed/spanning contours as a periodic path by appending the wrapped
     # first node. Uniformly spaced weighted-measure targets then map back to
     # cubic points on that virtual path.
@@ -409,7 +424,8 @@ function _resample_closed_weighted(c::PVContour{T}, densities::Vector{T}, μ::T,
     copyto!(vnodes, 1, nodes, 1, n)
     vnodes[n + 1] = close_pt
 
-    lengths = _path_segment_lengths(vnodes)
+    lengths = _arc_buf === nothing ? _path_segment_lengths(vnodes) :
+              _path_segment_lengths!(_arc_buf, vnodes)
     total_length = sum(lengths)
     total_length <= eps(T) && return copy(nodes)
 
@@ -451,12 +467,15 @@ function _corner_span_nodes_and_densities(c::PVContour{T}, densities::Vector{T},
     end
 end
 
-function _remesh_with_fixed_corners(c::PVContour{T}, params::SurgeryParams, sources) where {T}
+function _remesh_with_fixed_corners(c::PVContour{T}, params::SurgeryParams, sources;
+                                    _arc_buf::Union{Nothing,Vector{T}}=nothing,
+                                    _source_data=nothing) where {T}
     μ = T(params.μ)
     Δ_max = T(params.Δ_max)
     corner_idxs = corner_indices(c)
     isempty(corner_idxs) && return c
-    densities = _dritschel_segment_densities(c, params, sources)
+    densities = _dritschel_segment_densities(
+        c, params, sources; _arc_buf=_arc_buf, _source_data=_source_data)
 
     new_nodes = SVector{2,T}[]
     new_corners = Bool[]
@@ -464,7 +483,8 @@ function _remesh_with_fixed_corners(c::PVContour{T}, params::SurgeryParams, sour
         first_idx = corner_idxs[k]
         last_idx = corner_idxs[mod1(k + 1, length(corner_idxs))]
         path, span_densities = _corner_span_nodes_and_densities(c, densities, first_idx, last_idx)
-        span_nodes, span_corners = _resample_fixed_corner_path(path, span_densities, μ, Δ_max)
+        span_nodes, span_corners = _resample_fixed_corner_path(
+            path, span_densities, μ, Δ_max; _arc_buf=_arc_buf)
         if k == firstindex(corner_idxs)
             append!(new_nodes, span_nodes)
             append!(new_corners, span_corners)
@@ -513,21 +533,27 @@ function remesh(c::PVContour{T}, params::SurgeryParams;
                 _buf::Union{Nothing, Vector{SVector{2,T}}}=nothing,
                 _arc_buf::Union{Nothing, Vector{T}}=nothing,
                 _vnodes_buf::Union{Nothing, Vector{SVector{2,T}}}=nothing,
-                _density_sources=nothing) where {T}
+                _density_sources=nothing,
+                _density_source_data=nothing) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return c
     sources = _density_sources === nothing ? (c,) : _density_sources
     if any(c.corners) && !is_spanning(c)
-        return _remesh_with_fixed_corners(c, params, sources)
+        return _remesh_with_fixed_corners(
+            c, params, sources; _arc_buf=_arc_buf,
+            _source_data=_density_source_data)
     end
 
     μ = T(params.μ)
     Δ_max = T(params.Δ_max)
 
-    densities = _dritschel_segment_densities(c, params, sources)
+    densities = _dritschel_segment_densities(
+        c, params, sources; _arc_buf=_arc_buf,
+        _source_data=_density_source_data)
     new_nodes = _resample_closed_weighted(c, densities, μ, Δ_max;
-                                          _buf=_buf, _vnodes_buf=_vnodes_buf)
+                                          _buf=_buf, _vnodes_buf=_vnodes_buf,
+                                          _arc_buf=_arc_buf)
 
     if length(new_nodes) < 3
         return c
@@ -588,6 +614,12 @@ function arc_lengths(c::PVContour{T}) where {T}
     n = nnodes(c)
     n < 1 && return T[]
     lengths = Vector{T}(undef, n)
+    return _arc_lengths!(lengths, c)
+end
+
+function _arc_lengths!(lengths::Vector{T}, c::PVContour{T}) where {T}
+    n = nnodes(c)
+    resize!(lengths, n)
     @inbounds for i in 1:n
         d = next_node(c, i) - c.nodes[i]
         lengths[i] = sqrt(d[1]^2 + d[2]^2)

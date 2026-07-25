@@ -387,8 +387,8 @@ function _wrap_state_nodes!(state::DeviceContourState{T},
                             dev::AbstractDevice) where {T}
     ncontours = length(state.lengths)
     ncontours == 0 && return state
-    shiftx = device_zeros(dev, T, ncontours)
-    shifty = device_zeros(dev, T, ncontours)
+    shiftx = state.shiftx
+    shifty = state.shifty
     _ka_stepper_update!(dev, _periodic_state_shifts_ka!, ncontours,
                         shiftx, shifty, state.x, state.y, state.wrapx, state.wrapy,
                         state.offsets, state.lengths, domain.Lx, domain.Ly, ncontours)

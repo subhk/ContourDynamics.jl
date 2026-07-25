@@ -274,17 +274,25 @@ end
 end
 
 """
-    evolve!(prob, stepper, params; nsteps, callbacks=nothing)
+    evolve!(prob, stepper, params; nsteps, callbacks=nothing, step_offset=0,
+            run_initial_callbacks=true)
 
 Main simulation loop: timestep → surgery (at interval) → callbacks.
+`step_offset` makes callback and surgery step numbers global across batched
+calls. Set `run_initial_callbacks=false` after the first batch so the boundary
+step is not emitted twice.
 """
 function evolve!(prob::Union{ContourProblem, MultiLayerContourProblem},
                  stepper::AbstractTimeStepper,
                  params::Union{SurgeryParams, Nothing};
                  nsteps::Int,
-                 callbacks=nothing)
-    _run_callbacks(callbacks, prob, 0)
-    for step in 1:nsteps
+                 callbacks=nothing,
+                 step_offset::Int=0,
+                 run_initial_callbacks::Bool=true)
+    step_offset >= 0 || throw(ArgumentError("step_offset must be non-negative, got $step_offset"))
+    run_initial_callbacks && _run_callbacks(callbacks, prob, step_offset)
+    for local_step in 1:nsteps
+        step = step_offset + local_step
         if total_nodes(prob) > 0
             timestep!(prob, stepper)
             _maybe_wrap_nodes!(prob)

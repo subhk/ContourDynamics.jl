@@ -109,6 +109,21 @@ end
         @test steps_seen == [0, 1, 2, 3, 4, 5]
     end
 
+    @testset "Problem evolve! continues global callback steps across batches" begin
+        c = circular_patch(1.0, 16, 1.0)
+        prob = Problem(ContourProblem(EulerKernel(), UnboundedDomain(), [c]),
+                       RK4Stepper(0.01, 16), nothing)
+        steps_seen = Int[]
+        cb = (p, step) -> push!(steps_seen, step)
+
+        evolve!(prob; nsteps=3, callbacks=[cb], step_offset=0,
+                run_initial_callbacks=true)
+        evolve!(prob; nsteps=2, callbacks=[cb], step_offset=3,
+                run_initial_callbacks=false)
+
+        @test steps_seen == collect(0:5)
+    end
+
     @testset "Problem factory — defaults" begin
         prob = Problem(; contours=[circular_patch(0.5, 64, 2π)], dt=0.01)
         @test prob isa Problem

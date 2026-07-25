@@ -1,6 +1,11 @@
 # High-level Problem wrapper — bundles ContourProblem + stepper + surgery params
 # into a single object for GeophysicalFlows-style convenience.
 
+@inline function _require_positive(name::AbstractString, value::Real)
+    value > zero(value) || throw(ArgumentError("$name must be positive, got $value"))
+    return value
+end
+
 """
     Problem{P,S,SP}
 
@@ -64,14 +69,19 @@ nlayers(prob::Problem) = nlayers(prob.contour_problem)
 # ── evolve! overload ────────────────────────────────────
 
 """
-    evolve!(prob::Problem; nsteps, callbacks=nothing)
+    evolve!(prob::Problem; nsteps, callbacks=nothing, step_offset=0,
+            run_initial_callbacks=true)
 
 Run the simulation for `nsteps` time steps. Surgery is applied according to
-`prob.surgery_params` (or skipped if `nothing`).
+`prob.surgery_params` (or skipped if `nothing`). `step_offset` continues the
+global step count when evolution is split across calls; set
+`run_initial_callbacks=false` on continuation calls to avoid repeating the
+callback at the batch boundary.
 """
-function evolve!(prob::Problem; nsteps::Int, callbacks=nothing)
+function evolve!(prob::Problem; nsteps::Int, callbacks=nothing,
+                 step_offset::Int=0, run_initial_callbacks::Bool=true)
     evolve!(prob.contour_problem, prob.stepper, prob.surgery_params;
-            nsteps, callbacks)
+            nsteps, callbacks, step_offset, run_initial_callbacks)
     return prob
 end
 

@@ -84,6 +84,7 @@ function ContourDynamics.save_snapshot(filename::String,
         # the right problem type even if loading stops early.
         mg = JLD2.Group(g, "metadata")
         _save_metadata!(mg, prob.kernel, prob.domain)
+        mg["coordinate_zero"] = zero(T)
 
         for (ci, c) in enumerate(snapshot_contours)
             cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))
@@ -146,6 +147,7 @@ function ContourDynamics.save_snapshot(filename::String,
         # Save kernel/domain metadata for restorability
         mg = JLD2.Group(g, "metadata")
         _save_metadata!(mg, prob.kernel, prob.domain)
+        mg["coordinate_zero"] = zero(T)
 
         for (li, layer) in enumerate(snapshot_layers)
             lg = JLD2.Group(g, "layer_" * lpad(li, 2, '0'))
@@ -209,13 +211,14 @@ end
 function _load_snapshot_from_group(g, step::Int)
     time = haskey(g, "time") ? g["time"] : nothing
     is_multilayer = haskey(g, "nlayers")
+    fallback_T = haskey(g, "metadata") ? _metadata_float_type(g["metadata"]) : Float64
 
     if is_multilayer
         # Multi-layer snapshots are stored as layer_N/contour_M groups. Infer a
         # single coordinate element type from the first non-empty layer so empty
         # trailing layers still reconstruct with the same type.
         nlyr = g["nlayers"]::Int
-        inferred_T = Float64
+        inferred_T = fallback_T
         for li in 1:nlyr
             lg = g["layer_" * lpad(li, 2, '0')]
             nc = lg["ncontours"]::Int
@@ -240,7 +243,7 @@ function _load_snapshot_from_group(g, step::Int)
         # Single-layer snapshots keep contour groups directly under the step
         # group and reconstruct to a flat Vector{PVContour}.
         nc = g["ncontours"]::Int
-        contours = _load_contours(g, nc)
+        contours = _load_contours(g, nc; fallback_T=fallback_T)
         diag = _load_diagnostics(g)
         return (contours=contours, diagnostics=diag, step=step, time=time)
     end
@@ -381,7 +384,11 @@ end
 # Float type recorded in the metadata (matches the original contour coordinate
 # type, since construction enforced kernel/domain/contour type agreement).
 function _metadata_float_type(mg)
-    haskey(mg, "kernel_Ld") && return typeof(mg["kernel_Ld"])
+    haskey(mg, "coordinate_zero") && return typeof(mg["coordinate_zero"])
+    if haskey(mg, "kernel_Ld")
+        Ld = mg["kernel_Ld"]
+        return Ld isa AbstractArray ? eltype(Ld) : typeof(Ld)
+    end
     haskey(mg, "kernel_delta") && return typeof(mg["kernel_delta"])
     haskey(mg, "domain_Lx") && return typeof(mg["domain_Lx"])
     return Float64
@@ -419,6 +426,11 @@ function ContourDynamics.jld2_recorder(filename::String;
     end
     if save_dt !== nothing && dt === nothing
         throw(ArgumentError("save_dt requires dt (time step size)"))
+    end
+    save_every !== nothing && ContourDynamics._require_positive("save_every", save_every)
+    if save_dt !== nothing
+        ContourDynamics._require_positive("save_dt", save_dt)
+        ContourDynamics._require_positive("dt", dt)
     end
 
     # Compute one integer iteration interval from either iteration-based or
