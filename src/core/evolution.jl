@@ -227,6 +227,82 @@ _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain, T, GPU
     wrap_nodes!(prob)
 _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLayerQGKernel{N}, D<:PeriodicDomain} = wrap_nodes!(prob)
 
+# Stepper-aware wrapping. Steppers without position history delegate to the
+# node-only methods above. LeapfrogStepper keeps the Robert–Asselin-filtered
+# previous node level in `nodes_prev`; the lattice shift applied to a contour's
+# nodes must also be applied to its slice of that history, or the next step
+# mixes coordinates from different periodic images and physically displaces
+# the contour by a non-lattice offset.
+_maybe_wrap_nodes!(prob, ::AbstractTimeStepper) = _maybe_wrap_nodes!(prob)
+
+_maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain},
+                   stepper::LeapfrogStepper) = _wrap_nodes_with_history!(prob, stepper)
+
+function _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU},
+                            stepper::LeapfrogStepper{T}) where {T}
+    _wrap_state_nodes_with_history!(prob.device_state, prob.domain, stepper, prob.dev)
+    return nothing
+end
+
+_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain},
+                   stepper::LeapfrogStepper) where {N, K<:MultiLayerQGKernel{N}} =
+    _wrap_nodes_with_history!(prob, stepper)
+
+function _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain, T, GPU},
+                            stepper::LeapfrogStepper{T}) where {N, K, T}
+    states = prob.device_state
+    ranges = _layer_state_ranges(states)
+    for ℓ in 1:N
+        r = ranges[ℓ]
+        prev = isempty(r) ? stepper.nodes_prev : view(stepper.nodes_prev, r)
+        _wrap_state_nodes_with_history!(states[ℓ], prob.domain, stepper, prob.dev, prev)
+    end
+    return nothing
+end
+
+function _wrap_nodes_with_history!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}},
+                                   stepper::LeapfrogStepper{T}) where {T}
+    stepper.initialized || return wrap_nodes!(prob)
+    domain = prob.domain
+    ranges = _ensure_node_ranges!(stepper, prob)[1]
+    nodes_prev = stepper.nodes_prev
+    for (ci, c) in enumerate(prob.contours)
+        is_spanning(c) && continue
+        shift = contour_periodic_shift(c, domain)
+        iszero(shift) && continue
+        @inbounds for k in eachindex(c.nodes)
+            c.nodes[k] += shift
+        end
+        @inbounds for k in ranges[ci]
+            nodes_prev[k] += shift
+        end
+    end
+    return prob
+end
+
+function _wrap_nodes_with_history!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, CPU},
+                                   stepper::LeapfrogStepper{T}) where {N, K, T}
+    stepper.initialized || return wrap_nodes!(prob)
+    domain = prob.domain
+    all_ranges = _ensure_node_ranges!(stepper, prob)
+    nodes_prev = stepper.nodes_prev
+    for ℓ in 1:N
+        layer_ranges = all_ranges[ℓ]
+        for (ci, c) in enumerate(prob.layers[ℓ])
+            is_spanning(c) && continue
+            shift = contour_periodic_shift(c, domain)
+            iszero(shift) && continue
+            @inbounds for k in eachindex(c.nodes)
+                c.nodes[k] += shift
+            end
+            @inbounds for k in layer_ranges[ci]
+                nodes_prev[k] += shift
+            end
+        end
+    end
+    return prob
+end
+
 function wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T}
     _wrap_state_nodes!(prob.device_state, prob.domain, prob.dev)
     return prob
@@ -295,7 +371,7 @@ function evolve!(prob::Union{ContourProblem, MultiLayerContourProblem},
         step = step_offset + local_step
         if total_nodes(prob) > 0
             timestep!(prob, stepper)
-            _maybe_wrap_nodes!(prob)
+            _maybe_wrap_nodes!(prob, stepper)
         end
         _maybe_apply_surgery!(prob, stepper, params, step)
         _run_callbacks(callbacks, prob, step)

@@ -157,6 +157,15 @@ end
     end
 end
 
+@kernel function _apply_shifts_to_flat_ka!(nodes, shiftx, shifty, contour_of_node, total_nodes)
+    i = @index(Global)
+    if i <= total_nodes
+        ci = contour_of_node[i]
+        node = nodes[i]
+        nodes[i] = SVector(node[1] + shiftx[ci], node[2] + shifty[ci])
+    end
+end
+
 @inline function _flat_contour_ranges(contours, offset::Int=0)
     # Return one flat-buffer slice per contour. `offset` lets multi-layer
     # problems append each layer's ranges after the previous layer.
@@ -400,6 +409,30 @@ function _wrap_state_nodes!(state::DeviceContourState{T},
 end
 
 _wrap_state_nodes!(state::DeviceContourState, ::UnboundedDomain, ::AbstractDevice) = state
+
+"""
+    _wrap_state_nodes_with_history!(state, domain, stepper, dev, nodes_prev=stepper.nodes_prev)
+
+Wrap the state's contour nodes into the fundamental domain and apply the same
+per-contour lattice shifts (left in `state.shiftx`/`state.shifty` by
+`_wrap_state_nodes!`) to the leapfrog history buffer, so the Robert–Asselin
+filter never mixes coordinates from different periodic images. `nodes_prev`
+lets multi-layer callers pass the layer's slice of the flat history buffer.
+"""
+function _wrap_state_nodes_with_history!(state::DeviceContourState{T},
+                                         domain::PeriodicDomain{T},
+                                         stepper::LeapfrogStepper{T},
+                                         dev::AbstractDevice,
+                                         nodes_prev::AbstractVector{SVector{2,T}}=stepper.nodes_prev) where {T}
+    _wrap_state_nodes!(state, domain, dev)
+    stepper.initialized || return state
+    N = _device_state_nnodes(state)
+    N == 0 && return state
+    _ka_stepper_update!(dev, _apply_shifts_to_flat_ka!, N,
+                        nodes_prev, state.shiftx, state.shifty,
+                        state.contour_of_node, N)
+    return state
+end
 
 @inline function _rk4_state_stage!(k, state::DeviceContourState{T}, kernel, domain,
                                    nodes_orig, increment, scale::T,
