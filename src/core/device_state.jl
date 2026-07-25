@@ -91,6 +91,22 @@ end
 @inline _device_state_nnodes(state::DeviceContourState) = length(state.x)
 
 """
+    _reload_state!(state, contours, dev)
+
+Repack `contours` into `state` in place, replacing every field. The mutable
+state object keeps its identity, so problem structs and stepper references
+stay valid across host-boundary topology changes (e.g. periodic surgery).
+"""
+function _reload_state!(state::DeviceContourState{T}, contours::Vector{PVContour{T}},
+                        dev::AbstractDevice) where {T}
+    fresh = DeviceContourState(contours, dev)
+    for f in fieldnames(DeviceContourState)
+        setfield!(state, f, getfield(fresh, f))
+    end
+    return state
+end
+
+"""
     _layer_state_ranges(states)
 
 Flat index range of each layer's nodes when layers are concatenated in order.
