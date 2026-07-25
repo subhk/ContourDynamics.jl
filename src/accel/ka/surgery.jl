@@ -3107,12 +3107,36 @@ function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
     return prob
 end
 
-function surgery!(::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
-                                   <:PeriodicDomain, T, GPU},
-                  ::SurgeryParams) where {T}
-    throw(ArgumentError(
-        "GPU surgery is device-resident only for unbounded single-layer problems. " *
-        "Use dev=CPU() for periodic surgery, or disable surgery for this GPU() problem."))
+"""
+    _host_boundary_surgery!(state, domain, params, dev; layer_label="")
+
+Run one CPU surgery pass on materialized contours and reload the device state
+in place. Periodic surgery involves cross-seam topology (minimum-image
+proximity scans, merge frame shifts) that lives on the battle-tested CPU path;
+running it at the host boundary keeps GPU periodic evolution fully supported
+while the device-resident scan pipeline remains unbounded-only. The transfer
+cost is amortized over `n_surgery` steps of device-resident stepping.
+"""
+function _host_boundary_surgery!(state::DeviceContourState{T},
+                                 domain::AbstractDomain,
+                                 params::SurgeryParams,
+                                 dev::AbstractDevice;
+                                 layer_label::AbstractString="") where {T}
+    contours = materialize_contours(state)
+    remesh_buf = SVector{2, T}[]
+    arc_buf = T[]
+    vnodes_buf = SVector{2, T}[]
+    _surgery_pass!(contours, domain, params, remesh_buf, arc_buf, vnodes_buf;
+                   layer_label=layer_label)
+    _reload_state!(state, contours, dev)
+    return state
+end
+
+function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
+                                       <:PeriodicDomain, T, GPU},
+                  params::SurgeryParams) where {T}
+    _host_boundary_surgery!(prob.device_state, prob.domain, params, prob.dev)
+    return prob
 end
 
 function surgery!(::ContourProblem{K, D, T, GPU}, ::SurgeryParams) where {K, D, T}
@@ -3144,9 +3168,13 @@ function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, Unb
     return prob
 end
 
-function surgery!(::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:PeriodicDomain, T, GPU},
-                  ::SurgeryParams) where {N, T}
-    throw(ArgumentError(
-        "GPU surgery is device-resident only for unbounded multi-layer problems. " *
-        "Use dev=CPU() for periodic surgery, or disable surgery for this GPU() problem."))
+function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:PeriodicDomain, T, GPU},
+                  params::SurgeryParams) where {N, T}
+    # Same per-layer structure as CPU multi-layer surgery; layers never
+    # reconnect across layer boundaries.
+    for ℓ in 1:N
+        _host_boundary_surgery!(prob.device_state[ℓ], prob.domain, params, prob.dev;
+                                layer_label=" layer $ℓ")
+    end
+    return prob
 end

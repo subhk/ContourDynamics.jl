@@ -425,20 +425,18 @@ end
 
 function energy(prob::MultiLayerContourProblem{N, K, D, T, GPU}) where {N, K, D, T}
     throw(ArgumentError(
-        "GPU energy is not implemented for multi-layer contour problems yet. " *
-        "Use dev=CPU() for this diagnostic or materialize explicitly at an output boundary."))
+        "GPU multi-layer energy is implemented for UnboundedDomain and PeriodicDomain; " *
+        "got $(D). Use dev=CPU() for this diagnostic."))
 end
 
 function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T, GPU}) where {N, K, T}
-    throw(ArgumentError(
-        "GPU energy is not implemented for multi-layer contour problems yet. " *
-        "Use dev=CPU() for this diagnostic or materialize explicitly at an output boundary."))
+    return _ka_multilayer_energy_from_states(prob.device_state, prob.kernel,
+                                             prob.domain, prob.dev)
 end
 
 function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, GPU}) where {N, K, T}
-    throw(ArgumentError(
-        "GPU energy is not implemented for multi-layer contour problems yet. " *
-        "Use dev=CPU() for this diagnostic or materialize explicitly at an output boundary."))
+    return _ka_multilayer_energy_from_states(prob.device_state, prob.kernel,
+                                             prob.domain, prob.dev)
 end
 
 function circulation(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}

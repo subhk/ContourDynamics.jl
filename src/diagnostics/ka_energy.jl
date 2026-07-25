@@ -787,3 +787,117 @@ function _ka_energy_from_state(state::DeviceContourState{T}, kernel::SQGKernel{T
     end
     return -(one(T) / (T(4) * T(π))) * raw / T(2)
 end
+
+# ── Multi-layer modal energy ─────────────────────────────────────────────
+
+"""
+    _pack_multilayer_energy_segments(states, weights, dev, T)
+
+Concatenate every layer's energy-valid segments into one `EnergySegmentData`,
+with each layer's PV pre-scaled by its modal weight and contour ids offset so
+cross-layer pairs are never mistaken for self-interactions. Folding the modal
+weights into the segment PV lets the existing single-layer energy kernels
+evaluate the modal double sum Σᵢⱼ wᵢwⱼ qᵢqⱼ E_pair directly.
+"""
+function _pack_multilayer_energy_segments(states::NTuple{N, <:DeviceContourState{T}},
+                                          weights::NTuple{N, T},
+                                          dev::AbstractDevice, ::Type{T}) where {N, T}
+    datas = map(s -> _pack_energy_segments(s, dev, T), states)
+    lens = map(d -> length(d.seg.ax), datas)
+    total = sum(lens)
+    ax = device_zeros(dev, T, total)
+    ay = device_zeros(dev, T, total)
+    bx = device_zeros(dev, T, total)
+    by = device_zeros(dev, T, total)
+    pv = device_zeros(dev, T, total)
+    ka = device_zeros(dev, T, total)
+    kb = device_zeros(dev, T, total)
+    contour_id = device_zeros(dev, Int, total)
+    local_index = device_zeros(dev, Int, total)
+    off = 0
+    id_off = 0
+    for ℓ in 1:N
+        d = datas[ℓ]
+        nℓ = lens[ℓ]
+        if nℓ > 0
+            r = (off + 1):(off + nℓ)
+            copyto!(view(ax, r), d.seg.ax)
+            copyto!(view(ay, r), d.seg.ay)
+            copyto!(view(bx, r), d.seg.bx)
+            copyto!(view(by, r), d.seg.by)
+            view(pv, r) .= d.seg.pv .* weights[ℓ]
+            view(contour_id, r) .= d.contour_id .+ id_off
+            copyto!(view(local_index, r), d.local_index)
+        end
+        off += nℓ
+        # Offsetting by the layer's full contour count (≥ its valid-contour
+        # count) keeps ids distinct across layers without a device reduction.
+        id_off += length(states[ℓ].lengths)
+    end
+    return EnergySegmentData(SegmentData(ax, ay, bx, by, pv, ka, kb),
+                             contour_id, local_index)
+end
+
+"""
+    _ka_multilayer_energy_from_states(states, kernel, domain, dev)
+
+Device-resident multi-layer QG energy: diagonalize the vertical coupling and
+evaluate energy mode-by-mode, exactly mirroring the CPU modal decomposition.
+The barotropic (λ≈0) mode uses the Euler energy kernel; nonzero modes use the
+QG kernel with modal deformation radius 1/√|λ|.
+"""
+function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
+                                           kernel::MultiLayerQGKernel{N},
+                                           ::UnboundedDomain,
+                                           dev::AbstractDevice) where {N, T}
+    evals = kernel.eigenvalues
+    P_inv = kernel.eigenvectors_inv
+    raw = zero(T)
+    for mode in 1:N
+        weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
+        data = _pack_multilayer_energy_segments(states, weights, dev, T)
+        length(data.seg.ax) == 0 && continue
+        lam = evals[mode]
+        raw += if abs(lam) < eps(T) * 100
+            _ka_energy_raw_with_segments!(_euler_energy_ka!, data, dev, T)
+        else
+            _ka_energy_raw_with_segments!(_qg_energy_ka!, data, dev, T,
+                                          one(T) / sqrt(abs(lam)))
+        end
+    end
+    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+end
+
+function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
+                                           kernel::MultiLayerQGKernel{N},
+                                           domain::PeriodicDomain{T},
+                                           dev::AbstractDevice) where {N, T}
+    evals = kernel.eigenvalues
+    P_inv = kernel.eigenvectors_inv
+    # Every mode reads the domain's Euler Ewald tables; QG modes add the
+    # analytic Fourier correction with κ² = |λ| (matching the single-layer
+    # periodic QG energy path).
+    cache = _get_ewald_cache(domain, EulerKernel())
+    kx = to_device(dev, cache.kx)
+    ky = to_device(dev, cache.ky)
+    fourier = to_device(dev, cache.fourier_coeffs)
+    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    area = T(4) * domain.Lx * domain.Ly
+    raw = zero(T)
+    for mode in 1:N
+        weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
+        data = _pack_multilayer_energy_segments(states, weights, dev, T)
+        length(data.seg.ax) == 0 && continue
+        raw_mode = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
+                                                 cache.alpha, domain.Lx, domain.Ly,
+                                                 cache.n_images, kx, ky, fourier, corr0)
+        lam = evals[mode]
+        if abs(lam) >= eps(T) * 100
+            raw_mode += _ka_energy_raw_with_segments!(_periodic_qg_correction_energy_ka!,
+                                                      data, dev, T,
+                                                      T(abs(lam)), area, kx, ky)
+        end
+        raw += raw_mode
+    end
+    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+end
