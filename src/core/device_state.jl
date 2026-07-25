@@ -4,9 +4,10 @@
     DeviceContourState{T}
 
 Structure-of-arrays representation of a vector of [`PVContour`](@ref)s on a
-target device. Coordinates, PV jumps, wrap vectors, corner flags, and local
-topology indices are stored in flat arrays so KernelAbstractions kernels can
-traverse contour geometry without chasing host-side Julia objects.
+target device. Coordinates, PV jumps, wrap vectors, reusable periodic-shift
+buffers, corner flags, and local topology indices are stored in flat arrays so
+KernelAbstractions kernels can traverse contour geometry without chasing
+host-side Julia objects.
 
 Use [`materialize_contours`](@ref) to copy the state back to ordinary
 `Vector{PVContour}` form for output, plotting, or inspection.
@@ -20,6 +21,8 @@ mutable struct DeviceContourState{T<:AbstractFloat,
     pv::FA
     wrapx::FA
     wrapy::FA
+    shiftx::FA
+    shifty::FA
     offsets::IA
     lengths::IA
     corners::BA
@@ -76,6 +79,8 @@ function DeviceContourState(contours::Vector{PVContour{T}},
                               to_device(dev, pv),
                               to_device(dev, wrapx),
                               to_device(dev, wrapy),
+                              device_zeros(dev, T, ncontours),
+                              device_zeros(dev, T, ncontours),
                               to_device(dev, offsets),
                               to_device(dev, lengths),
                               to_device(dev, corners),

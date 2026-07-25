@@ -69,6 +69,29 @@ using Test, ContourDynamics, StaticArrays, Logging
         @test vortex_area(c_new) ≈ vortex_area(c) rtol=1e-12 atol=1e-12
     end
 
+    @testset "Remesh reuses arc lengths and prepared source geometry" begin
+        target = circular_patch(1.0, 48, 1.0)
+        source = circular_patch(0.2, 24, 2.0; cx=1.3)
+        sources = [target, source]
+        params = SurgeryParams(0.001, 0.02, 0.3, 1e-8, 10)
+        arc_buf = Float64[]
+
+        prepared = ContourDynamics._prepare_density_sources(sources)
+        expected = ContourDynamics._dritschel_segment_densities(target, params, sources)
+        actual = ContourDynamics._dritschel_segment_densities(
+            target, params, sources; _arc_buf=arc_buf, _source_data=prepared)
+
+        @test actual ≈ expected
+        @test length(arc_buf) == nnodes(target)
+
+        remesh_buf = SVector{2,Float64}[]
+        vnodes_buf = SVector{2,Float64}[]
+        remesh(target, params; _buf=remesh_buf, _arc_buf=arc_buf,
+               _vnodes_buf=vnodes_buf, _density_sources=sources,
+               _density_source_data=prepared)
+        @test length(arc_buf) == nnodes(target)
+    end
+
     @testset "Remesh Preserves Closed Area With Fixed Corners" begin
         # Post-reconnection contours carry fixed surgery corners and route
         # through `_remesh_with_fixed_corners`. That path must also conserve

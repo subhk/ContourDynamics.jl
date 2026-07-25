@@ -35,6 +35,7 @@ function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
                                               dt::Real,
                                               nsteps::Int,
                                               record_every::Int=1) where {K,D,T}
+    ContourDynamics._require_positive("record_every", record_every)
     dt_T = T(dt)
     tmax = dt_T * T(nsteps)
     clock = ContinuousClock(tmax)
@@ -88,6 +89,7 @@ function ContourDynamics.recorded_diagnostics(prob::MultiLayerContourProblem{N,K
                                               dt::Real,
                                               nsteps::Int,
                                               record_every::Int=1) where {N,K,D,T}
+    ContourDynamics._require_positive("record_every", record_every)
     dt_T = T(dt)
     tmax = dt_T * T(nsteps)
     clock = ContinuousClock(tmax)

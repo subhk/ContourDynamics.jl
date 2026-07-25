@@ -1699,7 +1699,10 @@ function _device_state_from_outputs(outputs::DeviceRewriteOutputs{T},
             local_index, contour_of_node, outputs.offsets, total_nodes)
     end
     return DeviceContourState(outputs.x, outputs.y, outputs.pv, outputs.wrapx,
-                              outputs.wrapy, outputs.offsets, outputs.lengths,
+                              outputs.wrapy,
+                              device_zeros(dev, T, ncontours),
+                              device_zeros(dev, T, ncontours),
+                              outputs.offsets, outputs.lengths,
                               outputs.corners, contour_of_node, local_index)
 end
 
@@ -1712,6 +1715,8 @@ function _replace_device_state!(state::DeviceContourState{T},
     state.pv = replacement.pv
     state.wrapx = replacement.wrapx
     state.wrapy = replacement.wrapy
+    state.shiftx = replacement.shiftx
+    state.shifty = replacement.shifty
     state.offsets = replacement.offsets
     state.lengths = replacement.lengths
     state.corners = replacement.corners
@@ -2977,12 +2982,14 @@ function _remesh_contours_after_surgery!(contours::Vector{PVContour{T}},
                                          arc_buf::Vector{T},
                                          vnodes_buf::Vector{SVector{2,T}}) where {T}
     density_sources = copy(contours)
+    density_source_data = _prepare_density_sources(density_sources)
     for i in eachindex(contours)
         contours[i] = remesh(contours[i], params;
                              _buf=remesh_buf,
                              _arc_buf=arc_buf,
                              _vnodes_buf=vnodes_buf,
-                             _density_sources=density_sources)
+                             _density_sources=density_sources,
+                             _density_source_data=density_source_data)
     end
     _demote_obtuse_corners!(contours)
     return contours

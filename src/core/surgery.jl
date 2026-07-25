@@ -1010,10 +1010,12 @@ function _remesh_all!(contours::Vector{PVContour{T}}, params::SurgeryParams,
                       remesh_buf::Vector{SVector{2,T}}, arc_buf::Vector{T},
                       vnodes_buf::Vector{SVector{2,T}}) where {T}
     density_sources = copy(contours)
+    density_source_data = _prepare_density_sources(density_sources)
     for i in eachindex(contours)
         contours[i] = remesh(contours[i], params;
                              _buf=remesh_buf, _arc_buf=arc_buf,
-                             _vnodes_buf=vnodes_buf, _density_sources=density_sources)
+                             _vnodes_buf=vnodes_buf, _density_sources=density_sources,
+                             _density_source_data=density_source_data)
     end
     _demote_obtuse_corners!(contours)
     return contours
