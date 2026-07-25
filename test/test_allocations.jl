@@ -103,7 +103,10 @@ using LinearAlgebra: norm
         # closure on warm cache hits.
         @test @inferred(velocity!(vel, prob)) === vel
         alloc = allocation_bytes(() -> velocity!(vel, prob))
-        @test alloc <= 16
+        # Julia 1.12's escape analysis elides a 64-byte box that 1.10/1.11
+        # still allocate on this path; keep the strict bound where the
+        # compiler supports it.
+        @test alloc <= (VERSION >= v"1.12" ? 16 : 64)
     end
 
     @testset "Beta-plane velocity reuses live and reference curvature scratch" begin
