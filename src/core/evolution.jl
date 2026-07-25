@@ -325,9 +325,22 @@ end
     return nothing
 end
 
+# Surgery remeshes every pass, moving nodes along their contours even when the
+# total node count is preserved. Any stepper history recorded at the old node
+# positions is therefore stale after every pass — not just after resizes — so
+# steppers with history must re-bootstrap (as the SurgeryParams docstring
+# promises). RK4 keeps no history and needs nothing.
+@inline _invalidate_history!(::AbstractTimeStepper) = nothing
+@inline function _invalidate_history!(stepper::LeapfrogStepper)
+    stepper.initialized = false
+    return nothing
+end
+
 @inline function _handle_post_surgery!(prob::ContourProblem, stepper, old_N::Int)
     if total_nodes(prob) != old_N
         resize_buffers!(stepper, prob)
+    else
+        _invalidate_history!(stepper)
     end
     return nothing
 end
@@ -335,6 +348,8 @@ end
 @inline function _handle_post_surgery!(prob::MultiLayerContourProblem, stepper, old_N::Int)
     if total_nodes(prob) != old_N
         resize_buffers!(stepper, prob)
+    else
+        _invalidate_history!(stepper)
     end
     return nothing
 end

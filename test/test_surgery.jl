@@ -432,6 +432,41 @@ using Test, ContourDynamics, StaticArrays, Logging
         @test abs(vortex_area(merged)) ≈ A0 rtol=0.2
     end
 
+    @testset "Surgery Re-bootstraps Leapfrog Even When Node Count Unchanged" begin
+        # Remeshing moves nodes along the contour on every surgery pass, so the
+        # leapfrog history is stale even when the total node count is
+        # preserved. The SurgeryParams docstring promises a re-bootstrap after
+        # each surgery pass.
+        c = circular_patch(0.5, 32, 1.0)
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+
+        st = LeapfrogStepper(0.01, total_nodes(prob))
+        st.initialized = true
+        ContourDynamics._handle_post_surgery!(prob, st, total_nodes(prob))
+        @test !st.initialized
+
+        st2 = LeapfrogStepper(0.01, total_nodes(prob))
+        st2.initialized = true
+        ContourDynamics._handle_post_surgery!(prob, st2, total_nodes(prob) + 5)
+        @test !st2.initialized
+
+        # RK4 has no history; the count-unchanged path must stay a no-op.
+        rk = RK4Stepper(0.01, total_nodes(prob))
+        @test ContourDynamics._handle_post_surgery!(prob, rk, total_nodes(prob)) === nothing
+
+        # Multi-layer problems share the same post-surgery contract.
+        ml_Ld = SVector(1.0)
+        F = 1.0 / (2 * ml_Ld[1]^2)
+        ml_kernel = MultiLayerQGKernel(ml_Ld, SMatrix{2,2,Float64}(-F, F, F, -F))
+        ml_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(),
+                                           ([circular_patch(0.4, 16, 1.0)],
+                                            [circular_patch(0.3, 12, -0.5)]))
+        ml_st = LeapfrogStepper(0.01, total_nodes(ml_prob))
+        ml_st.initialized = true
+        ContourDynamics._handle_post_surgery!(ml_prob, ml_st, total_nodes(ml_prob))
+        @test !ml_st.initialized
+    end
+
     @testset "No Reconnection: Different PV" begin
         # Two contours with different PV within δ → should NOT merge
         δ = 0.1
