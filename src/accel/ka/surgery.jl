@@ -3132,7 +3132,7 @@ function _host_boundary_surgery!(state::DeviceContourState{T},
     return state
 end
 
-function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
+function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel},
                                        <:PeriodicDomain, T, GPU},
                   params::SurgeryParams) where {T}
     _host_boundary_surgery!(prob.device_state, prob.domain, params, prob.dev)

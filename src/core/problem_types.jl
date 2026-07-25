@@ -72,9 +72,10 @@ _check_gpu_support(::EulerKernel, ::PeriodicDomain, ::GPU) = nothing
 _check_gpu_support(::QGKernel, ::PeriodicDomain, ::GPU) = nothing
 _check_gpu_support(::SQGKernel, ::UnboundedDomain, ::GPU) = nothing
 _check_gpu_support(::SQGKernel, ::PeriodicDomain, ::GPU) = nothing
+_check_gpu_support(::BetaPlaneQGKernel, ::PeriodicDomain, ::GPU) = nothing
 _check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
     "GPU velocity is supported for single-layer EulerKernel, QGKernel, and SQGKernel " *
-    "on UnboundedDomain or PeriodicDomain. " *
+    "on UnboundedDomain or PeriodicDomain, and BetaPlaneQGKernel on PeriodicDomain. " *
     "Got $(typeof(kernel)) on $(typeof(domain)). Use dev=CPU()."))
 
 _check_kernel_type(::AbstractKernel, ::Type) = nothing

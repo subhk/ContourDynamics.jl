@@ -762,3 +762,20 @@ end
     vel_y[i] = vy
 end
 
+
+@kernel function _beta_sawtooth_add_ka!(vel_x, y, beta, kappa, dy, Ly, total)
+    # Analytic zonal velocity of `reference staircase - beta*y`, added on top
+    # of the contour-integral velocity (mirrors _beta_plane_sawtooth_velocity).
+    i = @index(Global)
+    if i <= total
+        T = eltype(vel_x)
+        ξ = mod(y[i] + Ly + dy / 2, dy) - dy / 2
+        u = if abs(kappa * dy) < sqrt(eps(T))
+            beta * (ξ * ξ / 2 - dy * dy / 24)
+        else
+            -beta / (kappa * kappa) +
+                beta * dy * cosh(kappa * ξ) / (2 * kappa * sinh(kappa * dy / 2))
+        end
+        vel_x[i] += u
+    end
+end

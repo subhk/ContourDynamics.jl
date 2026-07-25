@@ -29,7 +29,7 @@ function timestep!(prob::ContourProblem, stepper::RK4Stepper{T}) where {T}
 end
 
 function timestep!(prob::ContourProblem{K, D, T, GPU},
-                   stepper::RK4Stepper{T}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel},
+                   stepper::RK4Stepper{T}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}},
                                                   D<:Union{UnboundedDomain,PeriodicDomain{T}}}
     _rk4_state_step!(prob.device_state, prob.kernel, prob.domain, stepper, prob.dev)
     return prob
@@ -63,7 +63,7 @@ function timestep!(prob::ContourProblem, stepper::LeapfrogStepper{T}) where {T}
 end
 
 function timestep!(prob::ContourProblem{K, D, T, GPU},
-                   stepper::LeapfrogStepper{T}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel},
+                   stepper::LeapfrogStepper{T}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}},
                                                        D<:Union{UnboundedDomain,PeriodicDomain{T}}}
     _leapfrog_state_step!(prob.device_state, prob.kernel, prob.domain, stepper, prob.dev)
     return prob
