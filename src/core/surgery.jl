@@ -819,6 +819,17 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     j_seg = reversed ? mod1(n2_orig - j, n2_orig) : j
     c2_eff = PVContour(c2_nodes, c2.pv, reversed ? -c2.wrap : c2.wrap, c2_corners)
 
+    # For periodic domains, shift c2 into the image closest to the contact
+    # point on c1 BEFORE choosing the stitch node. The stitch node is a copy of
+    # an existing endpoint, so computing the shift after insertion would always
+    # compare that point against its own copy and return zero, leaving the two
+    # halves of the merged polygon in different periodic frames.
+    shift = _periodic_merge_shift(c1.nodes[i], c2_nodes[j_seg], domain)
+    if !iszero(shift)
+        c2_nodes = [n + shift for n in c2_nodes]
+        c2_eff = PVContour(c2_nodes, c2_eff.pv, c2_eff.wrap, c2_corners)
+    end
+
     node_from_c1, node_idx, seg_idx, stitch_point = _best_node_segment_contact(c1, i, c2_eff, j_seg, domain)
     c1_nodes = c1.nodes
     c1_corners = copy(c1.corners)
@@ -835,12 +846,6 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     end
     n1 = length(c1_nodes)
     n2 = length(c2_nodes)
-
-    # For periodic domains, shift c2 to closest image of the merge point.
-    shift = _periodic_merge_shift(c1_nodes[i], c2_nodes[j_eff], domain)
-    if !iszero(shift)
-        c2_nodes = [n + shift for n in c2_nodes]
-    end
 
     # Cross-join the two loops at the labelled surgery node. The two labels are
     # both fixed corners, but they are not adjacent in the node list, avoiding a
