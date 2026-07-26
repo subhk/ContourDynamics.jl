@@ -268,14 +268,6 @@ function _for_each_contour_range!(f, prob::MultiLayerContourProblem{N},
     return nothing
 end
 
-function _ka_stepper_update!(kernel!, ndrange::Int, args...)
-    # Stepper update kernels currently run on the CPU backend even for GPU
-    # velocity problems. GPU velocity kernels manage their own device packing,
-    # while stepper buffers remain CPU-owned for surgery compatibility.
-    @_ka_launch CPU() ndrange kernel!(args...)
-    return nothing
-end
-
 function _ka_stepper_update!(dev::AbstractDevice, kernel!, ndrange::Int, args...)
     @_ka_launch dev ndrange kernel!(args...)
     return nothing
