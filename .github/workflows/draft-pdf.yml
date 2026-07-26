@@ -9,7 +9,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build draft PDF
-        uses: openjournals/openjournals-draft-action@master
+        # Pinned to an immutable commit (master of 2026-07-26) rather than a
+        # moving ref, so a change upstream cannot alter this workflow silently.
+        uses: openjournals/openjournals-draft-action@85a18372e48f551d8af9ddb7a747de685fbbb01c
         with:
           journal: joss
           paper-path: paper/paper.md

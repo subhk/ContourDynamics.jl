@@ -40,8 +40,9 @@ function of the PV inversion operator. This is the idea behind *contour
 dynamics*, introduced by @zabusky1979: replace two-dimensional area integrals
 with one-dimensional line integrals, and advect the boundary nodes with the
 velocity they induce. The method introduces no grid-based numerical diffusion:
-PV values are preserved exactly, and the fine-scale filamentary structure of
-the flow is limited only by the contour resolution.
+the piecewise-constant PV values are carried exactly by the contours, and the
+fine-scale filamentary structure of the flow is limited only by the contour
+resolution rather than by a mesh spacing.
 
 `ContourDynamics.jl` is a Julia package that implements contour dynamics and
 contour surgery [@dritschel1988] for four physical regimes — 2D Euler, surface
