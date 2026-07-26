@@ -221,8 +221,11 @@ _maybe_wrap_nodes!(::ContourProblem{<:AbstractKernel, UnboundedDomain}) = nothin
 _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = wrap_nodes!(prob)
 _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T} =
     _wrap_state_nodes!(prob.device_state, prob.domain, prob.dev)
+# Device-agnostic: unbounded domains never wrap, on any device. A separate
+# GPU method here would be equally specific, not more specific, and the
+# resulting ambiguity would make wrapping unresolvable for GPU multi-layer
+# unbounded problems.
 _maybe_wrap_nodes!(::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain}) = nothing
-_maybe_wrap_nodes!(::MultiLayerContourProblem{N, K, UnboundedDomain, T, GPU}) where {N, K, T} = nothing
 _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain, T, GPU}) where {N, K, T} =
     wrap_nodes!(prob)
 _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLayerQGKernel{N}, D<:PeriodicDomain} = wrap_nodes!(prob)
@@ -317,8 +320,8 @@ function wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T
     return prob
 end
 
-wrap_nodes!(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T, GPU}) where {N, K, T} = prob
-
+# The unbounded multi-layer no-op lives in domains.jl and is device-agnostic;
+# duplicating it for GPU here would be ambiguous rather than more specific.
 function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, GPU}) where {N, K, T}
     for ℓ in 1:N
         _wrap_state_nodes!(prob.device_state[ℓ], prob.domain, prob.dev)
