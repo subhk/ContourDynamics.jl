@@ -19,13 +19,7 @@
     κ = inv(kernel.Ld)
     ξ = mod(x[2] + domain.Ly + dy / 2, dy) - dy / 2
 
-    u = if abs(κ * dy) < sqrt(eps(T))
-        kernel.beta * (ξ^2 / 2 - dy^2 / 24)
-    else
-        -kernel.beta / κ^2 +
-            kernel.beta * dy * cosh(κ * ξ) / (2 * κ * sinh(κ * dy / 2))
-    end
-    return SVector{2,T}(u, zero(T))
+    return SVector{2,T}(_beta_sawtooth_u(kernel.beta, κ, dy, ξ), zero(T))
 end
 
 function _sum_qg_contour_velocity(kernel::QGKernel{T},
