@@ -196,6 +196,29 @@ using LinearAlgebra: norm
         @test alloc <= 64
     end
 
+    @testset "Beta-plane device velocity allocation is independent of node count" begin
+        # The reference staircase is packed once into the cached workspace and
+        # the live half is repacked in place, so per-call allocation must be
+        # fixed KA launch overhead — never proportional to the node count.
+        domain = PeriodicDomain(2.0, 2.0)
+        staircase = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
+        kernel = BetaPlaneQGKernel(0.4, 1.0, staircase)
+
+        function beta_alloc(nnode)
+            live = vcat(deepcopy(staircase), [circular_patch(0.25, nnode, 2π)])
+            state = ContourDynamics.DeviceContourState(live, CPU())
+            N = ContourDynamics._device_state_nnodes(state)
+            vel = zeros(SVector{2,Float64}, N)
+            return allocation_bytes(() -> ContourDynamics._ka_velocity_from_state!(
+                vel, state, kernel, domain, CPU()))
+        end
+
+        small = beta_alloc(16)
+        large = beta_alloc(256)
+        @test small <= 4_096
+        @test large <= small + thread_slack()
+    end
+
     @testset "Multilayer device energy packs segments once, not once per mode" begin
         # The modal loop only changes each segment's PV weight, so the segment
         # packing must be hoisted out of it. Packing per mode costs
