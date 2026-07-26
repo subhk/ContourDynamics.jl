@@ -263,7 +263,8 @@ function clear_state_workspace_cache!()
     store = task_local_storage()
     for key in collect(keys(store))
         key isa Tuple && length(key) == 3 &&
-            (key[1] === _STATE_WS_TLS_KEY || key[1] === _MULTILAYER_WS_TLS_KEY) &&
+            (key[1] === _STATE_WS_TLS_KEY || key[1] === _MULTILAYER_WS_TLS_KEY ||
+             key[1] === _BETA_WS_TLS_KEY) &&
             delete!(store, key)
     end
     return nothing
