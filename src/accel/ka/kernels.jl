@@ -768,14 +768,9 @@ end
     # of the contour-integral velocity (mirrors _beta_plane_sawtooth_velocity).
     i = @index(Global)
     if i <= total
-        T = eltype(vel_x)
         ξ = mod(y[i] + Ly + dy / 2, dy) - dy / 2
-        u = if abs(kappa * dy) < sqrt(eps(T))
-            beta * (ξ * ξ / 2 - dy * dy / 24)
-        else
-            -beta / (kappa * kappa) +
-                beta * dy * cosh(kappa * ξ) / (2 * kappa * sinh(kappa * dy / 2))
-        end
-        vel_x[i] += u
+        # Shared with the CPU evaluator so the two cannot drift apart; see
+        # `_beta_sawtooth_u` for why the small-κ·dy branch is required.
+        vel_x[i] += _beta_sawtooth_u(beta, kappa, dy, ξ)
     end
 end

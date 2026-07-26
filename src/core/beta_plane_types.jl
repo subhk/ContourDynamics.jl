@@ -98,3 +98,34 @@ function _attach_beta_plane_reference(kernel::BetaPlaneQGKernel{T},
         "Build them with beta_staircase(beta, PeriodicDomain(Lx, Ly), n_beta)."))
     return BetaPlaneQGKernel(kernel.beta, kernel.Ld, reference)
 end
+
+"""
+    _beta_sawtooth_u(beta, κ, dy, ξ)
+
+Zonal velocity of the sawtooth jet that solves `(∂yy − κ²)ψ = −βξ` periodically
+across one staircase step of height `dy`, with `u = −∂yψ` and `ξ ∈ [−dy/2, dy/2]`
+the local step coordinate:
+
+    u(ξ) = (β/κ²) [ z·cosh(κξ)/sinh(z) − 1 ],   z = κ·dy/2
+
+Evaluated directly, that is a difference of two `O(β/κ²)` terms and cancels
+catastrophically as `z → 0` — the near-barotropic regime where the deformation
+radius exceeds the step spacing. For `κ·dy < 0.05` we therefore use the Taylor
+expansion in `z` (whose leading term is the barotropic jet `β(ξ²/2 − dy²/24)`),
+and the closed form above only where it is well conditioned. Both branches are
+accurate to a relative `~1e-11` at the crossover, and the expansion has no `κ`
+in a denominator, so `Ld → ∞` stays exact.
+"""
+@inline function _beta_sawtooth_u(beta::T, κ::T, dy::T, ξ::T) where {T}
+    z = κ * dy / 2
+    if abs(z) < T(0.025)
+        s = 2 * ξ / dy                       # step coordinate scaled to [-1, 1]
+        s2 = s * s
+        z2 = z * z
+        return beta * dy^2 / 4 * (
+            (s2 / 2 - T(1) / 6)
+            + z2 * (s2 * s2 / 24 - s2 / 12 + T(7) / 360)
+            + z2 * z2 * (s2 * s2 * s2 / 720 - s2 * s2 / 144 + 7 * s2 / 720 - T(31) / 15120))
+    end
+    return -beta / κ^2 + beta * dy * cosh(κ * ξ) / (2 * κ * sinh(z))
+end
