@@ -233,10 +233,19 @@ _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLa
 # nodes must also be applied to its slice of that history, or the next step
 # mixes coordinates from different periodic images and physically displaces
 # the contour by a non-lattice offset.
+#
+# The CPU methods below MUST stay explicitly `CPU`-constrained. They read the
+# host `prob.contours` / `prob.layers` shadow, which a GPU problem populates
+# once at construction and never updates. If they were left device-agnostic,
+# Julia would find neither them nor the GPU methods more specific (they
+# constrain different type parameters) and would silently pick the CPU one for
+# GPU problems, wrapping stale host geometry and corrupting the device-side
+# leapfrog history. `test_device.jl` asserts the resolution.
 _maybe_wrap_nodes!(prob, ::AbstractTimeStepper) = _maybe_wrap_nodes!(prob)
 
-_maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain},
-                   stepper::LeapfrogStepper) = _wrap_nodes_with_history!(prob, stepper)
+_maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, CPU},
+                   stepper::LeapfrogStepper{T}) where {T} =
+    _wrap_nodes_with_history!(prob, stepper)
 
 function _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU},
                             stepper::LeapfrogStepper{T}) where {T}
@@ -244,8 +253,8 @@ function _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomai
     return nothing
 end
 
-_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain},
-                   stepper::LeapfrogStepper) where {N, K<:MultiLayerQGKernel{N}} =
+_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, CPU},
+                   stepper::LeapfrogStepper{T}) where {N, K<:MultiLayerQGKernel{N}, T} =
     _wrap_nodes_with_history!(prob, stepper)
 
 function _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain, T, GPU},
@@ -260,7 +269,7 @@ function _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomai
     return nothing
 end
 
-function _wrap_nodes_with_history!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}},
+function _wrap_nodes_with_history!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, CPU},
                                    stepper::LeapfrogStepper{T}) where {T}
     stepper.initialized || return wrap_nodes!(prob)
     domain = prob.domain
