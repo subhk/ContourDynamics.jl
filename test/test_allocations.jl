@@ -195,4 +195,25 @@ using LinearAlgebra: norm
         alloc = allocation_bytes(() -> ContourDynamics._fill_segment_bufs!(ax, ay, bx, by, pv, ka, kb, prob))
         @test alloc <= 64
     end
+
+    @testset "Multilayer device energy packs segments once, not once per mode" begin
+        # The modal loop only changes each segment's PV weight, so the segment
+        # packing must be hoisted out of it. Packing per mode costs
+        # O(n_modes × n_layers) full packings — quadratic in layer count — and
+        # throws away an intermediate per-layer copy every time.
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+        states = (ContourDynamics.DeviceContourState([circular_patch(0.3, 16, 1.0)], CPU()),
+                  ContourDynamics.DeviceContourState([circular_patch(0.25, 16, -0.5; cx=0.2)], CPU()))
+
+        alloc_u = allocation_bytes(() -> ContourDynamics._ka_multilayer_energy_from_states(
+            states, kernel, UnboundedDomain(), CPU()))
+        @test alloc_u <= 14_000
+
+        domain = PeriodicDomain(2.0, 2.0)
+        setup_ewald_cache!(domain, EulerKernel())
+        alloc_p = allocation_bytes(() -> ContourDynamics._ka_multilayer_energy_from_states(
+            states, kernel, domain, CPU()))
+        @test alloc_p <= 17_000
+    end
 end

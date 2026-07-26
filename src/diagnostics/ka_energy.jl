@@ -791,17 +791,30 @@ end
 # ── Multi-layer modal energy ─────────────────────────────────────────────
 
 """
-    _pack_multilayer_energy_segments(states, weights, dev, T)
+    _MultilayerEnergyLayout
+
+Concatenated, mode-independent segment packing for multi-layer energy. Only the
+per-segment PV weight changes from mode to mode, so the geometry is packed once
+and `base_pv` (the unweighted PV) is retained to rescale `data.seg.pv` in place
+for each mode. Packing inside the mode loop instead would cost
+`n_modes × n_layers` full packings — quadratic in layer count — plus a discarded
+intermediate copy per layer per mode.
+"""
+struct _MultilayerEnergyLayout{D<:EnergySegmentData, A<:AbstractVector}
+    data::D
+    base_pv::A
+    ranges::Vector{UnitRange{Int}}
+end
+
+"""
+    _pack_multilayer_energy_layout(states, dev, T)
 
 Concatenate every layer's energy-valid segments into one `EnergySegmentData`,
-with each layer's PV pre-scaled by its modal weight and contour ids offset so
-cross-layer pairs are never mistaken for self-interactions. Folding the modal
-weights into the segment PV lets the existing single-layer energy kernels
-evaluate the modal double sum Σᵢⱼ wᵢwⱼ qᵢqⱼ E_pair directly.
+with contour ids offset so cross-layer pairs are never mistaken for
+self-interactions. PV is left unweighted; see `_apply_modal_pv!`.
 """
-function _pack_multilayer_energy_segments(states::NTuple{N, <:DeviceContourState{T}},
-                                          weights::NTuple{N, T},
-                                          dev::AbstractDevice, ::Type{T}) where {N, T}
+function _pack_multilayer_energy_layout(states::NTuple{N, <:DeviceContourState{T}},
+                                        dev::AbstractDevice, ::Type{T}) where {N, T}
     datas = map(s -> _pack_energy_segments(s, dev, T), states)
     lens = map(d -> length(d.seg.ax), datas)
     total = sum(lens)
@@ -810,22 +823,25 @@ function _pack_multilayer_energy_segments(states::NTuple{N, <:DeviceContourState
     bx = device_zeros(dev, T, total)
     by = device_zeros(dev, T, total)
     pv = device_zeros(dev, T, total)
+    base_pv = device_zeros(dev, T, total)
     ka = device_zeros(dev, T, total)
     kb = device_zeros(dev, T, total)
     contour_id = device_zeros(dev, Int, total)
     local_index = device_zeros(dev, Int, total)
+    ranges = Vector{UnitRange{Int}}(undef, N)
     off = 0
     id_off = 0
     for ℓ in 1:N
         d = datas[ℓ]
         nℓ = lens[ℓ]
+        r = (off + 1):(off + nℓ)
+        ranges[ℓ] = r
         if nℓ > 0
-            r = (off + 1):(off + nℓ)
             copyto!(view(ax, r), d.seg.ax)
             copyto!(view(ay, r), d.seg.ay)
             copyto!(view(bx, r), d.seg.bx)
             copyto!(view(by, r), d.seg.by)
-            view(pv, r) .= d.seg.pv .* weights[ℓ]
+            copyto!(view(base_pv, r), d.seg.pv)
             view(contour_id, r) .= d.contour_id .+ id_off
             copyto!(view(local_index, r), d.local_index)
         end
@@ -834,8 +850,27 @@ function _pack_multilayer_energy_segments(states::NTuple{N, <:DeviceContourState
         # count) keeps ids distinct across layers without a device reduction.
         id_off += length(states[ℓ].lengths)
     end
-    return EnergySegmentData(SegmentData(ax, ay, bx, by, pv, ka, kb),
+    data = EnergySegmentData(SegmentData(ax, ay, bx, by, pv, ka, kb),
                              contour_id, local_index)
+    return _MultilayerEnergyLayout(data, base_pv, ranges)
+end
+
+"""
+    _apply_modal_pv!(layout, weights)
+
+Rewrite the concatenated segment PV as `base_pv * weights[layer]` for this mode.
+Folding the modal weights into the segment PV lets the existing single-layer
+energy kernels evaluate the modal double sum Σᵢⱼ wᵢwⱼ qᵢqⱼ E_pair directly.
+"""
+function _apply_modal_pv!(layout::_MultilayerEnergyLayout, weights::NTuple{N, T}) where {N, T}
+    pv = layout.data.seg.pv
+    base = layout.base_pv
+    for ℓ in 1:N
+        r = layout.ranges[ℓ]
+        isempty(r) && continue
+        view(pv, r) .= view(base, r) .* weights[ℓ]
+    end
+    return layout.data
 end
 
 """
@@ -852,11 +887,12 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
                                            dev::AbstractDevice) where {N, T}
     evals = kernel.eigenvalues
     P_inv = kernel.eigenvectors_inv
+    layout = _pack_multilayer_energy_layout(states, dev, T)
+    length(layout.data.seg.ax) == 0 && return zero(T)
     raw = zero(T)
     for mode in 1:N
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
-        data = _pack_multilayer_energy_segments(states, weights, dev, T)
-        length(data.seg.ax) == 0 && continue
+        data = _apply_modal_pv!(layout, weights)
         lam = evals[mode]
         raw += if abs(lam) < eps(T) * 100
             _ka_energy_raw_with_segments!(_euler_energy_ka!, data, dev, T)
@@ -883,11 +919,12 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
     fourier = to_device(dev, cache.fourier_coeffs)
     corr0 = _periodic_euler_corr_at_zero(cache, domain)
     area = T(4) * domain.Lx * domain.Ly
+    layout = _pack_multilayer_energy_layout(states, dev, T)
+    length(layout.data.seg.ax) == 0 && return zero(T)
     raw = zero(T)
     for mode in 1:N
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
-        data = _pack_multilayer_energy_segments(states, weights, dev, T)
-        length(data.seg.ax) == 0 && continue
+        data = _apply_modal_pv!(layout, weights)
         raw_mode = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
                                                  cache.alpha, domain.Lx, domain.Ly,
                                                  cache.n_images, kx, ky, fourier, corr0)
