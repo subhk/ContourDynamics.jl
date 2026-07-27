@@ -4,9 +4,10 @@ using Test
 
 # Guard against double-include when run from runtests.jl
 @isdefined(circular_patch) || include("test_utils.jl")
+@isdefined(_full_rewrite_output_layout) || include("device_rewrite_layout_oracle.jl")
 
 function _assert_device_layout_matches_host(contours, plan)
-    host = ContourDynamics._full_rewrite_output_layout(contours, plan, CPU())
+    host = _full_rewrite_output_layout(contours, plan, CPU())
     dev = ContourDynamics._device_full_rewrite_output_layout(contours, plan, CPU())
     @test dev.total_nodes == host.total_nodes
     for name in (:offsets, :lengths, :op_index, :source_contour, :part,

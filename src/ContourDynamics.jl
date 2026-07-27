@@ -31,7 +31,12 @@ include("velocity/periodic/single_layer.jl")
 include("accel/ka/packing.jl")
 include("accel/ka/kernels.jl")
 include("accel/ka/velocity.jl")
-include("accel/ka/surgery.jl")
+include("accel/ka/surgery/types.jl")
+include("accel/ka/surgery/filaments.jl")
+include("accel/ka/surgery/pairs.jl")
+include("accel/ka/surgery/rewrite.jl")
+include("accel/ka/surgery/remesh.jl")
+include("accel/ka/surgery/driver.jl")
 
 # Diagnostics.
 include("diagnostics/geometry.jl")
