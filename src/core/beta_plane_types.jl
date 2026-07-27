@@ -116,9 +116,20 @@ and the closed form above only where it is well conditioned. Both branches are
 accurate to a relative `~1e-11` at the crossover, and the expansion has no `κ`
 in a denominator, so `Ld → ∞` stays exact.
 """
+
+# Crossover in `z = κ·dy/2` between the Taylor branch and the closed form. The
+# closed form's cancellation error grows like `eps(T)/z²` while the series'
+# truncation error falls like `z⁶`; balancing the two gives `z ~ eps(T)^(1/8)`,
+# so the cutoff must widen as the working precision drops. The Float32 and
+# Float64 values are written out so the comparison folds to a constant inside
+# GPU kernels.
+@inline _beta_series_cutoff(::Type{Float64}) = 0.0275
+@inline _beta_series_cutoff(::Type{Float32}) = 0.34f0
+@inline _beta_series_cutoff(::Type{T}) where {T} = T(5) / 2 * eps(T)^(one(T) / 8)
+
 @inline function _beta_sawtooth_u(beta::T, κ::T, dy::T, ξ::T) where {T}
     z = κ * dy / 2
-    if abs(z) < T(0.025)
+    if abs(z) < _beta_series_cutoff(T)
         s = 2 * ξ / dy                       # step coordinate scaled to [-1, 1]
         s2 = s * s
         z2 = z * z
