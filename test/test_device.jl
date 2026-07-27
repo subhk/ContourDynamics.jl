@@ -1014,7 +1014,8 @@ end
         states = (ContourDynamics.DeviceContourState([c1], CPU()),
                   ContourDynamics.DeviceContourState([c2], CPU()))
         ranges = ContourDynamics._layer_state_ranges(states)
-        @test ranges == [1:24, 25:40]
+        @test ranges isa NTuple{2, UnitRange{Int}}  # tuple, not Vector: allocation-free per-step path
+        @test ranges == (1:24, 25:40)
 
         # A layer with 0 nodes produces an empty range and the next layer starts at the same cursor.
         states3 = (ContourDynamics.DeviceContourState(PVContour{Float64}[], CPU()),
