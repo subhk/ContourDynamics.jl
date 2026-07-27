@@ -468,17 +468,6 @@ function _local_interior_vorticity(contours::Vector{PVContour{T}},
     return q
 end
 
-function _same_local_interior_vorticity(contours::Vector{PVContour{T}},
-                                        ci::Int, i::Int, cj::Int, j::Int, δ,
-                                        domain::AbstractDomain=UnboundedDomain()) where {T}
-    # Keep this scalar predicate separate from find_close_segments so tests and
-    # device kernels can validate the same merge admissibility rule.
-    qi = _local_interior_vorticity(contours, ci, i, δ, domain)
-    qj = _local_interior_vorticity(contours, cj, j, δ, domain)
-    tol = sqrt(eps(T)) * max(one(T), abs(qi), abs(qj))
-    return isapprox(qi, qj; atol=tol, rtol=sqrt(eps(T)))
-end
-
 # ── Periodic helpers for find_close_segments ─────────────
 
 @inline _wrap_query_pt(pt::SVector{2,T}, ::UnboundedDomain) where {T} = pt

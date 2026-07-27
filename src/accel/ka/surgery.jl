@@ -158,21 +158,6 @@ function _pack_flat_topology(contours::Vector{PVContour{T}}, dev::AbstractDevice
                                to_device(dev, active))
 end
 
-@inline function _flat_segment_end(flat::FlatContourTopology{T}, ci::Int, li::Int) where {T}
-    off = flat.offsets[ci]
-    nc = flat.lengths[ci]
-    g = off + li - 1
-    if li < nc
-        return flat.x[g + 1], flat.y[g + 1]
-    else
-        return flat.x[off] + flat.wrapx[ci], flat.y[off] + flat.wrapy[ci]
-    end
-end
-
-@inline function _flat_spanning(flat::FlatContourTopology{T}, ci::Int) where {T}
-    return !iszero(flat.wrapx[ci]) || !iszero(flat.wrapy[ci])
-end
-
 @kernel function _mark_filament_contours_kernel!(remove, x, y, wrapx, wrapy, offsets,
                                                  lengths, corners, area_min, μ,
                                                  ncontours)
