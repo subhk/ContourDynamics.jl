@@ -197,6 +197,24 @@ function _build_prob_ranges(prob::MultiLayerContourProblem{N}) where {N}
     return all_ranges
 end
 
+"""
+    _AnyProblem, _NodeRanges
+
+The flat gather/scatter helpers work the same on both problem shapes. A
+single-layer problem carries one `Vector{UnitRange{Int}}` (callers unwrap
+`_ensure_node_ranges!(stepper, prob)[1]`); a multi-layer problem carries one
+such vector per layer, already offset into the shared flat buffer. Which of
+the two a call gets is resolved by `_for_each_contour_range!`, so the helpers
+themselves need no layer logic.
+"""
+const _AnyProblem = Union{ContourProblem, MultiLayerContourProblem}
+const _NodeRanges = Union{Vector{UnitRange{Int}}, Vector{Vector{UnitRange{Int}}}}
+
+# Ranges matching a problem's current layout, for callers that don't hold a
+# cached set. Multi-layer ranges come pre-offset from `_build_prob_ranges`.
+@inline _default_ranges(prob::ContourProblem) = _flat_contour_ranges(prob.contours)
+@inline _default_ranges(prob::MultiLayerContourProblem) = _build_prob_ranges(prob)
+
 function _contour_ranges_match(ranges::Vector{UnitRange{Int}}, contours, offset::Int=0)
     length(ranges) == length(contours) || return false
     idx = offset + 1
@@ -586,73 +604,58 @@ function _leapfrog_multilayer_state_step!(states::NTuple{N, <:DeviceContourState
     return states
 end
 
-function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
-    N = total_nodes(prob)
-    _check_flat_buffer_length("buffer", length(buf), N)
-    ranges = _flat_contour_ranges(prob.contours)
-    _for_each_contour_range!(prob, ranges) do c, r
-        _ka_copy_nodes_to_flat!(buf, c.nodes, first(r) - 1)
-    end
-end
+"""
+    _collect_all_nodes!(buf, prob[, ranges])
 
-function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::ContourProblem,
-                             ranges::Vector{UnitRange{Int}}) where {T}
-    N = total_nodes(prob)
-    _check_flat_buffer_length("buffer", length(buf), N)
+Gather every contour's nodes into the flat buffer `buf` in layer/contour order.
+Omit `ranges` to derive them from the problem's current layout.
+"""
+function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::_AnyProblem,
+                             ranges::_NodeRanges) where {T}
+    _check_flat_buffer_length("buffer", length(buf), total_nodes(prob))
     _for_each_contour_range!(prob, ranges) do c, r
         _ka_copy_nodes_to_flat!(buf, c.nodes, first(r) - 1)
     end
 end
 
 """
-    _scatter_nodes!(prob::ContourProblem, all_nodes)
+    _scatter_nodes!(prob, all_nodes[, ranges])
 
-Write flat node vector back into contour node arrays.
+Write the flat node vector back into the contour node arrays.
 """
-function _scatter_nodes!(prob::ContourProblem, all_nodes::Vector{SVector{2,T}}) where {T}
-    N = total_nodes(prob)
-    _check_flat_buffer_length("all_nodes", length(all_nodes), N)
-    ranges = _flat_contour_ranges(prob.contours)
-    _for_each_contour_range!(prob, ranges) do c, r
-        _ka_copy_flat_to_nodes!(c.nodes, all_nodes, first(r) - 1)
-    end
-end
-
-function _scatter_nodes!(prob::ContourProblem, all_nodes::Vector{SVector{2,T}},
-                         ranges::Vector{UnitRange{Int}}) where {T}
-    N = total_nodes(prob)
-    _check_flat_buffer_length("all_nodes", length(all_nodes), N)
+function _scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}},
+                         ranges::_NodeRanges) where {T}
+    _check_flat_buffer_length("all_nodes", length(all_nodes), total_nodes(prob))
     _for_each_contour_range!(prob, ranges) do c, r
         _ka_copy_flat_to_nodes!(c.nodes, all_nodes, first(r) - 1)
     end
 end
 
 """
-    _scatter_shifted!(prob, base, delta, scale)
+    _scatter_shifted!(prob, base, delta, scale[, ranges])
 
 Write `base[i] + scale * delta[i]` into contour nodes without allocating.
 """
-function _scatter_shifted!(prob::ContourProblem, base::Vector{SVector{2,T}},
-                           delta::Vector{SVector{2,T}}, scale::T) where {T}
+function _scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
+                           delta::Vector{SVector{2,T}}, scale::T,
+                           ranges::_NodeRanges) where {T}
     N = total_nodes(prob)
     _check_flat_buffer_length("base", length(base), N)
     _check_flat_buffer_length("delta", length(delta), N)
-    ranges = _flat_contour_ranges(prob.contours)
     _for_each_contour_range!(prob, ranges) do c, r
         _ka_scatter_shifted_slice!(c.nodes, base, delta, first(r) - 1, scale)
     end
 end
 
-function _scatter_shifted!(prob::ContourProblem, base::Vector{SVector{2,T}},
-                           delta::Vector{SVector{2,T}}, scale::T,
-                           ranges::Vector{UnitRange{Int}}) where {T}
-    N = total_nodes(prob)
-    _check_flat_buffer_length("base", length(base), N)
-    _check_flat_buffer_length("delta", length(delta), N)
-    _for_each_contour_range!(prob, ranges) do c, r
-        _ka_scatter_shifted_slice!(c.nodes, base, delta, first(r) - 1, scale)
-    end
-end
+_collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::_AnyProblem) where {T} =
+    _collect_all_nodes!(buf, prob, _default_ranges(prob))
+
+_scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}}) where {T} =
+    _scatter_nodes!(prob, all_nodes, _default_ranges(prob))
+
+_scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
+                  delta::Vector{SVector{2,T}}, scale::T) where {T} =
+    _scatter_shifted!(prob, base, delta, scale, _default_ranges(prob))
 
 @inline function _rk4_stage!(k, prob::ContourProblem, nodes_orig, increment, scale, ranges)
     _scatter_shifted!(prob, nodes_orig, increment, scale, ranges)
@@ -674,50 +677,6 @@ end
     _scatter_nodes!(prob, nodes_current, ranges)
     stepper.initialized = true
     return prob
-end
-
-function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourProblem{N}) where {N, T}
-    Ntot = total_nodes(prob)
-    _check_flat_buffer_length("buffer", length(buf), Ntot)
-    offset = 0
-    for i in 1:N
-        ranges = _flat_contour_ranges(prob.layers[i])
-        _for_each_contour_range!(prob.layers[i], ranges) do c, r
-            _ka_copy_nodes_to_flat!(buf, c.nodes, offset + first(r) - 1)
-        end
-        offset += _layer_node_count(prob.layers[i])
-    end
-end
-
-function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::MultiLayerContourProblem{N},
-                             all_ranges::Vector{Vector{UnitRange{Int}}}) where {N, T}
-    Ntot = total_nodes(prob)
-    _check_flat_buffer_length("buffer", length(buf), Ntot)
-    _for_each_contour_range!(prob, all_ranges) do c, r
-        _ka_copy_nodes_to_flat!(buf, c.nodes, first(r) - 1)
-    end
-end
-
-function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SVector{2,T}}) where {N, T}
-    Ntot = total_nodes(prob)
-    _check_flat_buffer_length("all_nodes", length(all_nodes), Ntot)
-    offset = 0
-    for i in 1:N
-        ranges = _flat_contour_ranges(prob.layers[i])
-        _for_each_contour_range!(prob.layers[i], ranges) do c, r
-            _ka_copy_flat_to_nodes!(c.nodes, all_nodes, offset + first(r) - 1)
-        end
-        offset += _layer_node_count(prob.layers[i])
-    end
-end
-
-function _scatter_nodes!(prob::MultiLayerContourProblem{N}, all_nodes::Vector{SVector{2,T}},
-                         all_ranges::Vector{Vector{UnitRange{Int}}}) where {N, T}
-    Ntot = total_nodes(prob)
-    _check_flat_buffer_length("all_nodes", length(all_nodes), Ntot)
-    _for_each_contour_range!(prob, all_ranges) do c, r
-        _ka_copy_flat_to_nodes!(c.nodes, all_nodes, first(r) - 1)
-    end
 end
 
 """
@@ -754,32 +713,6 @@ function _ensure_vel_bufs!(vel_bufs::Vector{Vector{SVector{2, T}}},
         fill!(vel_bufs[i], z)
     end
     return ntuple(i -> vel_bufs[i], Val(N))
-end
-
-function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVector{2,T}},
-                           delta::Vector{SVector{2,T}}, scale::T) where {N, T}
-    Ntot = total_nodes(prob)
-    _check_flat_buffer_length("base", length(base), Ntot)
-    _check_flat_buffer_length("delta", length(delta), Ntot)
-    offset = 0
-    for i in 1:N
-        ranges = _flat_contour_ranges(prob.layers[i])
-        _for_each_contour_range!(prob.layers[i], ranges) do c, r
-            _ka_scatter_shifted_slice!(c.nodes, base, delta, offset + first(r) - 1, scale)
-        end
-        offset += _layer_node_count(prob.layers[i])
-    end
-end
-
-function _scatter_shifted!(prob::MultiLayerContourProblem{N}, base::Vector{SVector{2,T}},
-                           delta::Vector{SVector{2,T}}, scale::T,
-                           all_ranges::Vector{Vector{UnitRange{Int}}}) where {N, T}
-    Ntot = total_nodes(prob)
-    _check_flat_buffer_length("base", length(base), Ntot)
-    _check_flat_buffer_length("delta", length(delta), Ntot)
-    _for_each_contour_range!(prob, all_ranges) do c, r
-        _ka_scatter_shifted_slice!(c.nodes, base, delta, first(r) - 1, scale)
-    end
 end
 
 @inline function _rk4_stage!(flat_k, vel_tuple, prob::MultiLayerContourProblem,
