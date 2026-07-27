@@ -66,6 +66,7 @@ export remesh, arc_lengths, surgery!
 export circular_patch, elliptical_patch, rankine_vortex
 export Problem, contours, kernel, domain
 export EwaldCache, build_ewald_cache, setup_ewald_cache!, clear_ewald_cache!
+export clear_state_workspace_cache!
 export timestep!, resize_buffers!, evolve!
 
 # Extension stubs — implemented by package extensions when optional
