@@ -94,6 +94,94 @@ macro _valid_contour_pairs(ci, cj, partial, contours, scratch, body)
 end
 
 """
+    _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
+
+3×3 Gauss-Legendre tensor quadrature of `Φ` over the segment pair
+`midi ± half_dsi` × `midj ± half_dsj`. `Φ` receives the separation vector
+(not `r²`) because the periodic Ewald Green's functions depend on direction
+through their Fourier phases.
+
+`Φ` carries its own type parameter so each call site specializes and inlines
+it — the energy path is allocation-tested, so a non-specialized (boxed) `Φ`
+would show up as a regression in `test_allocations.jl`.
+"""
+@inline function _gl3_pair_quad(midi::SVector{2,T}, half_dsi::SVector{2,T},
+                                midj::SVector{2,T}, half_dsj::SVector{2,T},
+                                g_nodes, g_weights, Φ::F) where {T,F}
+    quad = zero(T)
+    for qi in 1:3
+        pi_pt = midi + g_nodes[qi] * half_dsi
+        for qj in 1:3
+            pj_pt = midj + g_nodes[qj] * half_dsj
+            r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
+            quad += g_weights[qi] * g_weights[qj] * Φ(r_vec)
+        end
+    end
+    return quad
+end
+
+"""
+    _log_self_seg_quad(half_ds)
+
+Analytical self-segment integral of the `log(r²)/2` singularity:
+`∫₋₁¹∫₋₁¹ log(|s-t|·|half_ds|) ds dt = (4log2 - 6) + 4log|half_ds|`.
+Shared by the Euler, QG, and periodic-Euler self branches.
+"""
+@inline function _log_self_seg_quad(half_ds::SVector{2,T}) where {T}
+    half_ds_len = sqrt(half_ds[1]^2 + half_ds[2]^2)
+    return half_ds_len > eps(T) ? (4 * log(T(2)) - T(6)) + 4 * log(half_ds_len) : zero(T)
+end
+
+"""
+    _energy_contour_pair(ci, cj, Φ[, self_quad]; _partial)
+
+Double contour integral `∮∮ Φ(r) ds·ds'` over the segment pairs of `ci` and
+`cj`, threaded over the outer segments. Every single-layer energy kernel is
+this same O(N²) loop with a different integrand, so only `Φ` — and, for
+kernels with a singularity at coincident segments, `self_quad` — varies.
+
+`self_quad(mid, half_ds, g_nodes, g_weights)` is called instead of the
+quadrature when a contour is integrated against itself and `i == j`
+(so `midj == midi` and `half_dsj == half_dsi`). Pass `nothing` for kernels
+that are smooth everywhere: `S === Nothing` is known at compile time, so the
+self branch is pruned rather than tested per segment pair.
+"""
+function _energy_contour_pair(ci::PVContour{T}, cj::PVContour{T}, Φ::F,
+                              self_quad::S=nothing;
+                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T,F,S}
+    nci = nnodes(ci)
+    ncj = nnodes(cj)
+    is_self = S !== Nothing && ci.nodes === cj.nodes
+    # 3-point Gauss-Legendre nodes/weights on [-1,1]
+    g_nodes, g_weights = _gl3_nodes_weights(T)
+    # Thread over outer segments, each thread accumulates a partial sum.
+    return @_energy_segment_loop partial _partial nci for i in 1:nci
+        ai = ci.nodes[i]
+        bi = next_node(ci, i)
+        dsi = bi - ai
+        midi = (ai + bi) / 2
+        half_dsi = dsi / 2
+        local_s = zero(T)
+        for j in 1:ncj
+            aj = cj.nodes[j]
+            bj = next_node(cj, j)
+            dsj = bj - aj
+            midj = (aj + bj) / 2
+            half_dsj = dsj / 2
+            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
+            quad = if S !== Nothing && is_self && i == j
+                self_quad(midi, half_dsi, g_nodes, g_weights)
+            else
+                _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
+            end
+            # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
+            local_s += quad / 4 * dot_ds
+        end
+        partial[i] = local_s
+    end
+end
+
+"""
     vortex_area(c::PVContour)
 
 Signed area enclosed by contour `c` using the shoelace formula.
