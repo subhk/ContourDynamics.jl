@@ -3,13 +3,11 @@
 function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = prob.contours
-    inv4pi = one(T) / (4 * T(π))
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj; _partial=partial)
     end
-    # Factor 1/2: the double sum counts both (i,j) and (j,i) for the symmetric integrand.
-    return -inv4pi * E / 2
+    return _normalize_energy(E)
 end
 
 function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T};
@@ -31,11 +29,9 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta; _partial=partial)
     end
-    # E_SQG = -(1/(4π)) × (1/2) × Σ q_i q_j ∮∮ Φδ(r) ds·ds'
-    # where Φδ(r) = sqrt(r²+δ²) - δ log(δ + sqrt(r²+δ²)).
-    # This satisfies ΔΦδ = 1/sqrt(r²+δ²), matching the regularized SQG kernel.
-    inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * E / 2
+    # Φδ(r) = sqrt(r²+δ²) - δ log(δ + sqrt(r²+δ²)) satisfies ΔΦδ = 1/sqrt(r²+δ²),
+    # matching the regularized SQG kernel.
+    return _normalize_energy(E)
 end
 
 function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T;
@@ -49,12 +45,11 @@ function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = prob.contours
     Ld = prob.kernel.Ld
-    inv4pi = one(T) / (4 * T(π))
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_qg(ci, cj, Ld; _partial=partial)
     end
-    return -inv4pi * E / 2
+    return _normalize_energy(E)
 end
 
 function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T;

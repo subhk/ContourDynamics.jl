@@ -94,6 +94,15 @@ macro _valid_contour_pairs(ci, cj, partial, contours, scratch, body)
 end
 
 """
+    _normalize_energy(raw)
+
+Turn a raw double sum `Σ qᵢqⱼ ∮∮ Φ(r) ds·ds'` into an energy: `E = -(1/4π)·raw/2`.
+The ½ is because the double sum counts both `(i,j)` and `(j,i)` for a symmetric
+integrand. Shared by every kernel, domain, and backend — CPU and KA alike.
+"""
+@inline _normalize_energy(raw::T) where {T} = -(one(T) / (T(4) * T(π))) * raw / T(2)
+
+"""
     _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
 
 3×3 Gauss-Legendre tensor quadrature of `Φ` over the segment pair
