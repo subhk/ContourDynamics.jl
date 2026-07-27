@@ -68,7 +68,13 @@ src/
 │   ├── packing.jl                flat SegmentData layout, reusable workspaces
 │   ├── kernels.jl                @kernel velocity kernels and scalar helpers
 │   ├── velocity.jl               launch wrappers, dispatch, entry points
-│   └── surgery.jl                device-resident surgery pipeline
+│   └── surgery/                  device-resident surgery pipeline
+│       ├── types.jl              FlatContourTopology and the flat packing helpers
+│       ├── filaments.jl          filament flagging and stream compaction
+│       ├── pairs.jl              close-pair detection, admissibility, pair selection
+│       ├── rewrite.jl            split/merge topology rewrite and output layout
+│       ├── remesh.jl             Dritschel weighted remeshing, area preservation
+│       └── driver.jl             pipeline drivers and the public surgery! methods
 └── diagnostics/
     ├── geometry.jl               area, circulation, enstrophy, angular momentum
     ├── ka_energy.jl              device-resident energy, single- and multi-layer
@@ -83,9 +89,10 @@ ext/                              package extensions, loaded on demand
 └── ContourDynamicsRecordedArraysExt.jl   time-series recording
 ```
 
-The two largest files are `accel/ka/surgery.jl` (the device surgery pipeline)
-and `core/evolution_buffers.jl` (flat-buffer stepping); neither is a good
-starting point for reading the package.
+The densest reading is `core/surgery.jl` (the CPU reference surgery pass) and
+the `accel/ka/surgery/` stages that mirror it on the device; neither is a good
+starting point for reading the package. `core/evolution_buffers.jl` is likewise
+mostly flat-buffer bookkeeping rather than model logic.
 
 ## Core Types
 
@@ -274,9 +281,10 @@ state.
 - “I want to understand acceleration”:
   `src/accel/ka/packing.jl`, then `src/accel/ka/kernels.jl`
 - “I want to understand GPU / KA code”:
-  `src/accel/ka/` (`packing.jl` → `kernels.jl` → `velocity.jl`), then `src/accel/ka/surgery.jl`
+  `src/accel/ka/` (`packing.jl` → `kernels.jl` → `velocity.jl`), then
+  `src/accel/ka/surgery/` (`types.jl` → `driver.jl`, then the stage you need)
 - “I want to understand surgery”:
-  `src/core/surgery.jl`
+  `src/core/surgery.jl`, then `src/accel/ka/surgery/driver.jl` for the device pass
 
 ## Typical Change Map
 

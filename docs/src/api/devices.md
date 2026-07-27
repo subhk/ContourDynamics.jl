@@ -24,6 +24,12 @@ Two paths remain CPU-only by design: the `velocity(prob, x)` single-point probe
 for beta-plane problems, and the OrdinaryDiffEq bridge, which uses a CPU vector
 state.
 
+The device velocity paths cache their scratch workspaces in task-local storage
+and size them to the current node count, so repeated steps reuse the same
+buffers. Those buffers live as long as the task; call
+`clear_state_workspace_cache!` to release them — the workspace counterpart to
+[`clear_ewald_cache!`](@ref).
+
 ```@docs
 AbstractDevice
 CPU
@@ -34,4 +40,5 @@ device_array
 device_zeros
 to_cpu
 to_device
+clear_state_workspace_cache!
 ```
