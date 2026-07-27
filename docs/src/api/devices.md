@@ -7,12 +7,22 @@ diagnostic paths. Host contour containers on a GPU problem are initialization
 shadows; use `materialize_contours(prob)` only when you intentionally need a CPU
 copy for output, plotting, file writing, or interactive inspection.
 
-Single-layer Euler, QG, and SQG support GPU velocity and timestepping on
-unbounded and periodic domains. `BetaPlaneQGKernel` currently requires
-`dev=CPU()`. Multi-layer QG supports device-resident GPU velocity, RK4/leapfrog
-timestepping, periodic wrapping, and unbounded surgery; periodic multi-layer
-surgery still requires `dev=CPU()` (GPU surgery is unbounded-only, matching the
-single-layer restriction).
+Single-layer Euler, QG, and SQG (unbounded or periodic), beta-plane QG
+(periodic), and multi-layer QG all support device-resident velocity,
+RK4/leapfrog timestepping, periodic wrapping, surgery, and diagnostics —
+including energy.
+
+Surgery differs by domain. On unbounded domains the whole pass — cleanup flags,
+close-pair scans, reconnection planning, contour rewrites, and Dritschel
+remeshing — runs on the device. On periodic domains the pass materializes at the
+host boundary, runs the CPU surgery pass (whose cross-seam merge logic handles
+minimum-image proximity and periodic frame shifts), and reloads the device
+state in place; that cost is amortized over the `n_surgery` steps between
+passes.
+
+Two paths remain CPU-only by design: the `velocity(prob, x)` single-point probe
+for beta-plane problems, and the OrdinaryDiffEq bridge, which uses a CPU vector
+state.
 
 ```@docs
 AbstractDevice

@@ -32,6 +32,61 @@ Most code falls into one of six layers:
 - `src/accel/ka/`: KernelAbstractions-based direct kernels for CPU/GPU backends
 - `src/diagnostics/`: geometry and integral diagnostics
 
+## Codebase Structure
+
+```text
+src/
+├── ContourDynamics.jl            module definition, includes, exports
+├── beta_plane.jl                 beta-plane QG velocity composition
+├── core/
+│   ├── types.jl                  includes the type-definition files below
+│   ├── kernel_types.jl           EulerKernel, QGKernel, SQGKernel, MultiLayerQGKernel
+│   ├── beta_plane_types.jl       BetaPlaneQGKernel + the shared sawtooth jet formula
+│   ├── contour_types.jl          PVContour
+│   ├── domain_types.jl           UnboundedDomain, PeriodicDomain
+│   ├── problem_types.jl          ContourProblem, MultiLayerContourProblem
+│   ├── stepper_types.jl          RK4Stepper, LeapfrogStepper
+│   ├── surgery_types.jl          SurgeryParams
+│   ├── problem.jl                the high-level Problem wrapper
+│   ├── problem_factory.jl        keyword construction of Problem
+│   ├── contours.jl               contour geometry, remeshing, beta_staircase
+│   ├── domains.jl                periodic wrapping, minimum-image helpers
+│   ├── surgery.jl                CPU surgery: filaments, reconnection, remesh
+│   ├── evolution.jl              evolve!, timestep!, periodic wrap dispatch
+│   ├── evolution_buffers.jl      flat packing/scatter, stepper update kernels
+│   ├── device.jl                 CPU/GPU device tags and allocation shims
+│   ├── device_state.jl           DeviceContourState, the device-resident layout
+│   ├── shapes.jl                 circular_patch, elliptical_patch, …
+│   └── show.jl                   pretty printing for the public types
+├── velocity/
+│   ├── common.jl                 public velocity! API and dispatch policy
+│   ├── unbounded/single_layer.jl unbounded Euler/QG/SQG segment velocity
+│   └── periodic/
+│       ├── cache.jl              Ewald cache construction and locking
+│       └── single_layer.jl       periodic single-layer corrections
+├── accel/ka/
+│   ├── packing.jl                flat SegmentData layout, reusable workspaces
+│   ├── kernels.jl                @kernel velocity kernels and scalar helpers
+│   ├── velocity.jl               launch wrappers, dispatch, entry points
+│   └── surgery.jl                device-resident surgery pipeline
+└── diagnostics/
+    ├── geometry.jl               area, circulation, enstrophy, angular momentum
+    ├── ka_energy.jl              device-resident energy, single- and multi-layer
+    ├── unbounded/                unbounded energy, single- and multi-layer
+    └── periodic/                 periodic energy, single- and multi-layer
+
+ext/                              package extensions, loaded on demand
+├── ContourDynamicsCUDAExt.jl     wires GPU() to CuArray and the CUDA KA backend
+├── ContourDynamicsDiffEqExt.jl   OrdinaryDiffEq bridge (CPU state)
+├── ContourDynamicsJLD2Ext.jl     checkpointing and recorders
+├── ContourDynamicsMakieExt.jl    plotting and animation
+└── ContourDynamicsRecordedArraysExt.jl   time-series recording
+```
+
+The two largest files are `accel/ka/surgery.jl` (the device surgery pipeline)
+and `core/evolution_buffers.jl` (flat-buffer stepping); neither is a good
+starting point for reading the package.
+
 ## Core Types
 
 The object model is split by responsibility under `src/core/`:
@@ -93,15 +148,16 @@ For multilayer CPU problems:
 
 - direct modal decomposition
 
-For supported GPU-tagged single-layer Euler, QG, and SQG problems:
+For GPU-tagged problems — single-layer Euler, QG, SQG, and beta-plane QG, and
+multi-layer QG:
 
-- KernelAbstractions direct path
+- KernelAbstractions direct path, reading the device-resident state
 
-Beta-plane QG currently uses the CPU direct path. Multi-layer `GPU()` problems
-are device-resident: modal velocity, RK4/leapfrog timestepping, and periodic
-wrapping run per-layer on `DeviceContourState`; surgery is supported on
-unbounded domains only (periodic surgery requires `dev=CPU()`, matching the
-single-layer GPU restriction).
+All GPU-tagged problems are device-resident: velocity, RK4/leapfrog
+timestepping, periodic wrapping, surgery, and diagnostics operate on
+`DeviceContourState` without a per-step host round-trip. Surgery on unbounded
+domains runs entirely on the device; periodic surgery materializes at the host
+boundary, runs the CPU pass, and reloads the device state in place.
 
 ## Velocity Backends
 
@@ -132,7 +188,7 @@ Implemented under `src/accel/ka/`, split by concern:
 - `packing.jl`: flat `SegmentData` layout and per-size workspace buffers
 - `kernels.jl`: scalar contribution helpers and the `@kernel` velocity kernels
 - `velocity.jl`: launch wrappers, dispatch, and the `_ka_velocity!` entry points
-- `surgery.jl`: experimental topology-surgery building blocks
+- `surgery.jl`: the device-resident surgery pipeline
 
 The KA layer runs on both backends:
 
@@ -144,7 +200,7 @@ The KA layer contains:
 
 - flat segment kernels
 - periodic KA variants
-- flat contour topology buffers for future GPU surgery phases
+- flat contour topology buffers backing the device surgery pipeline
 - device-side contour cleanup flags, close-pair candidate detection, and compact
   close-pair candidate buffers
 - device-side admissibility filtering for unbounded close-pair buffers,
@@ -163,9 +219,17 @@ The KA layer contains:
   multi-layer problems) that uses device-side cleanup flags, close-pair scans,
   remeshing, reconnection planning, and contour rewrites, then updates the
   active `DeviceContourState`
+- a periodic `GPU()` surgery dispatch that materializes at the host boundary,
+  runs the CPU surgery pass, and reloads the device state in place, so
+  cross-seam topology reuses the CPU minimum-image and frame-shift logic
 - multi-layer velocity evaluation through the state-based modal evaluator,
   which packs per-layer segments with modal PV weights and reuses the
   single-layer KA kernels once per vertical mode
+- multi-layer energy through the same modal trick: the segment geometry is
+  packed once and only the per-segment PV weight is rewritten per mode
+- the beta-plane device path, which caches the frozen reference staircase with
+  negated PV in the tail of its segment buffers and adds the analytic sawtooth
+  jet with a separate kernel
 
 ## Threading and Parallelism
 
@@ -186,13 +250,16 @@ That is a separate execution path from the explicit threaded loops above.
 ### GPU parallelism
 
 When the CUDA extension is loaded and `dev=GPU()`, the active contour state is a
-device-resident `DeviceContourState`. Supported single-layer velocity,
-timestepping, surgery, and scalar diagnostics read that state directly. CPU
-contour reconstruction is reserved for explicit output boundaries such as
-`materialize_contours`, JLD2 snapshots, Makie animation frames, and interactive
-inspection. Multi-layer `GPU()` problems support device-resident velocity,
-RK4/leapfrog timestepping, periodic wrapping, and unbounded surgery; periodic
-multi-layer surgery still requires `dev=CPU()`.
+device-resident `DeviceContourState`. Velocity, timestepping, surgery, and
+diagnostics read that state directly, for single-layer Euler, QG, SQG, and
+beta-plane QG as well as multi-layer QG. CPU contour reconstruction is reserved
+for explicit output boundaries such as `materialize_contours`, JLD2 snapshots,
+Makie animation frames, and interactive inspection — plus the periodic surgery
+pass, which deliberately round-trips to the host.
+
+Two paths stay on the CPU by design: the `velocity(prob, x)` single-point probe
+for beta-plane problems, and the OrdinaryDiffEq bridge, which needs a CPU vector
+state.
 
 ## Read This File If...
 
@@ -216,7 +283,11 @@ multi-layer surgery still requires `dev=CPU()`.
 - Add a new kernel:
   type in `src/core/kernel_types.jl`, direct segment logic, then diagnostics/tests
 - Change beta-plane QG:
-  `src/core/beta_plane_types.jl`, `src/beta_plane.jl`, `src/core/contours.jl`
+  `src/core/beta_plane_types.jl` (kernel type and the shared sawtooth formula),
+  `src/beta_plane.jl` (CPU composition), `src/core/contours.jl`
+  (`beta_staircase`), and `src/accel/ka/velocity.jl` for the device path.
+  The sawtooth jet lives in `_beta_sawtooth_u` so the CPU evaluator and the KA
+  kernel cannot drift apart — change it there, not in either caller.
 - Change default user construction:
   `src/core/problem_factory.jl`
 - Change time stepping:

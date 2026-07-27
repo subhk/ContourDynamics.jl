@@ -85,8 +85,9 @@ prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=GPU())
     GPU problems keep the active contour state in device buffers. Use
     `materialize_contours(prob)` only when you need a CPU copy for output,
     plotting, file writing, or inspection. Unsupported GPU operations throw
-    instead of silently falling back to CPU work. `BetaPlaneQGKernel` currently
-    requires `dev=CPU()`, and multi-layer GPU support is velocity-only.
+    instead of silently falling back to CPU work. Single-layer Euler, QG, SQG,
+    and beta-plane QG, and multi-layer QG, all support device-resident
+    velocity, timestepping, surgery, and diagnostics.
 
 ## Installation
 
