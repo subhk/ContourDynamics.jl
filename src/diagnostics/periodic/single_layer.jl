@@ -4,13 +4,12 @@ function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = prob.contours
     cache = _get_ewald_cache(prob.domain, prob.kernel)
-    inv4pi = one(T) / (4 * T(π))
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv *
              _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
     end
-    return -inv4pi * E / 2
+    return _normalize_energy(E)
 end
 
 function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {T}
@@ -20,14 +19,13 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     # correction has coefficients -κ²/(k²(k²+κ²)). The QG cache carries both the
     # Euler periodic coefficients and the precomputed correction coefficients.
     cache = _get_ewald_cache(prob.domain, prob.kernel)
-    inv4pi = one(T) / (4 * T(π))
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         pair_E = _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
         pair_E += _energy_contour_pair_qg_correction(ci, cj, cache; _partial=partial)
         E += ci.pv * cj.pv * pair_E
     end
-    return -inv4pi * E / 2
+    return _normalize_energy(E)
 end
 
 """QG-Euler correction for periodic energy: smooth Fourier series with -κ²/(k²(k²+κ²)) coefficients (precomputed in `cache.corr_coeffs`)."""
@@ -66,6 +64,5 @@ function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where 
         E += ci.pv * cj.pv *
              _energy_contour_pair_sqg_periodic(ci, cj, cache, prob.domain, delta; _partial=partial)
     end
-    inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * E / 2
+    return _normalize_energy(E)
 end

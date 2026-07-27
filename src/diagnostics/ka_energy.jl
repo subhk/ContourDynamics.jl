@@ -631,161 +631,91 @@ function _periodic_euler_corr_at_zero(cache::EwaldCache{T}, domain::PeriodicDoma
     return corr
 end
 
-function _ka_energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}, dev::AbstractDevice) where {T}
-    prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    raw = _ka_energy_raw(_euler_energy_ka!, prob.contours, dev, T)
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+"""
+    _EnergySource{T}
+
+Anything the energy path can pack into segments: a host contour vector or a
+flat device state. `_pack_energy_segments` has a method for each, so the
+kernel/domain implementations below are written once and serve both the
+CPU-device path (`prob.contours`) and the GPU path (`prob.device_state`).
+"""
+const _EnergySource{T} = Union{DeviceContourState{T}, Vector{PVContour{T}}}
+
+# Upload the Ewald tables once per call — every periodic energy kernel takes
+# the same (kx, ky, fourier_coeffs) triple.
+@inline function _device_ewald_tables(cache::EwaldCache, dev::AbstractDevice)
+    return (to_device(dev, cache.kx), to_device(dev, cache.ky),
+            to_device(dev, cache.fourier_coeffs))
 end
 
-function _ka_energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}, dev::AbstractDevice) where {T}
+# GPU problems keep their nodes in `device_state`, CPU-device problems in the
+# host `contours` vector; both are valid `_EnergySource`s.
+function _ka_energy(prob::ContourProblem, dev::AbstractDevice)
     prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    raw = _ka_energy_raw(_sqg_energy_ka!, prob.contours, dev, T, prob.kernel.delta)
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    return _ka_energy_from_state(prob.contours, prob.kernel, prob.domain, dev)
 end
 
-function _ka_energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}, dev::AbstractDevice) where {T}
-    prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    raw = _ka_energy_raw(_qg_energy_ka!, prob.contours, dev, T, prob.kernel.Ld)
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
-end
-
-function _ka_energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}, dev::AbstractDevice) where {T}
-    prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    cache = _get_ewald_cache(prob.domain, prob.kernel)
-    data = _pack_energy_segments(prob.contours, dev, T)
-    raw = if length(data.seg.ax) == 0
-        zero(T)
-    else
-        kx = to_device(dev, cache.kx)
-        ky = to_device(dev, cache.ky)
-        fourier = to_device(dev, cache.fourier_coeffs)
-        corr0 = _periodic_euler_corr_at_zero(cache, prob.domain)
-        _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                      cache.alpha, prob.domain.Lx, prob.domain.Ly,
-                                      cache.n_images, kx, ky, fourier, corr0)
-    end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
-end
-
-function _ka_energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}, dev::AbstractDevice) where {T}
-    prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    cache = _get_ewald_cache(prob.domain, EulerKernel())
-    data = _pack_energy_segments(prob.contours, dev, T)
-    raw = if length(data.seg.ax) == 0
-        zero(T)
-    else
-        kx = to_device(dev, cache.kx)
-        ky = to_device(dev, cache.ky)
-        fourier = to_device(dev, cache.fourier_coeffs)
-        corr0 = _periodic_euler_corr_at_zero(cache, prob.domain)
-        raw_euler = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                                  cache.alpha, prob.domain.Lx, prob.domain.Ly,
-                                                  cache.n_images, kx, ky, fourier, corr0)
-        kappa2 = one(T) / (prob.kernel.Ld * prob.kernel.Ld)
-        area = T(4) * prob.domain.Lx * prob.domain.Ly
-        raw_corr = _ka_energy_raw_with_segments!(_periodic_qg_correction_energy_ka!, data, dev, T,
-                                                 kappa2, area, kx, ky)
-        raw_euler + raw_corr
-    end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
-end
-
-function _ka_energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}, dev::AbstractDevice) where {T}
-    prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    cache = _get_ewald_cache(prob.domain, prob.kernel)
-    data = _pack_energy_segments(prob.contours, dev, T)
-    raw = if length(data.seg.ax) == 0
-        zero(T)
-    else
-        kx = to_device(dev, cache.kx)
-        ky = to_device(dev, cache.ky)
-        fourier = to_device(dev, cache.fourier_coeffs)
-        _ka_energy_raw_with_segments!(_periodic_sqg_energy_ka!, data, dev, T,
-                                      cache.alpha, prob.kernel.delta,
-                                      prob.domain.Lx, prob.domain.Ly,
-                                      cache.n_images, kx, ky, fourier)
-    end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
-end
-
-function _ka_energy_from_state(state::DeviceContourState{T}, ::EulerKernel,
+function _ka_energy_from_state(src::_EnergySource{T}, ::EulerKernel,
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
-    raw = _ka_energy_raw(_euler_energy_ka!, state, dev, T)
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    return _normalize_energy(_ka_energy_raw(_euler_energy_ka!, src, dev, T))
 end
 
-function _ka_energy_from_state(state::DeviceContourState{T}, kernel::SQGKernel{T},
+function _ka_energy_from_state(src::_EnergySource{T}, kernel::SQGKernel{T},
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
-    raw = _ka_energy_raw(_sqg_energy_ka!, state, dev, T, kernel.delta)
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    return _normalize_energy(_ka_energy_raw(_sqg_energy_ka!, src, dev, T, kernel.delta))
 end
 
-function _ka_energy_from_state(state::DeviceContourState{T}, kernel::QGKernel{T},
+function _ka_energy_from_state(src::_EnergySource{T}, kernel::QGKernel{T},
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
-    raw = _ka_energy_raw(_qg_energy_ka!, state, dev, T, kernel.Ld)
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    return _normalize_energy(_ka_energy_raw(_qg_energy_ka!, src, dev, T, kernel.Ld))
 end
 
-function _ka_energy_from_state(state::DeviceContourState{T}, kernel::EulerKernel,
+function _ka_energy_from_state(src::_EnergySource{T}, kernel::EulerKernel,
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
     cache = _get_ewald_cache(domain, kernel)
-    data = _pack_energy_segments(state, dev, T)
-    raw = if length(data.seg.ax) == 0
-        zero(T)
-    else
-        kx = to_device(dev, cache.kx)
-        ky = to_device(dev, cache.ky)
-        fourier = to_device(dev, cache.fourier_coeffs)
-        corr0 = _periodic_euler_corr_at_zero(cache, domain)
-        _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                      cache.alpha, domain.Lx, domain.Ly,
-                                      cache.n_images, kx, ky, fourier, corr0)
-    end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    data = _pack_energy_segments(src, dev, T)
+    length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
+    kx, ky, fourier = _device_ewald_tables(cache, dev)
+    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    raw = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
+                                        cache.alpha, domain.Lx, domain.Ly,
+                                        cache.n_images, kx, ky, fourier, corr0)
+    return _normalize_energy(raw)
 end
 
-function _ka_energy_from_state(state::DeviceContourState{T}, kernel::QGKernel{T},
+function _ka_energy_from_state(src::_EnergySource{T}, kernel::QGKernel{T},
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
+    # G_QG_per = G_Euler_per + correction, so this reads the domain's *Euler*
+    # Ewald cache and adds the analytic Fourier correction on top.
     cache = _get_ewald_cache(domain, EulerKernel())
-    data = _pack_energy_segments(state, dev, T)
-    raw = if length(data.seg.ax) == 0
-        zero(T)
-    else
-        kx = to_device(dev, cache.kx)
-        ky = to_device(dev, cache.ky)
-        fourier = to_device(dev, cache.fourier_coeffs)
-        corr0 = _periodic_euler_corr_at_zero(cache, domain)
-        raw_euler = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                                  cache.alpha, domain.Lx, domain.Ly,
-                                                  cache.n_images, kx, ky, fourier, corr0)
-        kappa2 = one(T) / (kernel.Ld * kernel.Ld)
-        area = T(4) * domain.Lx * domain.Ly
-        raw_corr = _ka_energy_raw_with_segments!(_periodic_qg_correction_energy_ka!, data, dev, T,
-                                                 kappa2, area, kx, ky)
-        raw_euler + raw_corr
-    end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    data = _pack_energy_segments(src, dev, T)
+    length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
+    kx, ky, fourier = _device_ewald_tables(cache, dev)
+    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    raw = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
+                                        cache.alpha, domain.Lx, domain.Ly,
+                                        cache.n_images, kx, ky, fourier, corr0)
+    kappa2 = one(T) / (kernel.Ld * kernel.Ld)
+    area = T(4) * domain.Lx * domain.Ly
+    raw += _ka_energy_raw_with_segments!(_periodic_qg_correction_energy_ka!, data, dev, T,
+                                         kappa2, area, kx, ky)
+    return _normalize_energy(raw)
 end
 
-function _ka_energy_from_state(state::DeviceContourState{T}, kernel::SQGKernel{T},
+function _ka_energy_from_state(src::_EnergySource{T}, kernel::SQGKernel{T},
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
     cache = _get_ewald_cache(domain, kernel)
-    data = _pack_energy_segments(state, dev, T)
-    raw = if length(data.seg.ax) == 0
-        zero(T)
-    else
-        kx = to_device(dev, cache.kx)
-        ky = to_device(dev, cache.ky)
-        fourier = to_device(dev, cache.fourier_coeffs)
-        _ka_energy_raw_with_segments!(_periodic_sqg_energy_ka!, data, dev, T,
-                                      cache.alpha, kernel.delta,
-                                      domain.Lx, domain.Ly,
-                                      cache.n_images, kx, ky, fourier)
-    end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    data = _pack_energy_segments(src, dev, T)
+    length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
+    kx, ky, fourier = _device_ewald_tables(cache, dev)
+    raw = _ka_energy_raw_with_segments!(_periodic_sqg_energy_ka!, data, dev, T,
+                                        cache.alpha, kernel.delta,
+                                        domain.Lx, domain.Ly,
+                                        cache.n_images, kx, ky, fourier)
+    return _normalize_energy(raw)
 end
 
 # ── Multi-layer modal energy ─────────────────────────────────────────────
@@ -901,7 +831,7 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
                                           one(T) / sqrt(abs(lam)))
         end
     end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    return _normalize_energy(raw)
 end
 
 function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
@@ -936,5 +866,5 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
         end
         raw += raw_mode
     end
-    return -(one(T) / (T(4) * T(π))) * raw / T(2)
+    return _normalize_energy(raw)
 end

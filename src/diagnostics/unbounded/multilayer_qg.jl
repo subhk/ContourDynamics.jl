@@ -44,6 +44,5 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
         end
     end
 
-    inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * E / 2
+    return _normalize_energy(E)
 end
