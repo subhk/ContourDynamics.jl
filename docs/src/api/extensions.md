@@ -9,7 +9,7 @@ after loading the corresponding optional package extension.
   `flatten_nodes` and `unflatten_nodes!` helpers used by the ODE bridge
 - `RecordedArrays` extension: `recorded_diagnostics`
 - `JLD2` extension: `save_snapshot`, `load_snapshot`, `jld2_recorder`,
-  `load_simulation`
+  `load_simulation`, `load_problem`
 - `Makie` extension: `record_evolution`
 
 ```@docs
@@ -22,6 +22,7 @@ save_snapshot
 load_snapshot
 jld2_recorder
 load_simulation
+load_problem
 ```
 
 ## OrdinaryDiffEq Bridge
