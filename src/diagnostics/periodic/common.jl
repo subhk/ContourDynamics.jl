@@ -52,13 +52,8 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     # Double contour integral for periodic Euler energy. The self-pair case
     # subtracts the logarithmic singularity analytically and adds back the smooth
     # periodic correction through quadrature.
-    nci = nnodes(ci)
-    ncj = nnodes(cj)
     is_self = ci.nodes === cj.nodes
-    # 3-point Gauss-Legendre nodes/weights on [-1,1]
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    # Analytical self-segment integral for the log(r²)/2 singularity
-    self_seg_const = 4 * log(T(2)) - T(6)
+    Lx2, Ly2 = _period_lengths(domain.Lx, domain.Ly)
 
     # Assign the r→0 correction exactly once. Mutating it in place (`-=`) would
     # force Julia to heap-box the variable so the @_energy_segment_loop
@@ -66,73 +61,27 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     # O(N²) segment loop below would then allocate (~350 KB for N=64).
     corr_at_zero = is_self ? _periodic_euler_corr_at_zero(cache, domain) : zero(T)
 
-    return @_energy_segment_loop partial _partial nci for i in 1:nci
-        ai = ci.nodes[i]
-        bi = next_node(ci, i)
-        dsi = bi - ai
-        midi = (ai + bi) / 2
-        half_dsi = dsi / 2
-        local_s = zero(T)
-        for j in 1:ncj
-            aj = cj.nodes[j]
-            bj = next_node(cj, j)
-            dsj = bj - aj
-            midj = (aj + bj) / 2
-            half_dsj = dsj / 2
-            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-
-            if is_self && i == j
-                # Self-segment: singular subtraction.
-                # 1) Analytical integral of log(r²)/2 (same as unbounded)
-                half_ds_len = sqrt(half_dsi[1]^2 + half_dsi[2]^2)
-                if half_ds_len > eps(T)
-                    quad_analytical = self_seg_const + 4 * log(half_ds_len)
-                else
-                    quad_analytical = zero(T)
-                end
-                # 2) Smooth periodic correction [-2π G_per(r) - log(r²)/2] via GL
-                quad_corr = zero(T)
-                for qi in 1:3
-                    pi_pt = midi + g_nodes[qi] * half_dsi
-                    for qj in 1:3
-                        pj_pt = midj + g_nodes[qj] * half_dsj
-                        r_vec = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
-                        r2 = r_vec[1]^2 + r_vec[2]^2
-                        if r2 > eps(T)
-                            G_per = _eval_ewald_greens(r_vec, cache, domain)
-                            quad_corr += g_weights[qi] * g_weights[qj] * (-2 * T(π) * G_per - log(r2) / 2)
-                        else
-                            # qi == qj: use precomputed finite limit
-                            quad_corr += g_weights[qi] * g_weights[qj] * corr_at_zero
-                        end
-                    end
-                end
-                quad = quad_analytical + quad_corr
-            else
-                # Distinct segments are smooth after minimum-image wrapping, so
-                # the periodic Green's function can be sampled directly.
-                quad = zero(T)
-                Lx2, Ly2 = _period_lengths(domain.Lx, domain.Ly)
-                for qi in 1:3
-                    pi_pt = midi + g_nodes[qi] * half_dsi
-                    for qj in 1:3
-                        pj_pt = midj + g_nodes[qj] * half_dsj
-                        r_raw = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
-                        # Minimum-image wrap for Ewald convergence (matches velocity path)
-                        r_vec = SVector{2,T}(
-                            r_raw[1] - round(r_raw[1] / Lx2) * Lx2,
-                            r_raw[2] - round(r_raw[2] / Ly2) * Ly2)
-                        # Replace log(r²)/2 with the periodic equivalent: -2π * G_per
-                        # since log(r²)/2 = -2π * G_∞ for unbounded Euler.
-                        G_per = _eval_ewald_greens(r_vec, cache, domain)
-                        quad += g_weights[qi] * g_weights[qj] * (-2 * T(π) * G_per)
-                    end
-                end
-            end
-            local_s += quad / 4 * dot_ds
-        end
-        partial[i] = local_s
+    # Distinct segments are smooth after minimum-image wrapping, so the periodic
+    # Green's function can be sampled directly. Replace log(r²)/2 with its
+    # periodic equivalent -2π G_per, since log(r²)/2 = -2π G_∞ for unbounded Euler.
+    Φ = rv -> begin
+        # Minimum-image wrap for Ewald convergence (matches velocity path)
+        r_vec = SVector{2,T}(rv[1] - round(rv[1] / Lx2) * Lx2,
+                             rv[2] - round(rv[2] / Ly2) * Ly2)
+        -2 * T(π) * _eval_ewald_greens(r_vec, cache, domain)
     end
+    # Smooth periodic correction [-2π G_per(r) - log(r²)/2]; unwrapped, since
+    # the self pair's quadrature points are already within one image.
+    Φ_corr = rv -> begin
+        r2 = rv[1]^2 + rv[2]^2
+        # qi == qj: fall back to the precomputed finite limit
+        r2 > eps(T) || return corr_at_zero
+        return -2 * T(π) * _eval_ewald_greens(rv, cache, domain) - log(r2) / 2
+    end
+    self_quad = (mid, half_ds, g_nodes, g_weights) ->
+        _log_self_seg_quad(half_ds) +
+        _gl3_pair_quad(mid, half_ds, mid, half_ds, g_nodes, g_weights, Φ_corr)
+    return _energy_contour_pair(ci, cj, Φ, self_quad; _partial=_partial)
 end
 
 """
@@ -213,41 +162,11 @@ function _energy_contour_pair_sqg_periodic(ci::PVContour{T}, cj::PVContour{T},
     # Periodic SQG pair energy has no special self-segment branch here because
     # delta regularization keeps the potential finite at coincident quadrature
     # points.
-    nci = nnodes(ci)
-    ncj = nnodes(cj)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
     Lx2, Ly2 = _period_lengths(domain.Lx, domain.Ly)
-
-    return @_energy_segment_loop partial _partial nci for i in 1:nci
-        ai = ci.nodes[i]
-        bi = next_node(ci, i)
-        dsi = bi - ai
-        midi = (ai + bi) / 2
-        half_dsi = dsi / 2
-        local_s = zero(T)
-        for j in 1:ncj
-            aj = cj.nodes[j]
-            bj = next_node(cj, j)
-            dsj = bj - aj
-            midj = (aj + bj) / 2
-            half_dsj = dsj / 2
-            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-
-            quad = zero(T)
-            for qi in 1:3
-                pi_pt = midi + g_nodes[qi] * half_dsi
-                for qj in 1:3
-                    pj_pt = midj + g_nodes[qj] * half_dsj
-                    r_raw = SVector{2,T}(pi_pt[1] - pj_pt[1], pi_pt[2] - pj_pt[2])
-                    r_vec = SVector{2,T}(
-                        r_raw[1] - round(r_raw[1] / Lx2) * Lx2,
-                        r_raw[2] - round(r_raw[2] / Ly2) * Ly2)
-                    phi = _eval_sqg_periodic_energy_potential(r_vec, cache, domain, delta)
-                    quad += g_weights[qi] * g_weights[qj] * phi
-                end
-            end
-            local_s += quad / 4 * dot_ds
-        end
-        partial[i] = local_s
+    Φ = rv -> begin
+        r_vec = SVector{2,T}(rv[1] - round(rv[1] / Lx2) * Lx2,
+                             rv[2] - round(rv[2] / Ly2) * Ly2)
+        _eval_sqg_periodic_energy_potential(r_vec, cache, domain, delta)
     end
+    return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
