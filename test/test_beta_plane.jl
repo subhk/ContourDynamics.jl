@@ -154,3 +154,30 @@ end
         @test isapprox(vals, ref; rtol=1e-10)
     end
 end
+
+@testset "Beta-plane sawtooth jet is accurate in Float32" begin
+    # The crossover between the series and closed-form branches has to widen as
+    # the working precision drops: the closed form's cancellation error grows
+    # like eps/z², so a Float64-tuned cutoff leaves Float32 evaluating the
+    # ill-conditioned branch.
+    beta = 1.0f0
+    n_beta = 4
+    dy = 1.0f0
+    Ly = Float32(n_beta * dy / 2)
+    domain = PeriodicDomain(1.0f0, Ly)
+    staircase = beta_staircase(beta, domain, n_beta; nodes_per_contour=4)
+    tread_y = -Ly + dy
+    riser_y = staircase[1].nodes[1][2]
+
+    for κdy in (1f-6, 1f-4, 1f-2, 5f-2, 1f-1, 2f-1, 5f-1, 1f0, 3f0)
+        kernel = BetaPlaneQGKernel(beta, dy / κdy, staircase)
+        for y in (tread_y, riser_y)
+            got = ContourDynamics._beta_plane_sawtooth_velocity(
+                kernel, domain, SVector(0.0f0, y))[1]
+            want = _beta_plane_sawtooth_velocity(Float64(beta), Float64(dy / κdy),
+                                                 PeriodicDomain(1.0, Float64(Ly)),
+                                                 n_beta, SVector(0.0, Float64(y)))[1]
+            @test isapprox(Float64(got), want; rtol=1e-5)
+        end
+    end
+end
