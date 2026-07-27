@@ -49,7 +49,7 @@ Optional functionality is loaded through Julia package extensions:
 
 | Optional package | Provides |
 |------------------|----------|
-| `CUDA.jl` | GPU velocity and supported topology kernels |
+| `CUDA.jl` | device-resident GPU velocity, timestepping, surgery, and diagnostics |
 | `Makie.jl` | contour animation helpers |
 | `JLD2.jl` | snapshot and restart files |
 | `RecordedArrays.jl` | diagnostic time-series recording |
@@ -154,7 +154,8 @@ evolve!(prob, stepper, params; nsteps=200)
   `surgery!`.
 - Analytical contour diagnostics for conserved quantities and vortex geometry.
 - CPU threaded execution for direct velocity paths.
-- Optional CUDA acceleration with `dev=GPU()` for supported cases.
+- Optional CUDA acceleration with `dev=GPU()`, keeping contour state on the
+  device across velocity, timestepping, surgery, and diagnostics.
 
 ## Documentation
 
@@ -197,9 +198,10 @@ and current Julia releases, including single-threaded and multithreaded jobs.
 
 ## Performance and GPU Notes
 
-The direct velocity calculation is an O(N^2) contour interaction. For supported
-single-layer Euler, QG, and SQG problems, passing `dev=GPU()` offloads velocity
-work through KernelAbstractions.jl and CUDA.jl:
+The direct velocity calculation is an O(N^2) contour interaction. Passing
+`dev=GPU()` offloads that work through KernelAbstractions.jl and CUDA.jl, for
+single-layer Euler, QG, SQG, and beta-plane QG problems as well as multi-layer
+QG:
 
 ```julia
 using ContourDynamics, CUDA
@@ -209,11 +211,13 @@ evolve!(prob; nsteps=100)
 ```
 
 With `dev=CPU()`, simulation state and computation remain in ordinary CPU data
-structures. With `dev=GPU()`, supported velocity, timestepping, single-layer
-surgery, and scalar diagnostics use the device-resident contour state. Host
-contour objects are initialization shadows on GPU problems; call
-`materialize_contours(prob)` only when you intentionally need a CPU copy for
-output, plotting, file writing, or interactive inspection.
+structures. With `dev=GPU()`, velocity, timestepping, surgery, and diagnostics
+all use the device-resident contour state, for both single- and multi-layer
+problems. Surgery on unbounded domains runs entirely on the device; periodic
+surgery materializes at the host boundary, runs the CPU pass, and reloads the
+device state. Host contour objects are initialization shadows on GPU problems;
+call `materialize_contours(prob)` only when you intentionally need a CPU copy
+for output, plotting, file writing, or interactive inspection.
 
 ## Community Guidelines
 
