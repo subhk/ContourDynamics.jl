@@ -29,6 +29,11 @@ SurgeryParams
 Problem
 ```
 
+The high-level `Problem(; T=...)` constructor keeps matching-precision contour
+vectors by identity. If contour or layer inputs use a different floating-point
+type, it copies and converts their nodes, PV, wrap, and corner data to `T` before
+constructing the contour problem and time-stepper.
+
 ## Accessors
 
 ```@docs

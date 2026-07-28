@@ -33,4 +33,6 @@ the per-layer `DeviceContourState` directly.
 packed once, with negated PV, into the tail of a cached segment buffer, so a
 single periodic-QG kernel launch over the concatenated segments yields
 `current − reference`; the analytic sawtooth zonal jet is then added per target.
-The single-point `velocity(prob, x)` probe remains CPU-only.
+For a GPU problem, the single-point `velocity(prob, x)` probe is an explicit
+inspection boundary: it materializes the authoritative device state and runs
+the scalar direct evaluator on that current geometry.
