@@ -105,6 +105,8 @@ end
             @test all(zip(gpu_contours, cpu_prob.contours)) do (gpu_c, cpu_c)
                 all(isapprox.(gpu_c.nodes, cpu_c.nodes; rtol=1e-8, atol=1e-8))
             end
+            point = SVector(0.1, -0.15)
+            @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) rtol=1e-8 atol=1e-8
 
             cpu_lf = LeapfrogStepper(0.002, total_nodes(cpu_prob); dev=CPU())
             gpu_prob_lf = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=GPU())
@@ -143,6 +145,10 @@ end
                 @test vel_gpu[layer][i][1] ≈ vel_ref[layer][i][1] rtol=1e-8 atol=1e-8
                 @test vel_gpu[layer][i][2] ≈ vel_ref[layer][i][2] rtol=1e-8 atol=1e-8
             end
+            gpu_prob.layers[1][1].nodes[1] = SVector(99.0, 99.0)
+            point = SVector(0.1, -0.15)
+            @test all(isapprox.(velocity(gpu_prob, point), velocity(cpu_prob, point);
+                                rtol=1e-8, atol=1e-8))
             @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
             @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
             @test angular_momentum(gpu_prob) ≈ angular_momentum(cpu_prob) rtol=1e-10 atol=1e-10

@@ -269,6 +269,46 @@ end
         c = circular_patch(0.5, 32, 1.0; T=Float32)
         prob = Problem(; contours=[c], dt=Float32(0.01), T=Float32)
         @test prob.stepper.dt isa Float32
+
+        # `T` is authoritative even when callers supply contours in another
+        # precision. Conversion must preserve geometry/topology without
+        # aliasing the original mutable contour data.
+        c64 = circular_patch(0.4, 16, 1.25)
+        c64.corners[3] = true
+        input64 = [c64]
+        prob32 = Problem(; contours=input64, dt=0.01, T=Float32, surgery=:none)
+        c32 = only(contours(prob32))
+        @test c32 isa PVContour{Float32}
+        @test c32 !== c64
+        @test c32.nodes !== c64.nodes
+        @test c32.corners !== c64.corners
+        @test c32.corners == c64.corners
+        @test c32.pv == Float32(c64.pv)
+        @test c32.wrap == SVector{2,Float32}(c64.wrap)
+        @test all(isapprox.(c32.nodes, SVector{2,Float32}.(c64.nodes)))
+        @test eltype(prob32.stepper.k1) == SVector{2,Float32}
+        timestep!(prob32.contour_problem, prob32.stepper)
+
+        # Already-matching inputs retain the established in-place identity.
+        matching = [circular_patch(0.3, 12, 0.75; T=Float32)]
+        matching_prob = Problem(; contours=matching, dt=0.01f0, T=Float32,
+                                surgery=:none)
+        @test matching_prob.contour_problem.contours === matching
+
+        # Apply the same conversion to every multi-layer vector, including an
+        # empty layer whose element type still has to match the kernel/stepper.
+        F = 0.5
+        layers64 = ([circular_patch(0.25, 10, 1.0)], PVContour{Float64}[])
+        multilayer32 = Problem(; kernel=:multilayer_qg, Ld=SVector(1.0),
+                               coupling=SMatrix{2,2}(-F, F, F, -F),
+                               layers=layers64, dt=0.01, T=Float32,
+                               surgery=:none)
+        @test multilayer32.contour_problem.layers isa
+              NTuple{2,Vector{PVContour{Float32}}}
+        @test multilayer32.contour_problem.layers[1][1].nodes !==
+              layers64[1][1].nodes
+        @test isempty(multilayer32.contour_problem.layers[2])
+        timestep!(multilayer32.contour_problem, multilayer32.stepper)
     end
 
     @testset "Problem factory — full evolve!" begin

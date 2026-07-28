@@ -216,6 +216,38 @@ end
         end
     end
 
+    @testset "DeviceContourState point velocity uses authoritative coordinates" begin
+        contours_in = [circular_patch(0.5, 24, 1.0)]
+        state = DeviceContourState(deepcopy(contours_in), CPU())
+        state.x .+= 0.75
+        x = SVector(0.1, 0.2)
+
+        current = ContourProblem(EulerKernel(), UnboundedDomain(),
+                                 materialize_contours(state))
+        stale = ContourProblem(EulerKernel(), UnboundedDomain(), contours_in)
+        expected = velocity(current, x)
+        actual = ContourDynamics._velocity_at_state(state, EulerKernel(),
+                                                    UnboundedDomain(), x)
+
+        @test actual ≈ expected rtol=1e-12 atol=1e-12
+        @test !isapprox(actual, velocity(stale, x); rtol=1e-8, atol=1e-8)
+
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)),
+                                    SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers = ([circular_patch(0.35, 16, 1.0)],
+                  [circular_patch(0.25, 12, -0.5; cx=0.4)])
+        states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
+        states[1].x .-= 0.6
+        current_layers = ntuple(i -> materialize_contours(states[i]), 2)
+        current_multi = MultiLayerContourProblem(kernel, UnboundedDomain(), current_layers)
+        expected_multi = velocity(current_multi, x)
+        actual_multi = ContourDynamics._velocity_at_state(states, kernel,
+                                                          UnboundedDomain(), x)
+
+        @test all(isapprox.(actual_multi, expected_multi; rtol=1e-12, atol=1e-12))
+    end
+
     @testset "DeviceContourState RK4 step matches CPU contour RK4" begin
         contours_in = [
             circular_patch(0.35, 18, 1.0),

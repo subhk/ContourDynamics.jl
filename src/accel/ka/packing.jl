@@ -203,11 +203,14 @@ end
 # (`mode_vx`/`mode_vy`). Reusing it across RK stages avoids reallocating 13 device
 # arrays every modal-velocity evaluation (≥4×/RK4 step). Held in TASK-LOCAL
 # storage by `_get_multilayer_workspace`, like the single-layer workspace.
-mutable struct _MultilayerWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatrix{T}}
+mutable struct _MultilayerWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatrix{T},
+                                    VDA<:AbstractVector{SVector{2,T}}}
     ax::DA; ay::DA; bx::DA; by::DA; pv::DA; ka::DA; kb::DA  # 7 segment buffers
     tx::DA; ty::DA                                          # concatenated targets
     mode_vx::DA; mode_vy::DA                                # per-mode velocity scratch
     vel_x::DA; vel_y::DA                                    # accumulated flat output
+    flat_vel::VDA                                            # packed device output for host API
+    host_flat::Vector{SVector{2,T}}                          # reusable device-to-host target
     # Device Ewald tables for periodic domains. All modes of the modal loop
     # resolve to the domain's Euler Ewald cache, so one slot suffices; without
     # it every mode of every RK stage re-uploads the tables.
@@ -225,10 +228,14 @@ function _create_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int
     dev_fourier = device_zeros(dev, T, 0, 0)
     DMA = typeof(dev_fourier)
     mk() = device_zeros(dev, T, total)
-    _MultilayerWorkspace{T, DA, DMA}(da, mk(), mk(), mk(), mk(), mk(), mk(),
-                                     mk(), mk(), mk(), mk(), mk(), mk(),
-                                     device_zeros(dev, T, 0), device_zeros(dev, T, 0),
-                                     dev_fourier, nothing, total)
+    flat_vel = device_zeros(dev, SVector{2,T}, total)
+    VDA = typeof(flat_vel)
+    _MultilayerWorkspace{T, DA, DMA, VDA}(da, mk(), mk(), mk(), mk(), mk(), mk(),
+                                          mk(), mk(), mk(), mk(), mk(), mk(),
+                                          flat_vel, Vector{SVector{2,T}}(undef, total),
+                                          device_zeros(dev, T, 0),
+                                          device_zeros(dev, T, 0),
+                                          dev_fourier, nothing, total)
 end
 
 function _ensure_device_ewald!(ws::_GPUWorkspace{T}, cache::EwaldCache{T},
@@ -394,4 +401,3 @@ function _fill_target_bufs!(tx, ty, prob)
     end
     return idx - 1
 end
-
