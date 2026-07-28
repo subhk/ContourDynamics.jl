@@ -550,6 +550,14 @@ function _device_compact_scan!(slots, total, flags, n::Int, dev::AbstractDevice)
     n == 0 && return slots
     a = device_zeros(dev, Int, n)
     b = device_zeros(dev, Int, n)
+    return _device_compact_scan!(slots, total, flags, n, dev, a, b)
+end
+
+# Scratch-buffer overload for hot paths whose topology size is stable. Callers
+# own `a` and `b`, allowing scans to be repeated without two O(n) allocations.
+function _device_compact_scan!(slots, total, flags, n::Int, dev::AbstractDevice,
+                               a, b)
+    n == 0 && return slots
     @_ka_launch dev n _scan_init_kernel!(a, flags, n)
     cur, other = a, b
     offset = 1
@@ -680,4 +688,3 @@ function _replace_device_state!(state::DeviceContourState{T},
     state.local_index = replacement.local_index
     return state
 end
-
