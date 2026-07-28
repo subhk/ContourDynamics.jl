@@ -7,6 +7,35 @@ const _SURGERY_PRESETS = Dict{Symbol, NamedTuple}(
     :aggressive   => (δ=0.01,  μ=0.04,  Δ_max=0.3,  area_min=1e-4,  n_surgery=3),
 )
 
+@inline _convert_contour_precision(::Type{T}, c::PVContour{T}) where {T<:AbstractFloat} = c
+
+function _convert_contour_precision(::Type{T}, c::PVContour) where {T<:AbstractFloat}
+    nodes = Vector{SVector{2,T}}(undef, nnodes(c))
+    @inbounds for i in eachindex(nodes)
+        node = c.nodes[i]
+        nodes[i] = SVector{2,T}(T(node[1]), T(node[2]))
+    end
+    wrap = SVector{2,T}(T(c.wrap[1]), T(c.wrap[2]))
+    return PVContour(nodes, T(c.pv), wrap, copy(c.corners))
+end
+
+@inline _convert_contours_precision(::Type{T},
+                                    contours::Vector{PVContour{T}}) where {T<:AbstractFloat} =
+    contours
+
+function _convert_contours_precision(::Type{T},
+                                     contours::AbstractVector{<:PVContour}) where {T<:AbstractFloat}
+    converted = Vector{PVContour{T}}(undef, length(contours))
+    @inbounds for i in eachindex(contours)
+        converted[i] = _convert_contour_precision(T, contours[i])
+    end
+    return converted
+end
+
+function _convert_layers_precision(::Type{T}, layers::Tuple) where {T<:AbstractFloat}
+    return map(layer -> _convert_contours_precision(T, layer), layers)
+end
+
 function _validate_problem_layout(kernel::Symbol, contours, layers)
     # Single-layer problems own a flat Vector{PVContour}; multi-layer problems
     # own a tuple of per-layer contour vectors. Reject mixed inputs early so the
@@ -154,10 +183,13 @@ Base.@constprop :aggressive function Problem(;
     # Build in dependency order: layout determines problem type, then kernel and
     # domain are normalized, then the concrete problem sizes the stepper buffers.
     is_multilayer = _validate_problem_layout(kernel, contours, layers)
+    typed_contours = is_multilayer ? nothing : _convert_contours_precision(T, contours)
+    typed_layers = is_multilayer ? _convert_layers_precision(T, layers) : nothing
     built_kernel = _build_kernel(T, kernel, Ld, coupling, delta_sqg, beta)
     built_domain = _build_domain(T, domain, Lx, Ly)
     device = _build_device(dev)
-    contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain, contours, layers, device)
+    contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain,
+                                             typed_contours, typed_layers, device)
     time_stepper = _build_stepper(T, stepper, dt, contour_problem, device, ra_coeff)
     surgery_params = _build_surgery(surgery, T)
     return Problem(contour_problem, time_stepper, surgery_params)

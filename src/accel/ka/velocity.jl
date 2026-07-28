@@ -368,6 +368,53 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
     return _multilayer_velocity_with_ws!(vel, ws, states, kernel, domain, dev, ranges, total)
 end
 
+"""
+    _ka_multilayer_velocity_to_host!(vel, states, kernel, domain, dev) -> vel
+
+Evaluate device-resident multilayer velocity and scatter it into one host
+vector per layer. Both the flat device result and its host transfer target live
+in the task-local multilayer workspace, so repeated calls allocate no buffers
+proportional to the node count.
+"""
+function _ka_multilayer_velocity_to_host!(vel::NTuple{N,Vector{SVector{2,T}}},
+                                          states::NTuple{N,<:DeviceContourState},
+                                          kernel::MultiLayerQGKernel{N},
+                                          domain::AbstractDomain,
+                                          dev::AbstractDevice) where {N,T}
+    ranges = _layer_state_ranges(states)
+    for layer in 1:N
+        required = length(ranges[layer])
+        length(vel[layer]) >= required || throw(DimensionMismatch(
+            "vel[$layer] length ($(length(vel[layer]))) must be >= layer $layer nodes ($required)"))
+    end
+
+    total = sum(length, ranges)
+    total == 0 && return vel
+    ws = _get_multilayer_workspace(dev, T, total)
+    return _multilayer_velocity_to_host_with_ws!(vel, ws, states, kernel,
+                                                 domain, dev, ranges, total)
+end
+
+# The task-local cache is `Any`-typed. Keep workspace field access and the host
+# scatter behind this concrete barrier; otherwise dynamic `copyto!` dispatch
+# boxes every `SVector` element on the CPU backend.
+function _multilayer_velocity_to_host_with_ws!(
+        vel::NTuple{N,Vector{SVector{2,T}}}, ws::_MultilayerWorkspace{T},
+        states::NTuple{N,<:DeviceContourState}, kernel::MultiLayerQGKernel{N},
+        domain::AbstractDomain, dev::AbstractDevice, ranges, total::Int) where {N,T}
+    _multilayer_velocity_with_ws!(ws.flat_vel, ws, states, kernel, domain,
+                                  dev, ranges, total)
+    copyto!(ws.host_flat, ws.flat_vel)
+
+    for layer in 1:N
+        r = ranges[layer]
+        @inbounds for (local_index, global_index) in enumerate(r)
+            vel[layer][local_index] = ws.host_flat[global_index]
+        end
+    end
+    return vel
+end
+
 function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
                                        ws::_MultilayerWorkspace{T},
                                        states::NTuple{N, <:DeviceContourState},
