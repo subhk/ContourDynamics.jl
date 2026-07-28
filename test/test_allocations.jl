@@ -162,6 +162,43 @@ using LinearAlgebra: norm
         @test alloc <= 12_288
     end
 
+    @testset "Multilayer device host output allocation is node-count independent" begin
+        F = 0.5
+        coupling = SMatrix{2,2,Float64}(-F, F, F, -F)
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), coupling)
+        dev = CPU()
+
+        layers = ([circular_patch(0.45, 24, 1.0)],
+                  [circular_patch(0.35, 24, -0.5; cx=0.6)])
+        states = ntuple(i -> DeviceContourState(layers[i], dev), 2)
+        actual = (zeros(SVector{2,Float64}, 24), zeros(SVector{2,Float64}, 24))
+        reference = (similar(actual[1]), similar(actual[2]))
+        reference_prob = MultiLayerContourProblem(kernel, UnboundedDomain(), layers)
+
+        ContourDynamics._ka_multilayer_velocity_to_host!(
+            actual, states, kernel, UnboundedDomain(), dev)
+        velocity!(reference, reference_prob)
+        @test maximum(norm.(actual[1] .- reference[1])) <= 1e-12
+        @test maximum(norm.(actual[2] .- reference[2])) <= 1e-12
+
+        function host_output_alloc(n)
+            layers = ([circular_patch(0.45, n, 1.0)],
+                      [circular_patch(0.35, n, -0.5; cx=0.6)])
+            states = ntuple(i -> DeviceContourState(layers[i], dev), 2)
+            vel = (zeros(SVector{2,Float64}, n), zeros(SVector{2,Float64}, n))
+            f() = ContourDynamics._ka_multilayer_velocity_to_host!(
+                vel, states, kernel, UnboundedDomain(), dev)
+            return allocation_bytes(f)
+        end
+
+        small = host_output_alloc(16)
+        large = host_output_alloc(256)
+        @test small <= 16_384
+        # KA's CPU backend has a small fixed launch-bookkeeping variation; the
+        # tolerance is far below even one node-sized replacement buffer here.
+        @test large <= small + 256 + thread_slack()
+    end
+
     @testset "Single-point velocity is allocation-light after warm-up" begin
         c = circular_patch(0.5, 32, 2π)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
@@ -238,5 +275,24 @@ using LinearAlgebra: norm
         alloc_p = allocation_bytes(() -> ContourDynamics._ka_multilayer_energy_from_states(
             states, kernel, domain, CPU()))
         @test alloc_p <= 17_000
+    end
+
+    @testset "Device-state energy allocation is node-count independent" begin
+        dev = CPU()
+
+        function state_energy_alloc(n)
+            contours = [circular_patch(0.4, n, 1.0)]
+            state = DeviceContourState(contours, dev)
+            f() = ContourDynamics._ka_energy_from_state(
+                state, EulerKernel(), UnboundedDomain(), dev)
+            return f(), allocation_bytes(f)
+        end
+
+        small_energy, small = state_energy_alloc(16)
+        large_energy, large = state_energy_alloc(128)
+        @test isfinite(small_energy)
+        @test isfinite(large_energy)
+        @test small <= 16_384
+        @test large <= small + 512 + thread_slack()
     end
 end
