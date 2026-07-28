@@ -20,13 +20,14 @@ minimum-image proximity and periodic frame shifts), and reloads the device
 state in place; that cost is amortized over the `n_surgery` steps between
 passes.
 
-Two paths remain CPU-only by design: the `velocity(prob, x)` single-point probe
-for beta-plane problems, and the OrdinaryDiffEq bridge, which uses a CPU vector
-state.
+Two paths deliberately cross to CPU representations. A `velocity(prob, x)`
+single-point probe materializes the authoritative device state and evaluates
+the scalar direct method on that current geometry. The OrdinaryDiffEq bridge
+uses a CPU vector state.
 
-The device velocity paths cache their scratch workspaces in task-local storage
-and size them to the current node count, so repeated steps reuse the same
-buffers. Those buffers live as long as the task; call
+The device velocity and energy paths cache scratch workspaces in task-local
+storage and size them to the current topology, so repeated calls reuse segment,
+copy-back, scan, and reduction buffers. Those buffers live as long as the task; call
 `clear_state_workspace_cache!` to release them — the workspace counterpart to
 [`clear_ewald_cache!`](@ref).
 
