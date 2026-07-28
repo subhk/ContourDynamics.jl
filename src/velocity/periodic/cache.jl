@@ -18,6 +18,14 @@ struct EwaldCache{T<:AbstractFloat}
     corr_coeffs::Matrix{T}
 end
 
+@inline function _validate_ewald_truncation(n_fourier::Int, n_images::Int)
+    n_fourier >= 0 || throw(ArgumentError(
+        "n_fourier must be non-negative; got $n_fourier"))
+    n_images >= 0 || throw(ArgumentError(
+        "n_images must be non-negative; got $n_images"))
+    return nothing
+end
+
 # Shared Ewald setup: splitting parameter, Fourier wavenumbers, and domain area.
 # The three build_ewald_cache methods differ only in the coefficient formula.
 function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
@@ -36,6 +44,7 @@ Precompute Fourier-space coefficients for Ewald summation.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
                            n_fourier::Int=8, n_images::Int=2) where {T}
+    _validate_ewald_truncation(n_fourier, n_images)
     alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
@@ -61,6 +70,7 @@ fractional Laplacian's half-order (`1/|k|` vs Euler's `1/k²`).
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
+    _validate_ewald_truncation(n_fourier, n_images)
     alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
@@ -91,6 +101,7 @@ instead of recomputing a division per wavenumber per quadrature point.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
+    _validate_ewald_truncation(n_fourier, n_images)
     kappa2 = one(T) / kernel.Ld^2
     alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
@@ -208,6 +219,7 @@ the same domain/kernel combination.
 """
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
                             n_fourier::Int=8, n_images::Int=2) where {T<:Union{Float64, Float32}}
+    _validate_ewald_truncation(n_fourier, n_images)
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
@@ -229,6 +241,7 @@ evaluations on the same domain share the warmed `n_fourier`/`n_images` setup.
 """
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                             n_fourier::Int=8, n_images::Int=2) where {T<:Union{Float64, Float32}}
+    _validate_ewald_truncation(n_fourier, n_images)
     # Store QG-specific cache (for direct queries / introspection)
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
@@ -242,8 +255,12 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     return nothing
 end
 
-setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
-                   n_fourier::Int=8, n_images::Int=2) where {T<:AbstractFloat} = nothing
+function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
+                            n_fourier::Int=8,
+                            n_images::Int=2) where {T<:AbstractFloat}
+    _validate_ewald_truncation(n_fourier, n_images)
+    return nothing
+end
 
 """Clear all cached Ewald data."""
 function clear_ewald_cache!()

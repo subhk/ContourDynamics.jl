@@ -121,13 +121,19 @@ Most users start with:
 prob = Problem(; contours=[circular_patch(1.0, 128, 2pi)], dt=0.01)
 ```
 
-The constructor in `src/core/problem_factory.jl` does four things:
+The constructor in `src/core/problem_factory.jl` does six things:
 
 1. validates whether this is single-layer or multilayer
-2. builds the kernel and domain
-3. attaches beta-plane reference contours when `kernel=:beta_plane_qg`
-4. builds `ContourProblem` or `MultiLayerContourProblem`
-5. builds the time stepper and surgery settings
+2. normalizes contour or layer precision to the requested `T`
+3. builds the kernel and domain
+4. attaches beta-plane reference contours when `kernel=:beta_plane_qg`
+5. builds `ContourProblem` or `MultiLayerContourProblem`
+6. builds the time stepper and surgery settings
+
+When input contours already have element type `T`, their containing vectors are
+reused. Mismatched inputs are copied into `PVContour{T}` values, including node,
+wrap, and corner data, so the contour problem and time-stepper buffers always
+agree on precision.
 
 ### 2. Evolve in time
 
@@ -195,7 +201,7 @@ Implemented under `src/accel/ka/`, split by concern:
 - `packing.jl`: flat `SegmentData` layout and per-size workspace buffers
 - `kernels.jl`: scalar contribution helpers and the `@kernel` velocity kernels
 - `velocity.jl`: launch wrappers, dispatch, and the `_ka_velocity!` entry points
-- `surgery.jl`: the device-resident surgery pipeline
+- `surgery/`: the staged device-resident surgery pipeline
 
 The KA layer runs on both backends:
 
@@ -264,9 +270,10 @@ for explicit output boundaries such as `materialize_contours`, JLD2 snapshots,
 Makie animation frames, and interactive inspection — plus the periodic surgery
 pass, which deliberately round-trips to the host.
 
-Two paths stay on the CPU by design: the `velocity(prob, x)` single-point probe
-for beta-plane problems, and the OrdinaryDiffEq bridge, which needs a CPU vector
-state.
+Two paths deliberately cross to CPU representations. A `velocity(prob, x)`
+single-point probe on a GPU problem materializes the authoritative
+`DeviceContourState` and evaluates the scalar direct method on that current
+geometry. The OrdinaryDiffEq bridge likewise uses a CPU vector state.
 
 ## Read This File If...
 
