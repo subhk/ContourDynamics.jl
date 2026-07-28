@@ -261,10 +261,9 @@ end
 """
     clear_state_workspace_cache!()
 
-Drop the calling task's cached device velocity workspaces, freeing their
-buffers. The single-layer, multi-layer, and beta-plane velocity paths each
-cache a scratch workspace in task-local storage and resize it to the current
-node count; the buffers otherwise persist for the task's lifetime.
+Drop the calling task's cached device velocity and energy workspaces, freeing
+their buffers. Each path caches scratch in task-local storage and resizes it to
+the current topology; the buffers otherwise persist for the task's lifetime.
 
 This is the workspace counterpart to [`clear_ewald_cache!`](@ref). Caches are
 per-task, so this only releases workspaces allocated by the calling task.
@@ -274,7 +273,7 @@ function clear_state_workspace_cache!()
     for key in collect(keys(store))
         key isa Tuple && length(key) == 3 &&
             (key[1] === _STATE_WS_TLS_KEY || key[1] === _MULTILAYER_WS_TLS_KEY ||
-             key[1] === _BETA_WS_TLS_KEY) &&
+             key[1] === _BETA_WS_TLS_KEY || key[1] === _ENERGY_WS_TLS_KEY) &&
             delete!(store, key)
     end
     return nothing

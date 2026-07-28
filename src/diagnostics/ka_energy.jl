@@ -130,6 +130,111 @@ end
     end
 end
 
+# Task-local buffers for repeated energy diagnostics on device-resident state.
+# The workspace is rebuilt only when surgery changes the number of contours or
+# nodes; validity, compacted topology, segment geometry, reduction storage, and
+# periodic Ewald tables are otherwise refilled/reused in place.
+mutable struct _EnergyWorkspace{T, DA<:AbstractVector{T}, IA<:AbstractVector{Int},
+                                BA<:AbstractVector{UInt8}, DMA<:AbstractMatrix{T}}
+    valid::BA
+    valid_slots::IA
+    valid_count::IA
+    scan_a::IA
+    scan_b::IA
+    out_lengths::IA
+    out_offsets::IA
+    source_contour::IA
+    contour_id::IA
+    local_index::IA
+    total_store::IA
+    ax::DA; ay::DA; bx::DA; by::DA; pv::DA; ka::DA; kb::DA
+    partial::DA
+    host_count::Vector{Int}
+    host_partial::Vector{T}
+    dev_ewald_kx::DA
+    dev_ewald_ky::DA
+    dev_ewald_fourier::DMA
+    last_ewald::Union{Nothing,EwaldCache{T}}
+    ncontours::Int
+    total_nodes::Int
+end
+
+function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
+                                  ncontours::Int, total_nodes::Int) where {T}
+    da = device_zeros(dev, T, total_nodes)
+    ia = device_zeros(dev, Int, ncontours)
+    ba = device_zeros(dev, UInt8, ncontours)
+    dma = device_zeros(dev, T, 0, 0)
+    DA, IA, BA, DMA = typeof(da), typeof(ia), typeof(ba), typeof(dma)
+    mk_t() = device_zeros(dev, T, total_nodes)
+    mk_i_contours() = device_zeros(dev, Int, ncontours)
+    mk_i_nodes() = device_zeros(dev, Int, total_nodes)
+    _EnergyWorkspace{T,DA,IA,BA,DMA}(
+        ba, ia, device_zeros(dev, Int, 1), mk_i_contours(), mk_i_contours(),
+        mk_i_contours(), mk_i_contours(), mk_i_contours(),
+        mk_i_nodes(), mk_i_nodes(), device_zeros(dev, Int, 1),
+        da, mk_t(), mk_t(), mk_t(), mk_t(), mk_t(), mk_t(), mk_t(),
+        zeros(Int, 1), Vector{T}(undef, total_nodes),
+        device_zeros(dev, T, 0), device_zeros(dev, T, 0), dma, nothing,
+        ncontours, total_nodes)
+end
+
+const _ENERGY_WS_TLS_KEY = :contourdynamics_energy_workspace
+
+function _get_energy_workspace(dev::AbstractDevice, ::Type{T},
+                               ncontours::Int, total_nodes::Int) where {T}
+    store = task_local_storage()
+    key = (_ENERGY_WS_TLS_KEY, T, typeof(dev))
+    ws = get(store, key, nothing)
+    if ws === nothing || (ws::_EnergyWorkspace).ncontours != ncontours ||
+       ws.total_nodes != total_nodes
+        ws = _create_energy_workspace(dev, T, ncontours, total_nodes)
+        store[key] = ws
+    end
+    return ws
+end
+
+function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
+                                 state::DeviceContourState{T},
+                                 dev::AbstractDevice) where {T}
+    ncontours = ws.ncontours
+    ncontours == 0 && return 0
+    @_ka_launch dev ncontours _state_energy_valid_kernel!(
+        ws.valid, state.lengths, state.wrapx, state.wrapy, ncontours)
+    _device_compact_scan!(ws.valid_slots, ws.valid_count, ws.valid,
+                          ncontours, dev, ws.scan_a, ws.scan_b)
+    copyto!(ws.host_count, ws.valid_count)
+    nvalid = ws.host_count[1]
+    nvalid == 0 && return 0
+
+    @_ka_launch dev ncontours _state_energy_lengths_kernel!(
+        ws.out_lengths, ws.source_contour, ws.valid_slots, ws.valid,
+        state.lengths, ncontours)
+    @_ka_launch dev nvalid _prefix_lengths_kernel!(
+        ws.out_offsets, ws.total_store, ws.out_lengths, nvalid)
+    copyto!(ws.host_count, ws.total_store)
+    n = ws.host_count[1]
+    n == 0 && return 0
+
+    @_ka_launch dev nvalid _state_energy_segments_kernel!(
+        ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb,
+        ws.contour_id, ws.local_index, ws.out_offsets, ws.source_contour,
+        state.x, state.y, state.pv, state.wrapx, state.wrapy,
+        state.offsets, state.lengths, nvalid)
+    return n
+end
+
+function _ensure_energy_ewald!(ws::_EnergyWorkspace{T}, cache::EwaldCache{T},
+                               dev::AbstractDevice) where {T}
+    if ws.last_ewald !== cache
+        ws.dev_ewald_kx = to_device(dev, cache.kx)
+        ws.dev_ewald_ky = to_device(dev, cache.ky)
+        ws.dev_ewald_fourier = to_device(dev, cache.fourier_coeffs)
+        ws.last_ewald = cache
+    end
+    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier
+end
+
 function _pack_energy_segments(state::DeviceContourState{T}, dev::AbstractDevice,
                                ::Type{T}) where {T}
     ncontours = length(state.lengths)
@@ -605,6 +710,19 @@ function _ka_energy_raw_with_segments!(kernel!, data::EnergySegmentData, dev::Ab
     return sum(to_cpu(partial))
 end
 
+function _ka_energy_raw_with_workspace!(kernel!, ws::_EnergyWorkspace{T}, n::Int,
+                                        dev::AbstractDevice, args...) where {T}
+    n == 0 && return zero(T)
+    @_ka_launch dev n kernel!(ws.partial, ws.ax, ws.ay, ws.bx, ws.by, ws.pv,
+                              ws.contour_id, ws.local_index, args..., n)
+    copyto!(ws.host_partial, 1, ws.partial, 1, n)
+    total = zero(T)
+    @inbounds for i in 1:n
+        total += ws.host_partial[i]
+    end
+    return total
+end
+
 function _ka_energy_raw(kernel!, contours, dev::AbstractDevice, ::Type{T}, args...) where {T}
     data = _pack_energy_segments(contours, dev, T)
     return _ka_energy_raw_with_segments!(kernel!, data, dev, T, args...)
@@ -655,22 +773,22 @@ function _ka_energy(prob::ContourProblem, dev::AbstractDevice)
     return _ka_energy_from_state(prob.contours, prob.kernel, prob.domain, dev)
 end
 
-function _ka_energy_from_state(src::_EnergySource{T}, ::EulerKernel,
+function _ka_energy_from_state(src::Vector{PVContour{T}}, ::EulerKernel,
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
     return _normalize_energy(_ka_energy_raw(_euler_energy_ka!, src, dev, T))
 end
 
-function _ka_energy_from_state(src::_EnergySource{T}, kernel::SQGKernel{T},
+function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
     return _normalize_energy(_ka_energy_raw(_sqg_energy_ka!, src, dev, T, kernel.delta))
 end
 
-function _ka_energy_from_state(src::_EnergySource{T}, kernel::QGKernel{T},
+function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
     return _normalize_energy(_ka_energy_raw(_qg_energy_ka!, src, dev, T, kernel.Ld))
 end
 
-function _ka_energy_from_state(src::_EnergySource{T}, kernel::EulerKernel,
+function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::EulerKernel,
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
     cache = _get_ewald_cache(domain, kernel)
@@ -684,7 +802,7 @@ function _ka_energy_from_state(src::_EnergySource{T}, kernel::EulerKernel,
     return _normalize_energy(raw)
 end
 
-function _ka_energy_from_state(src::_EnergySource{T}, kernel::QGKernel{T},
+function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
     # G_QG_per = G_Euler_per + correction, so this reads the domain's *Euler*
@@ -704,7 +822,7 @@ function _ka_energy_from_state(src::_EnergySource{T}, kernel::QGKernel{T},
     return _normalize_energy(raw)
 end
 
-function _ka_energy_from_state(src::_EnergySource{T}, kernel::SQGKernel{T},
+function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
     cache = _get_ewald_cache(domain, kernel)
@@ -715,6 +833,83 @@ function _ka_energy_from_state(src::_EnergySource{T}, kernel::SQGKernel{T},
                                         cache.alpha, kernel.delta,
                                         domain.Lx, domain.Ly,
                                         cache.n_images, kx, ky, fourier)
+    return _normalize_energy(raw)
+end
+
+function _ka_energy_from_state(state::DeviceContourState{T}, kernel,
+                               domain::AbstractDomain,
+                               dev::AbstractDevice) where {T}
+    ws = _get_energy_workspace(dev, T, length(state.lengths), length(state.x))
+    return _ka_energy_state_with_ws(state, kernel, domain, dev, ws)
+end
+
+function _ka_energy_state_with_ws(state::DeviceContourState{T}, ::EulerKernel,
+                                  ::UnboundedDomain, dev::AbstractDevice,
+                                  ws::_EnergyWorkspace{T}) where {T}
+    n = _pack_energy_workspace!(ws, state, dev)
+    return _normalize_energy(
+        _ka_energy_raw_with_workspace!(_euler_energy_ka!, ws, n, dev))
+end
+
+function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKernel{T},
+                                  ::UnboundedDomain, dev::AbstractDevice,
+                                  ws::_EnergyWorkspace{T}) where {T}
+    n = _pack_energy_workspace!(ws, state, dev)
+    return _normalize_energy(
+        _ka_energy_raw_with_workspace!(_sqg_energy_ka!, ws, n, dev, kernel.delta))
+end
+
+function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel{T},
+                                  ::UnboundedDomain, dev::AbstractDevice,
+                                  ws::_EnergyWorkspace{T}) where {T}
+    n = _pack_energy_workspace!(ws, state, dev)
+    return _normalize_energy(
+        _ka_energy_raw_with_workspace!(_qg_energy_ka!, ws, n, dev, kernel.Ld))
+end
+
+function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::EulerKernel,
+                                  domain::PeriodicDomain{T}, dev::AbstractDevice,
+                                  ws::_EnergyWorkspace{T}) where {T}
+    cache = _get_ewald_cache(domain, kernel)
+    n = _pack_energy_workspace!(ws, state, dev)
+    n == 0 && return _normalize_energy(zero(T))
+    kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
+    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    raw = _ka_energy_raw_with_workspace!(
+        _periodic_euler_energy_ka!, ws, n, dev, cache.alpha,
+        domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier, corr0)
+    return _normalize_energy(raw)
+end
+
+function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel{T},
+                                  domain::PeriodicDomain{T}, dev::AbstractDevice,
+                                  ws::_EnergyWorkspace{T}) where {T}
+    cache = _get_ewald_cache(domain, EulerKernel())
+    n = _pack_energy_workspace!(ws, state, dev)
+    n == 0 && return _normalize_energy(zero(T))
+    kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
+    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    raw = _ka_energy_raw_with_workspace!(
+        _periodic_euler_energy_ka!, ws, n, dev, cache.alpha,
+        domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier, corr0)
+    kappa2 = one(T) / (kernel.Ld * kernel.Ld)
+    area = T(4) * domain.Lx * domain.Ly
+    raw += _ka_energy_raw_with_workspace!(
+        _periodic_qg_correction_energy_ka!, ws, n, dev,
+        kappa2, area, kx, ky)
+    return _normalize_energy(raw)
+end
+
+function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKernel{T},
+                                  domain::PeriodicDomain{T}, dev::AbstractDevice,
+                                  ws::_EnergyWorkspace{T}) where {T}
+    cache = _get_ewald_cache(domain, kernel)
+    n = _pack_energy_workspace!(ws, state, dev)
+    n == 0 && return _normalize_energy(zero(T))
+    kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
+    raw = _ka_energy_raw_with_workspace!(
+        _periodic_sqg_energy_ka!, ws, n, dev, cache.alpha, kernel.delta,
+        domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier)
     return _normalize_energy(raw)
 end
 
