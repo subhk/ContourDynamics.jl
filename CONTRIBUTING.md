@@ -108,4 +108,21 @@ New diagnostics should include a test against an analytical solution (e.g. Ranki
 The periodic Green's function uses precomputed Fourier coefficients cached per-domain.
 If you modify the cache, ensure thread safety (the caches use `ReentrantLock`).
 
+## 6. Maintainer release process
+
+Registered releases are created through Julia Registrator; CI validates commits
+but does not register versions itself.
+
+1. Merge the intended release changes into `main` and confirm CI passes.
+2. In a separate commit, update `version` in `Project.toml` according to semantic
+   versioning. Keeping workflow edits out of the version-bump commit avoids
+   GitHub token restrictions on tagging commits that modify workflow files.
+3. Trigger Registrator for the version-bump commit.
+4. After the General-registry pull request merges, TagBot creates the matching
+   Git tag, GitHub release, and changelog.
+
+The TagBot workflow works with `GITHUB_TOKEN` for ordinary releases. Configure
+an SSH deploy key as the `DOCUMENTER_KEY` repository secret if TagBot-created
+tags should also trigger tag-based CI and documentation deployment.
+
 Thank you for helping improve ContourDynamics.jl!
