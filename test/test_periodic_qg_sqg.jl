@@ -5,6 +5,34 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 @testset "Periodic QG/SQG" begin
     clear_ewald_cache!()
 
+    @testset "Ewald truncation parameters are non-negative" begin
+        domain = PeriodicDomain(2.0, 3.0)
+        kernels = (EulerKernel(), QGKernel(1.2), SQGKernel(0.03))
+        for kernel in kernels
+            @test_throws ArgumentError build_ewald_cache(
+                domain, kernel; n_fourier=-1)
+            @test_throws ArgumentError build_ewald_cache(
+                domain, kernel; n_images=-1)
+            @test_throws ArgumentError setup_ewald_cache!(
+                domain, kernel; n_fourier=-1)
+            @test_throws ArgumentError setup_ewald_cache!(
+                domain, kernel; n_images=-1)
+
+            cache = build_ewald_cache(domain, kernel; n_fourier=0, n_images=0)
+            @test length(cache.kx) == 1
+            @test length(cache.ky) == 1
+            @test cache.n_images == 0
+            @test setup_ewald_cache!(
+                domain, kernel; n_fourier=0, n_images=0) === nothing
+        end
+
+        generic_domain = PeriodicDomain(big"2.0", big"3.0")
+        @test_throws ArgumentError setup_ewald_cache!(
+            generic_domain, EulerKernel(); n_fourier=-1)
+        @test_throws ArgumentError setup_ewald_cache!(
+            generic_domain, EulerKernel(); n_images=-1)
+    end
+
     straight_contour(nodes, pv) =
         PVContour(nodes, pv, zero(SVector{2,Float64}), trues(length(nodes)))
 
