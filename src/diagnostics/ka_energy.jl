@@ -102,7 +102,9 @@ end
                                                 contour_id, local_index,
                                                 out_offsets, source_contour,
                                                 x, y, pv, wrapx, wrapy,
-                                                in_offsets, in_lengths, nvalid)
+                                                in_offsets, in_lengths,
+                                                output_offset, contour_offset,
+                                                nvalid)
     out_ci = @index(Global)
     if out_ci <= nvalid
         ci = source_contour[out_ci]
@@ -110,7 +112,7 @@ end
         in_off = in_offsets[ci]
         n = in_lengths[ci]
         @inbounds for li in 1:n
-            out_g = out_off + li - 1
+            out_g = output_offset + out_off + li - 1
             in_g = in_off + li - 1
             ax[out_g] = x[in_g]
             ay[out_g] = y[in_g]
@@ -124,7 +126,7 @@ end
             out_pv[out_g] = pv[ci]
             ka[out_g] = zero(eltype(ka))
             kb[out_g] = zero(eltype(kb))
-            contour_id[out_g] = out_ci
+            contour_id[out_g] = contour_offset + out_ci
             local_index[out_g] = li
         end
     end
@@ -196,8 +198,14 @@ end
 
 function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
                                  state::DeviceContourState{T},
-                                 dev::AbstractDevice) where {T}
-    ncontours = ws.ncontours
+                                 dev::AbstractDevice;
+                                 output_offset::Int=0,
+                                 contour_offset::Int=0) where {T}
+    ncontours = length(state.lengths)
+    ncontours <= ws.ncontours || throw(DimensionMismatch(
+        "energy workspace contour capacity ($(ws.ncontours)) < state contours ($ncontours)"))
+    output_offset + length(state.x) <= ws.total_nodes || throw(DimensionMismatch(
+        "energy workspace node capacity ($(ws.total_nodes)) < requested packed extent ($(output_offset + length(state.x)))"))
     ncontours == 0 && return 0
     @_ka_launch dev ncontours _state_energy_valid_kernel!(
         ws.valid, state.lengths, state.wrapx, state.wrapy, ncontours)
@@ -220,7 +228,7 @@ function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
         ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb,
         ws.contour_id, ws.local_index, ws.out_offsets, ws.source_contour,
         state.x, state.y, state.pv, state.wrapx, state.wrapy,
-        state.offsets, state.lengths, nvalid)
+        state.offsets, state.lengths, output_offset, contour_offset, nvalid)
     return n
 end
 
@@ -277,7 +285,8 @@ function _pack_energy_segments(state::DeviceContourState{T}, dev::AbstractDevice
         @_ka_launch dev nvalid _state_energy_segments_kernel!(
             ax, ay, bx, by, pv, ka, kb, contour_id, local_index,
             out_offsets, source_contour, state.x, state.y, state.pv,
-            state.wrapx, state.wrapy, state.offsets, state.lengths, nvalid)
+            state.wrapx, state.wrapy, state.offsets, state.lengths,
+            0, 0, nvalid)
     end
 
     return EnergySegmentData(SegmentData(ax, ay, bx, by, pv, ka, kb),
@@ -915,87 +924,94 @@ end
 
 # ── Multi-layer modal energy ─────────────────────────────────────────────
 
-"""
-    _MultilayerEnergyLayout
-
-Concatenated, mode-independent segment packing for multi-layer energy. Only the
-per-segment PV weight changes from mode to mode, so the geometry is packed once
-and `base_pv` (the unweighted PV) is retained to rescale `data.seg.pv` in place
-for each mode. Packing inside the mode loop instead would cost
-`n_modes × n_layers` full packings — quadratic in layer count — plus a discarded
-intermediate copy per layer per mode.
-"""
-struct _MultilayerEnergyLayout{D<:EnergySegmentData, A<:AbstractVector}
-    data::D
-    base_pv::A
-    ranges::Vector{UnitRange{Int}}
+mutable struct _MultilayerEnergyWorkspace{
+        T, EW<:_EnergyWorkspace{T}, DA<:AbstractVector{T}}
+    energy::EW
+    base_pv::DA
 end
 
-"""
-    _pack_multilayer_energy_layout(states, dev, T)
+const _MULTILAYER_ENERGY_WS_TLS_KEY = :contourdynamics_multilayer_energy_workspace
 
-Concatenate every layer's energy-valid segments into one `EnergySegmentData`,
-with contour ids offset so cross-layer pairs are never mistaken for
-self-interactions. PV is left unweighted; see `_apply_modal_pv!`.
-"""
-function _pack_multilayer_energy_layout(states::NTuple{N, <:DeviceContourState{T}},
-                                        dev::AbstractDevice, ::Type{T}) where {N, T}
-    datas = map(s -> _pack_energy_segments(s, dev, T), states)
-    lens = map(d -> length(d.seg.ax), datas)
-    total = sum(lens)
-    ax = device_zeros(dev, T, total)
-    ay = device_zeros(dev, T, total)
-    bx = device_zeros(dev, T, total)
-    by = device_zeros(dev, T, total)
-    pv = device_zeros(dev, T, total)
-    base_pv = device_zeros(dev, T, total)
-    ka = device_zeros(dev, T, total)
-    kb = device_zeros(dev, T, total)
-    contour_id = device_zeros(dev, Int, total)
-    local_index = device_zeros(dev, Int, total)
-    ranges = Vector{UnitRange{Int}}(undef, N)
-    off = 0
-    id_off = 0
-    for ℓ in 1:N
-        d = datas[ℓ]
-        nℓ = lens[ℓ]
-        r = (off + 1):(off + nℓ)
-        ranges[ℓ] = r
-        if nℓ > 0
-            copyto!(view(ax, r), d.seg.ax)
-            copyto!(view(ay, r), d.seg.ay)
-            copyto!(view(bx, r), d.seg.bx)
-            copyto!(view(by, r), d.seg.by)
-            copyto!(view(base_pv, r), d.seg.pv)
-            view(contour_id, r) .= d.contour_id .+ id_off
-            copyto!(view(local_index, r), d.local_index)
+function _create_multilayer_energy_workspace(dev::AbstractDevice, ::Type{T},
+                                             max_contours::Int,
+                                             total_nodes::Int) where {T}
+    energy = _create_energy_workspace(dev, T, max_contours, total_nodes)
+    base_pv = device_zeros(dev, T, total_nodes)
+    return _MultilayerEnergyWorkspace{T,typeof(energy),typeof(base_pv)}(
+        energy, base_pv)
+end
+
+function _get_multilayer_energy_workspace(
+        states::NTuple{N, <:DeviceContourState{T}}, dev::AbstractDevice) where {N, T}
+    max_contours = maximum(s -> length(s.lengths), states; init=0)
+    total_nodes = sum(s -> length(s.x), states; init=0)
+    store = task_local_storage()
+    key = (_MULTILAYER_ENERGY_WS_TLS_KEY, T, typeof(dev))
+    ws = get(store, key, nothing)
+    if ws === nothing ||
+       (ws::_MultilayerEnergyWorkspace).energy.ncontours != max_contours ||
+       ws.energy.total_nodes != total_nodes
+        ws = _create_multilayer_energy_workspace(
+            dev, T, max_contours, total_nodes)
+        store[key] = ws
+    end
+    return ws
+end
+
+@kernel function _copy_multilayer_base_pv_kernel!(base_pv, pv, output_offset, n)
+    i = @index(Global)
+    if i <= n
+        g = output_offset + i
+        base_pv[g] = pv[g]
+    end
+end
+
+@kernel function _apply_multilayer_modal_pv_kernel!(pv, base_pv, weight,
+                                                    output_offset, n)
+    i = @index(Global)
+    if i <= n
+        g = output_offset + i
+        pv[g] = weight * base_pv[g]
+    end
+end
+
+function _pack_multilayer_energy_workspace!(
+        ws::_MultilayerEnergyWorkspace{T},
+        states::NTuple{N, <:DeviceContourState{T}},
+        dev::AbstractDevice) where {N, T}
+    layer_lengths = MVector{N,Int}(undef)
+    output_offset = 0
+    contour_offset = 0
+    for layer in 1:N
+        state = states[layer]
+        n = _pack_energy_workspace!(
+            ws.energy, state, dev;
+            output_offset, contour_offset)
+        layer_lengths[layer] = n
+        if n > 0
+            @_ka_launch dev n _copy_multilayer_base_pv_kernel!(
+                ws.base_pv, ws.energy.pv, output_offset, n)
         end
-        off += nℓ
-        # Offsetting by the layer's full contour count (≥ its valid-contour
-        # count) keeps ids distinct across layers without a device reduction.
-        id_off += length(states[ℓ].lengths)
+        output_offset += n
+        # Full layer contour counts keep compacted ids distinct across layers.
+        contour_offset += length(state.lengths)
     end
-    data = EnergySegmentData(SegmentData(ax, ay, bx, by, pv, ka, kb),
-                             contour_id, local_index)
-    return _MultilayerEnergyLayout(data, base_pv, ranges)
+    return SVector{N,Int}(layer_lengths), output_offset
 end
 
-"""
-    _apply_modal_pv!(layout, weights)
-
-Rewrite the concatenated segment PV as `base_pv * weights[layer]` for this mode.
-Folding the modal weights into the segment PV lets the existing single-layer
-energy kernels evaluate the modal double sum Σᵢⱼ wᵢwⱼ qᵢqⱼ E_pair directly.
-"""
-function _apply_modal_pv!(layout::_MultilayerEnergyLayout, weights::NTuple{N, T}) where {N, T}
-    pv = layout.data.seg.pv
-    base = layout.base_pv
-    for ℓ in 1:N
-        r = layout.ranges[ℓ]
-        isempty(r) && continue
-        view(pv, r) .= view(base, r) .* weights[ℓ]
+function _apply_multilayer_modal_pv!(
+        ws::_MultilayerEnergyWorkspace{T}, layer_lengths::SVector{N,Int},
+        weights::NTuple{N,T}, dev::AbstractDevice) where {N,T}
+    output_offset = 0
+    for layer in 1:N
+        n = layer_lengths[layer]
+        if n > 0
+            @_ka_launch dev n _apply_multilayer_modal_pv_kernel!(
+                ws.energy.pv, ws.base_pv, weights[layer], output_offset, n)
+        end
+        output_offset += n
     end
-    return layout.data
+    return ws.energy
 end
 
 """
@@ -1008,22 +1024,33 @@ QG kernel with modal deformation radius 1/√|λ|.
 """
 function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
                                            kernel::MultiLayerQGKernel{N},
-                                           ::UnboundedDomain,
+                                           domain::UnboundedDomain,
                                            dev::AbstractDevice) where {N, T}
+    ws = _get_multilayer_energy_workspace(states, dev)
+    return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
+end
+
+function _ka_multilayer_energy_with_ws(
+        states::NTuple{N, <:DeviceContourState{T}},
+        kernel::MultiLayerQGKernel{N}, ::UnboundedDomain,
+        dev::AbstractDevice,
+        ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
     P_inv = kernel.eigenvectors_inv
-    layout = _pack_multilayer_energy_layout(states, dev, T)
-    length(layout.data.seg.ax) == 0 && return zero(T)
+    layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
+    total == 0 && return zero(T)
     raw = zero(T)
     for mode in 1:N
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
-        data = _apply_modal_pv!(layout, weights)
+        energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
         lam = evals[mode]
         raw += if abs(lam) < eps(T) * 100
-            _ka_energy_raw_with_segments!(_euler_energy_ka!, data, dev, T)
+            _ka_energy_raw_with_workspace!(
+                _euler_energy_ka!, energy_ws, total, dev)
         else
-            _ka_energy_raw_with_segments!(_qg_energy_ka!, data, dev, T,
-                                          one(T) / sqrt(abs(lam)))
+            _ka_energy_raw_with_workspace!(
+                _qg_energy_ka!, energy_ws, total, dev,
+                one(T) / sqrt(abs(lam)))
         end
     end
     return _normalize_energy(raw)
@@ -1033,31 +1060,39 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
                                            kernel::MultiLayerQGKernel{N},
                                            domain::PeriodicDomain{T},
                                            dev::AbstractDevice) where {N, T}
+    ws = _get_multilayer_energy_workspace(states, dev)
+    return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
+end
+
+function _ka_multilayer_energy_with_ws(
+        states::NTuple{N, <:DeviceContourState{T}},
+        kernel::MultiLayerQGKernel{N}, domain::PeriodicDomain{T},
+        dev::AbstractDevice,
+        ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
     P_inv = kernel.eigenvectors_inv
     # Every mode reads the domain's Euler Ewald tables; QG modes add the
     # analytic Fourier correction with κ² = |λ| (matching the single-layer
     # periodic QG energy path).
     cache = _get_ewald_cache(domain, EulerKernel())
-    kx = to_device(dev, cache.kx)
-    ky = to_device(dev, cache.ky)
-    fourier = to_device(dev, cache.fourier_coeffs)
+    kx, ky, fourier = _ensure_energy_ewald!(ws.energy, cache, dev)
     corr0 = _periodic_euler_corr_at_zero(cache, domain)
     area = T(4) * domain.Lx * domain.Ly
-    layout = _pack_multilayer_energy_layout(states, dev, T)
-    length(layout.data.seg.ax) == 0 && return zero(T)
+    layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
+    total == 0 && return zero(T)
     raw = zero(T)
     for mode in 1:N
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
-        data = _apply_modal_pv!(layout, weights)
-        raw_mode = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                                 cache.alpha, domain.Lx, domain.Ly,
-                                                 cache.n_images, kx, ky, fourier, corr0)
+        energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
+        raw_mode = _ka_energy_raw_with_workspace!(
+            _periodic_euler_energy_ka!, energy_ws, total, dev,
+            cache.alpha, domain.Lx, domain.Ly,
+            cache.n_images, kx, ky, fourier, corr0)
         lam = evals[mode]
         if abs(lam) >= eps(T) * 100
-            raw_mode += _ka_energy_raw_with_segments!(_periodic_qg_correction_energy_ka!,
-                                                      data, dev, T,
-                                                      T(abs(lam)), area, kx, ky)
+            raw_mode += _ka_energy_raw_with_workspace!(
+                _periodic_qg_correction_energy_ka!, energy_ws, total, dev,
+                T(abs(lam)), area, kx, ky)
         end
         raw += raw_mode
     end
