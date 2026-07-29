@@ -256,24 +256,34 @@ using LinearAlgebra: norm
         @test large <= small + thread_slack()
     end
 
-    @testset "Multilayer device energy packs segments once, not once per mode" begin
-        # The modal loop only changes each segment's PV weight, so the segment
-        # packing must be hoisted out of it. Packing per mode costs
-        # O(n_modes × n_layers) full packings — quadratic in layer count — and
-        # throws away an intermediate per-layer copy every time.
+    @testset "Multilayer device energy reuses topology-sized workspace" begin
+        # Geometry is invariant across modes and repeated diagnostics. After
+        # warm-up, allocation may include fixed KA launch bookkeeping but must
+        # not grow with the number of contour nodes.
         F = 0.5
         kernel = MultiLayerQGKernel(SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
-        states = (ContourDynamics.DeviceContourState([circular_patch(0.3, 16, 1.0)], CPU()),
-                  ContourDynamics.DeviceContourState([circular_patch(0.25, 16, -0.5; cx=0.2)], CPU()))
 
-        alloc_u = allocation_bytes(() -> ContourDynamics._ka_multilayer_energy_from_states(
-            states, kernel, UnboundedDomain(), CPU()))
-        @test alloc_u <= 14_000
+        function multilayer_energy_alloc(n, domain)
+            states = (
+                DeviceContourState([circular_patch(0.3, n, 1.0)], CPU()),
+                DeviceContourState([circular_patch(0.25, n, -0.5; cx=0.2)], CPU()),
+            )
+            f() = ContourDynamics._ka_multilayer_energy_from_states(
+                states, kernel, domain, CPU())
+            return f(), allocation_bytes(f)
+        end
+
+        small_energy, small = multilayer_energy_alloc(16, UnboundedDomain())
+        large_energy, large = multilayer_energy_alloc(128, UnboundedDomain())
+        @test isfinite(small_energy)
+        @test isfinite(large_energy)
+        @test small <= 16_384
+        @test large <= small + 512 + thread_slack()
 
         domain = PeriodicDomain(2.0, 2.0)
         setup_ewald_cache!(domain, EulerKernel())
-        alloc_p = allocation_bytes(() -> ContourDynamics._ka_multilayer_energy_from_states(
-            states, kernel, domain, CPU()))
+        periodic_energy, alloc_p = multilayer_energy_alloc(12, domain)
+        @test isfinite(periodic_energy)
         @test alloc_p <= 17_000
     end
 

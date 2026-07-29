@@ -1164,6 +1164,43 @@ end
         end
     end
 
+    @testset "State-based multi-layer energy matches CPU modal energy" begin
+        F = 0.5
+        kernel = MultiLayerQGKernel(
+            SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers = (
+            [circular_patch(0.3, 16, 1.0)],
+            [circular_patch(0.2, 12, -0.5; cx=0.4)],
+        )
+        states = ntuple(i -> DeviceContourState(layers[i], CPU()), 2)
+
+        for domain in (UnboundedDomain(), PeriodicDomain(2.0, 2.0))
+            clear_ewald_cache!()
+            prob = MultiLayerContourProblem(kernel, domain, deepcopy(layers))
+            actual = ContourDynamics._ka_multilayer_energy_from_states(
+                states, kernel, domain, CPU())
+            @test actual ≈ energy(prob) rtol=1e-7 atol=1e-10
+        end
+
+        F1 = (2.5 + sqrt(11.0 / 12.0)) / 2
+        F2 = (2.5 - sqrt(11.0 / 12.0)) / 2
+        kernel3 = MultiLayerQGKernel(
+            SVector(1.0, 0.5),
+            SMatrix{3,3,Float64}(
+                -F1, F1, 0,
+                F1, -(F1 + F2), F2,
+                0, F2, -F2))
+        layers3 = (
+            [circular_patch(0.25, 10, 1.0)],
+            [circular_patch(0.2, 8, -0.6; cx=0.4)],
+            [circular_patch(0.15, 8, 0.8; cx=-0.3, cy=0.35)],
+        )
+        states3 = ntuple(i -> DeviceContourState(layers3[i], CPU()), 3)
+        prob3 = MultiLayerContourProblem(kernel3, UnboundedDomain(), deepcopy(layers3))
+        @test ContourDynamics._ka_multilayer_energy_from_states(
+            states3, kernel3, UnboundedDomain(), CPU()) ≈ energy(prob3) rtol=1e-7 atol=1e-10
+    end
+
     @testset "Multi-layer state RK4 matches CPU multi-layer RK4" begin
         ml_Ld = SVector(1.0)
         ml_F = 1.0 / (2 * ml_Ld[1]^2)
