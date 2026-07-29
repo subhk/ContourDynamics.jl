@@ -1058,6 +1058,20 @@ end
         @test ranges3[2] == 1:8
     end
 
+    @testset "Multi-layer output validation uses authoritative state sizes" begin
+        layers = (
+            [circular_patch(0.3, 8, 1.0)],
+            [circular_patch(0.2, 12, -0.5; cx=0.4)],
+        )
+        states = ntuple(i -> DeviceContourState(layers[i], CPU()), 2)
+        vel = (zeros(SVector{2,Float64}, 8), zeros(SVector{2,Float64}, 12))
+
+        @test ContourDynamics._validate_multilayer_state_velocity_buffer!(vel, states) === vel
+        undersized = (zeros(SVector{2,Float64}, 7), vel[2])
+        @test_throws DimensionMismatch ContourDynamics._validate_multilayer_state_velocity_buffer!(
+            undersized, states)
+    end
+
     @testset "State-based multi-layer velocity matches CPU modal velocity (unbounded)" begin
         ml_Ld = SVector(1.0)
         ml_F = 1.0 / (2 * ml_Ld[1]^2)
