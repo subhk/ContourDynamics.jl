@@ -9,8 +9,9 @@ copy for output, plotting, file writing, or interactive inspection.
 
 Single-layer Euler, QG, and SQG (unbounded or periodic), beta-plane QG
 (periodic), and multi-layer QG all support device-resident velocity,
-RK4/leapfrog timestepping, periodic wrapping, surgery, and diagnostics —
-including energy.
+RK4/leapfrog timestepping, periodic wrapping, surgery, and geometry diagnostics.
+Energy is available for single-layer Euler, QG, and SQG and for multi-layer QG;
+beta-plane QG has no energy diagnostic on either CPU or GPU.
 
 Surgery differs by domain. On unbounded domains the whole pass — cleanup flags,
 close-pair scans, reconnection planning, contour rewrites, and Dritschel
