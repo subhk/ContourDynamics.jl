@@ -987,6 +987,22 @@ end
         end
     end
 
+    @testset "State-based beta-plane velocity matches CPU reference" begin
+        domain = PeriodicDomain(2.0, 2.0)
+        reference = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
+        kernel = BetaPlaneQGKernel(0.4, 1.0, reference)
+        live = vcat(deepcopy(reference), [circular_patch(0.25, 16, 2π; cy=0.5)])
+        prob = ContourProblem(kernel, domain, deepcopy(live))
+        state = DeviceContourState(deepcopy(live), CPU())
+        expected = zeros(SVector{2,Float64}, total_nodes(prob))
+        actual = similar(expected)
+
+        velocity!(expected, prob)
+        ContourDynamics._ka_velocity_from_state!(
+            actual, state, kernel, domain, CPU())
+        @test all(isapprox.(actual, expected; rtol=1e-8, atol=1e-10))
+    end
+
     @testset "KA multi-layer velocity matches direct CPU" begin
         Ld = SVector(1.0)
         F = 1.0 / (2 * Ld[1]^2)
@@ -1358,23 +1374,28 @@ end
         end
     end
 
-    @testset "Periodic multi-layer GPU surgery still errors" begin
-        if _TEST_CUDA_LOADED[]
-            ml_Ld = SVector(1.0)
-            ml_F = 1.0 / (2 * ml_Ld[1]^2)
-            ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
-            prob = MultiLayerContourProblem(MultiLayerQGKernel(ml_Ld, ml_coupling),
-                                            PeriodicDomain(4.0, 4.0),
-                                            ([circular_patch(0.3, 16, 1.0)], PVContour{Float64}[]);
-                                            dev=GPU())
-            @test_throws ArgumentError surgery!(prob, SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100))
-        else
-            # Without CUDA the GPU periodic method is unreachable at runtime,
-            # but we can verify it exists in the method table.
-            @test any(methods(surgery!)) do m
-                occursin("PeriodicDomain", string(m.sig)) &&
-                    occursin("GPU", string(m.sig)) &&
-                    occursin("MultiLayer", string(m.sig))
+    @testset "Periodic multi-layer host-boundary surgery matches CPU" begin
+        F = 0.5
+        kernel = MultiLayerQGKernel(
+            SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+        domain = PeriodicDomain(2.0, 2.0)
+        layers = (
+            [circular_patch(0.3, 16, 1.0)],
+            [circular_patch(0.2, 12, -0.5; cx=0.6)],
+        )
+        params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100)
+        cpu_prob = MultiLayerContourProblem(kernel, domain, deepcopy(layers))
+        states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
+
+        surgery!(cpu_prob, params)
+        for layer in 1:2
+            ContourDynamics._host_boundary_surgery!(
+                states[layer], domain, params, CPU(); layer_label=" layer $layer")
+            actual = materialize_contours(states[layer])
+            @test length(actual) == length(cpu_prob.layers[layer])
+            @test all(zip(actual, cpu_prob.layers[layer])) do (a, b)
+                a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                    all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
             end
         end
     end
