@@ -392,17 +392,10 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
     return ntuple(i -> vel[i], Val(N))
 end
 
-function _velocity_at_state(states::NTuple{N,<:DeviceContourState{T}},
-                            kernel::MultiLayerQGKernel{N}, domain::AbstractDomain,
-                            x::SVector{2,T}) where {N,T}
-    host_layers = ntuple(i -> materialize_contours(states[i]), Val(N))
-    host_prob = MultiLayerContourProblem(kernel, domain, host_layers; dev=CPU())
-    return velocity(host_prob, x)
-end
-
 function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
                   x::SVector{2,T}) where {N,K,D,T}
-    return _velocity_at_state(prob.device_state, prob.kernel, prob.domain, x)
+    return _ka_multilayer_velocity_at_states(prob.device_state, prob.kernel,
+                                             prob.domain, x, prob.dev)
 end
 
 # Sum the modal velocity at one target point `x` from every source layer/segment,

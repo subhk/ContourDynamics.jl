@@ -507,6 +507,73 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
     return _copy_velocity_output!(vel, vel_x, vel_y, dev, total)
 end
 
+@kernel function _project_point_modes_ka!(out_x, out_y, mode_x, mode_y,
+                                          eigenvectors, nlayers)
+    layer = @index(Global)
+    if layer <= nlayers
+        T = eltype(out_x)
+        vx = zero(T)
+        vy = zero(T)
+        @inbounds for mode in 1:nlayers
+            weight = eigenvectors[layer, mode]
+            vx += weight * mode_x[mode]
+            vy += weight * mode_y[mode]
+        end
+        out_x[layer] = vx
+        out_y[layer] = vy
+    end
+end
+
+function _ka_multilayer_velocity_at_states(
+        states::NTuple{N,<:DeviceContourState{T}},
+        kernel::MultiLayerQGKernel{N}, domain::AbstractDomain,
+        x::SVector{2,T}, dev::AbstractDevice) where {N,T}
+    ranges = _layer_state_ranges(states)
+    total = sum(length, ranges)
+    ws = _get_multilayer_workspace(dev, T, total)
+    target_x = to_device(dev, T[x[1]])
+    target_y = to_device(dev, T[x[2]])
+    point_x = device_zeros(dev, T, 1)
+    point_y = device_zeros(dev, T, 1)
+    mode_x = device_zeros(dev, T, N)
+    mode_y = device_zeros(dev, T, N)
+
+    for mode in 1:N
+        for layer in 1:N
+            r = ranges[layer]
+            isempty(r) && continue
+            state = states[layer]
+            n_layer = length(r)
+            @_ka_launch dev n_layer _state_segment_data_kernel!(
+                view(ws.ax, r), view(ws.ay, r), view(ws.bx, r), view(ws.by, r),
+                view(ws.pv, r), view(ws.ka, r), view(ws.kb, r),
+                state.x, state.y, state.pv, state.wrapx, state.wrapy,
+                state.offsets, state.lengths, state.corners,
+                state.contour_of_node, state.local_index,
+                T(kernel.eigenvectors_inv[mode, layer]), n_layer)
+        end
+        seg = SegmentData(ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb)
+        lam = kernel.eigenvalues[mode]
+        if abs(lam) < eps(T) * 100
+            _ka_apply_velocity!(point_x, point_y, target_x, target_y, seg,
+                                EulerKernel(), domain, dev, ws)
+        else
+            _ka_apply_velocity!(point_x, point_y, target_x, target_y, seg,
+                                QGKernel(one(T) / sqrt(abs(lam))), domain, dev, ws)
+        end
+        copyto!(view(mode_x, mode:mode), point_x)
+        copyto!(view(mode_y, mode:mode), point_y)
+    end
+
+    out_x = device_zeros(dev, T, N)
+    out_y = device_zeros(dev, T, N)
+    @_ka_launch dev N _project_point_modes_ka!(
+        out_x, out_y, mode_x, mode_y, kernel.eigenvectors, N)
+    host_x = to_cpu(out_x)
+    host_y = to_cpu(out_y)
+    return ntuple(layer -> SVector{2,T}(host_x[layer], host_y[layer]), Val(N))
+end
+
 # ── Beta-plane device velocity ───────────────────────────────────────────
 
 # Combined live+reference segment buffers for the beta-plane path. The frozen
