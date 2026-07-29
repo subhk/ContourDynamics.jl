@@ -234,6 +234,17 @@ end
     return total_nodes(prob)
 end
 
+@inline function _validate_multilayer_state_velocity_buffer!(
+        vel::NTuple{N, Vector{SVector{2,T}}},
+        states::NTuple{N, <:DeviceContourState}) where {N, T}
+    for layer in 1:N
+        required = _device_state_nnodes(states[layer])
+        length(vel[layer]) >= required || throw(DimensionMismatch(
+            "vel[$layer] length ($(length(vel[layer]))) must be >= layer $layer nodes ($required)"))
+    end
+    return vel
+end
+
 """
     _small_velocity!(vel, prob::ContourProblem)
 
@@ -582,5 +593,7 @@ end
 # GPU fallback for multi-layer problems
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                    prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU}) where {N, T}
-    return _multilayer_velocity_policy!(vel, prob)
+    _validate_multilayer_state_velocity_buffer!(vel, prob.device_state)
+    return _ka_multilayer_velocity_to_host!(vel, prob.device_state, prob.kernel,
+                                            prob.domain, prob.dev)
 end
