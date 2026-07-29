@@ -306,6 +306,28 @@ function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
     return _state_velocity_with_ws!(vel, ws, state, kernel, domain, dev, N)
 end
 
+function _ka_point_result(vel_x, vel_y, ::Type{T}) where {T}
+    host_x = to_cpu(vel_x)
+    host_y = to_cpu(vel_y)
+    return SVector{2,T}(host_x[1], host_y[1])
+end
+
+function _ka_velocity_at_state(state::DeviceContourState{T},
+                               kernel::Union{EulerKernel,QGKernel{T},SQGKernel{T}},
+                               domain::AbstractDomain, x::SVector{2,T},
+                               dev::AbstractDevice) where {T}
+    N = _device_state_nnodes(state)
+    ws = _get_state_workspace(dev, T, N)
+    seg = _state_segment_data!(ws, state, dev)
+    target_x = to_device(dev, T[x[1]])
+    target_y = to_device(dev, T[x[2]])
+    vel_x = device_zeros(dev, T, 1)
+    vel_y = device_zeros(dev, T, 1)
+    _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg,
+                        kernel, domain, dev, ws)
+    return _ka_point_result(vel_x, vel_y, T)
+end
+
 """
     _ka_velocity!(vel, prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},<:AbstractDomain}, dev)
 
@@ -592,4 +614,34 @@ function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
     gws = _get_state_workspace(dev, T, N)
     bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours)
     return _beta_plane_velocity_with_ws!(vel, gws, bws, state, kernel, domain, dev, N)
+end
+
+function _ka_velocity_at_state(state::DeviceContourState{T},
+                               kernel::BetaPlaneQGKernel{T},
+                               domain::PeriodicDomain{T}, x::SVector{2,T},
+                               dev::AbstractDevice) where {T}
+    N = _device_state_nnodes(state)
+    gws = _get_state_workspace(dev, T, N)
+    bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours)
+    if N > 0
+        live = 1:N
+        @_ka_launch dev N _state_segment_data_kernel!(
+            view(bws.ax, live), view(bws.ay, live), view(bws.bx, live), view(bws.by, live),
+            view(bws.pv, live), view(bws.ka, live), view(bws.kb, live),
+            state.x, state.y, state.pv, state.wrapx, state.wrapy,
+            state.offsets, state.lengths, state.corners,
+            state.contour_of_node, state.local_index, one(T), N)
+    end
+    seg = SegmentData(bws.ax, bws.ay, bws.bx, bws.by, bws.pv, bws.ka, bws.kb)
+    target_x = to_device(dev, T[x[1]])
+    target_y = to_device(dev, T[x[2]])
+    vel_x = device_zeros(dev, T, 1)
+    vel_y = device_zeros(dev, T, 1)
+    _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg,
+                        QGKernel(kernel.Ld), domain, dev, gws)
+    dy = 2 * domain.Ly / T(length(kernel.reference_contours))
+    @_ka_launch dev 1 _beta_sawtooth_add_ka!(vel_x, target_y,
+                                             kernel.beta, inv(kernel.Ld), dy,
+                                             domain.Ly, 1)
+    return _ka_point_result(vel_x, vel_y, T)
 end
