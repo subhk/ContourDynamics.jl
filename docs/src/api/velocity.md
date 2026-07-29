@@ -25,9 +25,11 @@ Curved-segment geometry is used for the single-layer Euler, QG, and SQG kernels
 on both unbounded and periodic domains; exactly straight segments still use the
 analytic straight-segment formulas.
 
-Multi-layer `GPU()` problems are fully device-resident: modal velocity,
-RK4/leapfrog timestepping, periodic wrapping, surgery, and diagnostics all read
-the per-layer `DeviceContourState` directly.
+Multi-layer `GPU()` problems keep their authoritative state on the device.
+Modal velocity, RK4/leapfrog timestepping, periodic wrapping, and diagnostics
+read the per-layer `DeviceContourState` directly. Unbounded surgery also runs on
+that state; periodic surgery intentionally materializes at the host boundary
+and reloads the resulting topology.
 
 `BetaPlaneQGKernel` also has a device path. The frozen reference staircase is
 packed once, with negated PV, into the tail of a cached segment buffer, so a

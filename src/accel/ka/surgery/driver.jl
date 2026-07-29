@@ -587,7 +587,8 @@ end
 function surgery!(::ContourProblem{K, D, T, GPU}, ::SurgeryParams) where {K, D, T}
     throw(ArgumentError(
         "GPU surgery is not implemented for $(K) on $(D). " *
-        "Use dev=CPU() or a supported unbounded single-layer Euler/QG/SQG problem."))
+        "Supported single-layer paths are Euler/QG/SQG on unbounded or periodic " *
+        "domains and beta-plane QG on periodic domains."))
 end
 
 """
