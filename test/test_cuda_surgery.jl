@@ -51,6 +51,8 @@ function _test_cuda_velocity_and_energy(kernel, domain; atol=1e-8, rtol=1e-8)
         isapprox(vel_gpu[i][1], vel_ref[i][1]; atol, rtol) &&
             isapprox(vel_gpu[i][2], vel_ref[i][2]; atol, rtol)
     end
+    point = SVector(0.13, -0.17)
+    @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) atol=atol rtol=rtol
     stale_shadow = deepcopy(gpu_prob.contours)
     gpu_prob.contours[1].nodes[1] = SVector(99.0, 99.0)
     @test energy(gpu_prob) ≈ energy(cpu_prob) rtol=1e-7 atol=1e-10
@@ -196,6 +198,8 @@ end
             velocity!(expected, cpu_prob)
             velocity!(actual, gpu_prob)
             @test all(isapprox.(to_cpu(actual), expected; rtol=1e-8, atol=1e-8))
+            point = SVector(0.13, -0.17)
+            @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) rtol=1e-8 atol=1e-8
 
             cpu_stepper = RK4Stepper(0.001, total_nodes(cpu_prob); dev=CPU())
             gpu_stepper = RK4Stepper(0.001, total_nodes(gpu_prob); dev=GPU())

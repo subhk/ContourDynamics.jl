@@ -226,8 +226,8 @@ end
                                  materialize_contours(state))
         stale = ContourProblem(EulerKernel(), UnboundedDomain(), contours_in)
         expected = velocity(current, x)
-        actual = ContourDynamics._velocity_at_state(state, EulerKernel(),
-                                                    UnboundedDomain(), x)
+        actual = ContourDynamics._ka_velocity_at_state(state, EulerKernel(),
+                                                       UnboundedDomain(), x, CPU())
 
         @test actual ≈ expected rtol=1e-12 atol=1e-12
         @test !isapprox(actual, velocity(stale, x); rtol=1e-8, atol=1e-8)
@@ -902,6 +902,31 @@ end
             @test ContourDynamics._ka_energy_from_state(state, kernel, domain, CPU()) ≈
                   ContourDynamics._ka_energy(prob, CPU()) rtol=1e-7 atol=1e-10
         end
+    end
+
+    @testset "State-based point velocity stays on the KA backend" begin
+        point = SVector(0.17, -0.11)
+        contours_in = [
+            circular_patch(0.35, 20, 1.0),
+            PVContour([p + SVector(0.7, -0.25) for p in circular_patch(0.16, 12, -0.4).nodes], -0.4),
+        ]
+        for domain in (UnboundedDomain(), PeriodicDomain(2.0, 2.0)),
+            kernel in (EulerKernel(), QGKernel(1.25), SQGKernel(0.02))
+            clear_ewald_cache!()
+            prob = ContourProblem(kernel, domain, deepcopy(contours_in); dev=CPU())
+            state = DeviceContourState(deepcopy(contours_in), CPU())
+            @test ContourDynamics._ka_velocity_at_state(
+                state, kernel, domain, point, CPU()) ≈ velocity(prob, point) rtol=1e-8 atol=1e-10
+        end
+
+        domain = PeriodicDomain(2.0, 2.0)
+        reference = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
+        kernel = BetaPlaneQGKernel(0.4, 1.0, reference)
+        live = vcat(deepcopy(reference), [circular_patch(0.25, 16, 2π; cy=0.5)])
+        prob = ContourProblem(kernel, domain, deepcopy(live); dev=CPU())
+        state = DeviceContourState(deepcopy(live), CPU())
+        @test ContourDynamics._ka_velocity_at_state(
+            state, kernel, domain, point, CPU()) ≈ velocity(prob, point) rtol=1e-8 atol=1e-10
     end
 
     @testset "KA SQG velocity matches direct CPU" begin

@@ -337,19 +337,10 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
     return v
 end
 
-function _velocity_at_state(state::DeviceContourState{T}, kernel::AbstractKernel,
-                            domain::AbstractDomain, x::SVector{2,T}) where {T}
-    host_prob = ContourProblem(kernel, domain, materialize_contours(state); dev=CPU())
-    return velocity(host_prob, x)
-end
-
 function velocity(prob::ContourProblem{K,D,T,GPU},
                   x::SVector{2,T}) where {K,D,T}
-    # GPU timestepping and surgery mutate only `device_state`; `prob.contours`
-    # is the construction-time host shadow. Point queries are an explicit host
-    # inspection boundary, so materialize the authoritative state before using
-    # the scalar direct evaluator.
-    return _velocity_at_state(prob.device_state, prob.kernel, prob.domain, x)
+    return _ka_velocity_at_state(prob.device_state, prob.kernel,
+                                 prob.domain, x, prob.dev)
 end
 
 """
