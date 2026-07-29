@@ -242,8 +242,8 @@ end
         current_layers = ntuple(i -> materialize_contours(states[i]), 2)
         current_multi = MultiLayerContourProblem(kernel, UnboundedDomain(), current_layers)
         expected_multi = velocity(current_multi, x)
-        actual_multi = ContourDynamics._velocity_at_state(states, kernel,
-                                                          UnboundedDomain(), x)
+        actual_multi = ContourDynamics._ka_multilayer_velocity_at_states(
+            states, kernel, UnboundedDomain(), x, CPU())
 
         @test all(isapprox.(actual_multi, expected_multi; rtol=1e-12, atol=1e-12))
     end
@@ -1097,6 +1097,17 @@ end
         ranges3 = ContourDynamics._layer_state_ranges(states3)
         @test ranges3[1] == 1:0
         @test ranges3[2] == 1:8
+
+        F = 0.5
+        kernel = MultiLayerQGKernel(
+            SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers3 = (PVContour{Float64}[], [circular_patch(0.2, 8, 1.0)])
+        prob3 = MultiLayerContourProblem(kernel, UnboundedDomain(), layers3)
+        point = SVector(0.17, -0.11)
+        @test all(isapprox.(
+            ContourDynamics._ka_multilayer_velocity_at_states(
+                states3, kernel, UnboundedDomain(), point, CPU()),
+            velocity(prob3, point); rtol=1e-8, atol=1e-10))
     end
 
     @testset "Multi-layer output validation uses authoritative state sizes" begin
@@ -1159,6 +1170,11 @@ end
         ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
                                                              domain, CPU())
         @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+        point = SVector(0.17, -0.11)
+        @test all(isapprox.(
+            ContourDynamics._ka_multilayer_velocity_at_states(
+                states, ml_kernel, domain, point, CPU()),
+            velocity(cpu_prob, point); rtol=1e-8, atol=1e-10))
     end
 
     @testset "State-based 3-layer velocity matches CPU modal velocity (asymmetric P)" begin
@@ -1202,6 +1218,11 @@ end
             ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
                                                                  UnboundedDomain(), CPU())
             @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+            point = SVector(0.17, -0.11)
+            @test all(isapprox.(
+                ContourDynamics._ka_multilayer_velocity_at_states(
+                    states, ml_kernel, UnboundedDomain(), point, CPU()),
+                velocity(cpu_prob, point); rtol=1e-8, atol=1e-10))
         end
     end
 
