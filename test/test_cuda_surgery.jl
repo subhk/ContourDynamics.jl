@@ -73,6 +73,61 @@ function _test_cuda_velocity_and_energy(kernel, domain; atol=1e-8, rtol=1e-8)
     gpu_prob.contours[1] = stale_shadow[1]
 end
 
+function _test_cuda_multilayer_paths(domain)
+    clear_ewald_cache!()
+    F = 0.5
+    kernel = MultiLayerQGKernel(
+        SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+    c1 = circular_patch(0.35, 24, 1.0)
+    c2 = circular_patch(0.2, 16, -0.5; cx=0.4)
+    layers = ([c1], [c2])
+    cpu_prob = MultiLayerContourProblem(kernel, domain, deepcopy(layers); dev=CPU())
+    gpu_prob = MultiLayerContourProblem(kernel, domain, deepcopy(layers); dev=GPU())
+
+    vel_ref = (zeros(SVector{2,Float64}, nnodes(c1)),
+               zeros(SVector{2,Float64}, nnodes(c2)))
+    vel_gpu = (similar(vel_ref[1]), similar(vel_ref[2]))
+    velocity!(vel_ref, cpu_prob)
+    velocity!(vel_gpu, gpu_prob)
+    for layer in 1:2, i in eachindex(vel_ref[layer])
+        @test vel_gpu[layer][i][1] ≈ vel_ref[layer][i][1] rtol=1e-8 atol=1e-8
+        @test vel_gpu[layer][i][2] ≈ vel_ref[layer][i][2] rtol=1e-8 atol=1e-8
+    end
+
+    gpu_prob.layers[1][1].nodes[1] = SVector(99.0, 99.0)
+    point = SVector(0.1, -0.15)
+    @test all(isapprox.(velocity(gpu_prob, point), velocity(cpu_prob, point);
+                        rtol=1e-8, atol=1e-8))
+    @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
+    @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
+    @test angular_momentum(gpu_prob) ≈ angular_momentum(cpu_prob) rtol=1e-10 atol=1e-10
+    @test vortex_area(gpu_prob) == vortex_area(cpu_prob)
+    @test energy(gpu_prob) ≈ energy(cpu_prob) rtol=1e-7 atol=1e-10
+
+    cpu_stepper = RK4Stepper(0.001, total_nodes(cpu_prob); dev=CPU())
+    gpu_stepper = RK4Stepper(0.001, total_nodes(gpu_prob); dev=GPU())
+    timestep!(cpu_prob, cpu_stepper)
+    timestep!(gpu_prob, gpu_stepper)
+    for layer in 1:2
+        @test all(zip(materialize_contours(gpu_prob)[layer], cpu_prob.layers[layer])) do (a, b)
+            all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-8))
+        end
+    end
+
+    if domain isa PeriodicDomain
+        params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100)
+        surgery!(cpu_prob, params)
+        surgery!(gpu_prob, params)
+        gpu_layers = materialize_contours(gpu_prob)
+        for layer in 1:2
+            @test nnodes.(gpu_layers[layer]) == nnodes.(cpu_prob.layers[layer])
+            @test all(zip(gpu_layers[layer], cpu_prob.layers[layer])) do (a, b)
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-10, atol=1e-10))
+            end
+        end
+    end
+end
+
 @testset "CUDA surgery backend" begin
     if !_cuda_available()
         @test true
@@ -123,37 +178,32 @@ end
             end
         end
 
-        @testset "CUDA multi-layer velocity matches CPU reference" begin
-            Ld = SVector(1.0)
-            F = 1.0 / (2 * Ld[1]^2)
-            coupling = SMatrix{2,2}(-F, F, F, -F)
-            c1 = circular_patch(0.35, 24, 1.0)
-            c2 = circular_patch(0.2, 16, -0.5)
-            cpu_prob = MultiLayerContourProblem(
-                MultiLayerQGKernel(Ld, coupling), UnboundedDomain(), ([c1], [c2]); dev=CPU())
-            gpu_prob = MultiLayerContourProblem(
-                MultiLayerQGKernel(Ld, coupling), UnboundedDomain(),
-                deepcopy(([c1], [c2])); dev=GPU())
+        @testset "CUDA multi-layer paths match CPU references" begin
+            _test_cuda_multilayer_paths(UnboundedDomain())
+            _test_cuda_multilayer_paths(PeriodicDomain(2.0, 2.0))
+        end
 
-            vel_ref = (zeros(SVector{2,Float64}, nnodes(c1)),
-                       zeros(SVector{2,Float64}, nnodes(c2)))
-            vel_gpu = (similar(vel_ref[1]), similar(vel_ref[2]))
-            ContourDynamics._direct_velocity!(vel_ref, cpu_prob)
-            velocity!(vel_gpu, gpu_prob)
+        @testset "CUDA beta-plane velocity matches CPU reference" begin
+            domain = PeriodicDomain(2.0, 2.0)
+            reference = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
+            kernel = BetaPlaneQGKernel(0.4, 1.0, reference)
+            live = vcat(deepcopy(reference), [circular_patch(0.25, 16, 2π; cy=0.5)])
+            cpu_prob = ContourProblem(kernel, domain, deepcopy(live); dev=CPU())
+            gpu_prob = ContourProblem(kernel, domain, deepcopy(live); dev=GPU())
+            expected = zeros(SVector{2,Float64}, total_nodes(cpu_prob))
+            actual = device_zeros(GPU(), SVector{2,Float64}, total_nodes(gpu_prob))
 
-            for layer in 1:2, i in eachindex(vel_ref[layer])
-                @test vel_gpu[layer][i][1] ≈ vel_ref[layer][i][1] rtol=1e-8 atol=1e-8
-                @test vel_gpu[layer][i][2] ≈ vel_ref[layer][i][2] rtol=1e-8 atol=1e-8
+            velocity!(expected, cpu_prob)
+            velocity!(actual, gpu_prob)
+            @test all(isapprox.(to_cpu(actual), expected; rtol=1e-8, atol=1e-8))
+
+            cpu_stepper = RK4Stepper(0.001, total_nodes(cpu_prob); dev=CPU())
+            gpu_stepper = RK4Stepper(0.001, total_nodes(gpu_prob); dev=GPU())
+            timestep!(cpu_prob, cpu_stepper)
+            timestep!(gpu_prob, gpu_stepper)
+            @test all(zip(materialize_contours(gpu_prob), cpu_prob.contours)) do (a, b)
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-8))
             end
-            gpu_prob.layers[1][1].nodes[1] = SVector(99.0, 99.0)
-            point = SVector(0.1, -0.15)
-            @test all(isapprox.(velocity(gpu_prob, point), velocity(cpu_prob, point);
-                                rtol=1e-8, atol=1e-8))
-            @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
-            @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
-            @test angular_momentum(gpu_prob) ≈ angular_momentum(cpu_prob) rtol=1e-10 atol=1e-10
-            @test vortex_area(gpu_prob) == vortex_area(cpu_prob)
-            @test_throws ArgumentError energy(gpu_prob)
         end
 
         δ = 0.02
