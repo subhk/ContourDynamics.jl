@@ -647,6 +647,60 @@ end
         @test isempty(ContourDynamics._device_close_pair_candidates(contours_different_pv, δ, CPU()))
     end
 
+    @testset "Device close-pair admissibility uses periodic minimum images" begin
+        function periodic_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
+            nodes = SVector{2,Float64}[]
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
+            end
+            return PVContour(nodes, pv)
+        end
+
+        domain = PeriodicDomain(2.0, 2.0)
+        δ = 0.03
+        contours_in = [
+            periodic_rectangle_patch(1.2, 1.99, -0.5, 0.5, 6, 1.0),
+            periodic_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 6, 1.0),
+        ]
+        index = ContourDynamics.build_spatial_index(contours_in, δ, domain)
+        expected = ContourDynamics.find_close_segments(contours_in, index, δ, domain)
+        state = DeviceContourState(deepcopy(contours_in), CPU())
+
+        actual = ContourDynamics._device_admissible_close_segment_buffer(
+            state, δ, domain, CPU())
+        unbounded = ContourDynamics._device_admissible_close_segment_buffer(
+            state, δ, UnboundedDomain(), CPU())
+
+        @test !isempty(expected)
+        @test Set(ContourDynamics._unpack_close_pair_candidates(actual)) == Set(expected)
+        @test isempty(ContourDynamics._unpack_close_pair_candidates(unbounded))
+
+        nested = [
+            PVContour([p + SVector(1.8, 0.0) for p in circular_patch(1.0, 96, 1.0).nodes], 1.0),
+            PVContour([p + SVector(1.8, 0.0) for p in circular_patch(0.98, 96, 1.0).nodes], 1.0),
+        ]
+        nested_state = DeviceContourState(deepcopy(nested), CPU())
+        raw_nested = ContourDynamics._device_close_pair_candidate_buffer(
+            nested_state, 0.05, domain, CPU())
+        admissible_nested = ContourDynamics._device_admissible_close_segment_buffer(
+            nested_state, 0.05, domain, CPU())
+        nested_index = ContourDynamics.build_spatial_index(nested, 0.05, domain)
+        expected_nested = ContourDynamics.find_close_segments(
+            nested, nested_index, 0.05, domain)
+        @test !isempty(ContourDynamics._unpack_close_pair_candidates(raw_nested))
+        @test isempty(expected_nested)
+        @test isempty(ContourDynamics._unpack_close_pair_candidates(admissible_nested))
+    end
+
     @testset "Device close-pair admissibility honors interior vorticity" begin
         δ = 0.05
         outer = circular_patch(1.0, 96, 1.0)

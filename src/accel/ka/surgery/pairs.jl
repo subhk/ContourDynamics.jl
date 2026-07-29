@@ -46,9 +46,30 @@ end
     return min(min(d1, d2), min(d3, d4))
 end
 
+@inline function _flat_wrap_coord(x, L)
+    L2 = 2 * L
+    return x - floor((x + L) / L2) * L2
+end
+
+@inline function _flat_shift_segment_to_image(ax, ay, bx, by, refx, refy,
+                                              periodic, Lx, Ly)
+    periodic || return ax, ay, bx, by
+    midx = (ax + bx) / 2
+    midy = (ay + by) / 2
+    shiftx = round((refx - midx) / (2 * Lx)) * (2 * Lx)
+    shifty = round((refy - midy) / (2 * Ly)) * (2 * Ly)
+    return ax + shiftx, ay + shifty, bx + shiftx, by + shifty
+end
+
+@inline _flat_surgery_domain(::UnboundedDomain, ::Type{T}) where {T} =
+    (false, zero(T), zero(T))
+@inline _flat_surgery_domain(domain::PeriodicDomain, ::Type{T}) where {T} =
+    (true, T(domain.Lx), T(domain.Ly))
+
 @kernel function _close_pair_candidate_kernel!(valid, x, y, pv, wrapx, wrapy, offsets,
                                                lengths, contour_of_node, local_index,
-                                               corners, δ2, total_nodes)
+                                               corners, periodic, Lx, Ly, δ2,
+                                               total_nodes)
     pair_idx = @index(Global)
     npairs = total_nodes * total_nodes
     if pair_idx <= npairs
@@ -102,6 +123,15 @@ end
                             by2 = y[off] + wrapy[cj]
                         end
 
+                        if periodic
+                            refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
+                            refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
+                            ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
+                                ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
+                            ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
+                                ax2, ay2, bx2, by2, refx, refy, periodic, Lx, Ly)
+                        end
+
                         d2 = _flat_surgery_contact_distance2(ax1, ay1, bx1, by1,
                                                              ax2, ay2, bx2, by2)
                         is_valid = d2 < δ2
@@ -132,6 +162,7 @@ end
 end
 
 function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
+                                             domain::AbstractDomain,
                                              dev::AbstractDevice=CPU()) where {T}
     total_nodes = _flat_nnodes(flat)
     if total_nodes == 0
@@ -141,10 +172,11 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
 
     npairs = total_nodes * total_nodes
     valid = device_zeros(dev, UInt8, npairs)
+    periodic, Lx, Ly = _flat_surgery_domain(domain, T)
     @_ka_launch dev npairs _close_pair_candidate_kernel!(
         valid, flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy, flat.offsets,
         flat.lengths, flat.contour_of_node, flat.local_index, flat.corners,
-        T(δ)^2, total_nodes)
+        periodic, Lx, Ly, T(δ)^2, total_nodes)
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
@@ -164,6 +196,11 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
     return DeviceClosePairCandidates(pair_ci, pair_i, pair_cj, pair_j)
 end
 
+function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
+                                             dev::AbstractDevice=CPU()) where {T}
+    return _device_close_pair_candidate_buffer(flat, δ, UnboundedDomain(), dev)
+end
+
 function _device_close_pair_candidate_buffer(contours::Vector{PVContour{T}}, δ,
                                              dev::AbstractDevice=CPU()) where {T}
     return _device_close_pair_candidate_buffer(_pack_flat_topology(contours, dev),
@@ -174,6 +211,13 @@ function _device_close_pair_candidate_buffer(state::DeviceContourState{T}, δ,
                                              dev::AbstractDevice=CPU()) where {T}
     return _device_close_pair_candidate_buffer(_flat_topology(state, dev),
                                                δ, dev)
+end
+
+function _device_close_pair_candidate_buffer(state::DeviceContourState{T}, δ,
+                                             domain::AbstractDomain,
+                                             dev::AbstractDevice=CPU()) where {T}
+    return _device_close_pair_candidate_buffer(_flat_topology(state, dev),
+                                               δ, domain, dev)
 end
 
 function _unpack_close_pair_candidates(candidates::DeviceClosePairCandidates)
@@ -195,7 +239,8 @@ end
 end
 
 @inline function _flat_segment_interior_probe(x, y, wrapx, wrapy, offsets,
-                                              lengths, ci, i, δ)
+                                              lengths, ci, i, δ,
+                                              periodic, Lx, Ly)
     off = offsets[ci]
     n = lengths[ci]
     g = off + i - 1
@@ -207,7 +252,9 @@ end
     sy = by - ay
     seg_len = sqrt(sx * sx + sy * sy)
     if seg_len <= eps(δ)
-        return (ax + bx) / 2, (ay + by) / 2
+        px = (ax + bx) / 2
+        py = (ay + by) / 2
+        return periodic ? (_flat_wrap_coord(px, Lx), _flat_wrap_coord(py, Ly)) : (px, py)
     end
 
     area2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
@@ -217,12 +264,14 @@ end
     inward_y = area2 >= zero(area2) ? left_y : -left_y
     probe_distance = max(δ / 10,
                          eps(δ) * (one(δ) + abs(ax) + abs(ay) + seg_len))
-    return (ax + bx) / 2 + probe_distance * inward_x,
-           (ay + by) / 2 + probe_distance * inward_y
+    px = (ax + bx) / 2 + probe_distance * inward_x
+    py = (ay + by) / 2 + probe_distance * inward_y
+    return periodic ? (_flat_wrap_coord(px, Lx), _flat_wrap_coord(py, Ly)) : (px, py)
 end
 
 @inline function _flat_point_in_closed_contour(px, py, x, y, wrapx, wrapy,
-                                               offsets, lengths, ci)
+                                               offsets, lengths, ci,
+                                               periodic, Lx, Ly)
     (!iszero(wrapx[ci]) || !iszero(wrapy[ci])) && return false
     inside = false
     off = offsets[ci]
@@ -233,6 +282,8 @@ end
         ay = y[g]
         bx = li < n ? x[g + 1] : x[off] + wrapx[ci]
         by = li < n ? y[g + 1] : y[off] + wrapy[ci]
+        ax, ay, bx, by = _flat_shift_segment_to_image(
+            ax, ay, bx, by, px, py, periodic, Lx, Ly)
         inside = inside != _flat_ray_crosses_segment(px, py, ax, ay, bx, by)
     end
     return inside
@@ -240,13 +291,14 @@ end
 
 @inline function _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
                                                 offsets, lengths, ci, i, δ,
-                                                ncontours)
+                                                ncontours, periodic, Lx, Ly)
     px, py = _flat_segment_interior_probe(x, y, wrapx, wrapy, offsets,
-                                          lengths, ci, i, δ)
+                                          lengths, ci, i, δ, periodic, Lx, Ly)
     q = zero(δ)
     @inbounds for ck in 1:ncontours
         if _flat_point_in_closed_contour(px, py, x, y, wrapx, wrapy,
-                                         offsets, lengths, ck)
+                                         offsets, lengths, ck,
+                                         periodic, Lx, Ly)
             q += pv[ck]
         end
     end
@@ -256,7 +308,8 @@ end
 @kernel function _admissible_close_pair_kernel!(valid, pair_ci, pair_i,
                                                 pair_cj, pair_j, x, y, pv,
                                                 wrapx, wrapy, offsets, lengths,
-                                                δ, ncontours, npairs)
+                                                δ, ncontours, periodic, Lx, Ly,
+                                                npairs)
     k = @index(Global)
     if k <= npairs
         ci = pair_ci[k]
@@ -265,10 +318,12 @@ end
         if !ok
             qi = _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
                                                 offsets, lengths, ci,
-                                                pair_i[k], δ, ncontours)
+                                                pair_i[k], δ, ncontours,
+                                                periodic, Lx, Ly)
             qj = _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
                                                 offsets, lengths, cj,
-                                                pair_j[k], δ, ncontours)
+                                                pair_j[k], δ, ncontours,
+                                                periodic, Lx, Ly)
             tol = sqrt(eps(δ)) * max(one(δ), abs(qi), abs(qj))
             ok = abs(qi - qj) <= tol
         end
@@ -277,18 +332,19 @@ end
 end
 
 function _device_admissible_close_segment_buffer(flat::FlatContourTopology{T}, δ,
-                                                 domain::UnboundedDomain,
+                                                 domain::AbstractDomain,
                                                  dev::AbstractDevice=CPU()) where {T}
-    candidates = _device_close_pair_candidate_buffer(flat, δ, dev)
+    candidates = _device_close_pair_candidate_buffer(flat, δ, domain, dev)
     npairs = length(candidates.ci)
     npairs == 0 && return candidates
 
     ncontours = _flat_ncontours(flat)
     valid = device_zeros(dev, UInt8, npairs)
+    periodic, Lx, Ly = _flat_surgery_domain(domain, T)
     @_ka_launch dev npairs _admissible_close_pair_kernel!(
         valid, candidates.ci, candidates.i, candidates.cj, candidates.j,
         flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy, flat.offsets,
-        flat.lengths, T(δ), ncontours, npairs)
+        flat.lengths, T(δ), ncontours, periodic, Lx, Ly, npairs)
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
@@ -309,14 +365,14 @@ function _device_admissible_close_segment_buffer(flat::FlatContourTopology{T}, �
 end
 
 function _device_admissible_close_segment_buffer(contours::Vector{PVContour{T}}, δ,
-                                                 domain::UnboundedDomain,
+                                                 domain::AbstractDomain,
                                                  dev::AbstractDevice=CPU()) where {T}
     return _device_admissible_close_segment_buffer(
         _pack_flat_topology(contours, dev), δ, domain, dev)
 end
 
 function _device_admissible_close_segment_buffer(state::DeviceContourState{T}, δ,
-                                                 domain::UnboundedDomain,
+                                                 domain::AbstractDomain,
                                                  dev::AbstractDevice=CPU()) where {T}
     return _device_admissible_close_segment_buffer(
         _flat_topology(state, dev), δ, domain, dev)
@@ -586,4 +642,3 @@ function _device_select_reconnection_pairs(contours::Vector{PVContour{T}},
     return _unpack_close_pair_candidates(
         _device_select_reconnection_pair_buffer(contours, candidates, dev))
 end
-
