@@ -26,9 +26,10 @@ grid with ``\bar n_h=512`` and ``m_g=2``, surgery scale
 
 The default `demo` preset preserves the literature model and vortex parameters
 but reduces contour resolution and duration. The `paper` preset restores
-``n_\beta=50`` and ``t=28``. Neither preset is an exact reproduction because
-this package evaluates velocity directly on contours instead of using the
-paper's contour-advective semi-Lagrangian grid inversion.
+``n_\beta=50`` and ``t=28``. Neither preset is an exact reproduction. The
+analytic beta-plane correction described above evaluates velocity directly on
+contours instead of using the paper's contour-advective semi-Lagrangian grid
+inversion.
 
 Run the default demonstration with:
 
