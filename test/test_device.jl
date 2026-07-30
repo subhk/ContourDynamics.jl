@@ -226,8 +226,8 @@ end
                                  materialize_contours(state))
         stale = ContourProblem(EulerKernel(), UnboundedDomain(), contours_in)
         expected = velocity(current, x)
-        actual = ContourDynamics._velocity_at_state(state, EulerKernel(),
-                                                    UnboundedDomain(), x)
+        actual = ContourDynamics._ka_velocity_at_state(state, EulerKernel(),
+                                                       UnboundedDomain(), x, CPU())
 
         @test actual ≈ expected rtol=1e-12 atol=1e-12
         @test !isapprox(actual, velocity(stale, x); rtol=1e-8, atol=1e-8)
@@ -242,8 +242,8 @@ end
         current_layers = ntuple(i -> materialize_contours(states[i]), 2)
         current_multi = MultiLayerContourProblem(kernel, UnboundedDomain(), current_layers)
         expected_multi = velocity(current_multi, x)
-        actual_multi = ContourDynamics._velocity_at_state(states, kernel,
-                                                          UnboundedDomain(), x)
+        actual_multi = ContourDynamics._ka_multilayer_velocity_at_states(
+            states, kernel, UnboundedDomain(), x, CPU())
 
         @test all(isapprox.(actual_multi, expected_multi; rtol=1e-12, atol=1e-12))
     end
@@ -647,6 +647,74 @@ end
         @test isempty(ContourDynamics._device_close_pair_candidates(contours_different_pv, δ, CPU()))
     end
 
+    @testset "Device close-pair admissibility uses periodic minimum images" begin
+        function periodic_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
+            nodes = SVector{2,Float64}[]
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
+            end
+            return PVContour(nodes, pv)
+        end
+
+        domain = PeriodicDomain(2.0, 2.0)
+        δ = 0.03
+        contours_in = [
+            periodic_rectangle_patch(1.2, 1.99, -0.5, 0.5, 6, 1.0),
+            periodic_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 6, 1.0),
+        ]
+        index = ContourDynamics.build_spatial_index(contours_in, δ, domain)
+        expected = ContourDynamics.find_close_segments(contours_in, index, δ, domain)
+        state = DeviceContourState(deepcopy(contours_in), CPU())
+
+        actual = ContourDynamics._device_admissible_close_segment_buffer(
+            state, δ, domain, CPU())
+        unbounded = ContourDynamics._device_admissible_close_segment_buffer(
+            state, δ, UnboundedDomain(), CPU())
+
+        @test !isempty(expected)
+        @test Set(ContourDynamics._unpack_close_pair_candidates(actual)) == Set(expected)
+        @test isempty(ContourDynamics._unpack_close_pair_candidates(unbounded))
+
+        expected_merge = deepcopy(contours_in)
+        ContourDynamics.reconnect!(expected_merge, expected, domain)
+        rewrite_state = DeviceContourState(deepcopy(contours_in), CPU())
+        selected = ContourDynamics._device_select_reconnection_pair_buffer(
+            rewrite_state, actual, domain, CPU())
+        ContourDynamics._device_rewrite_state!(
+            rewrite_state, selected, domain, CPU())
+        actual_merge = materialize_contours(rewrite_state)
+        @test length(actual_merge) == length(expected_merge)
+        @test all(zip(actual_merge, expected_merge)) do (a, b)
+            a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
+        end
+
+        nested = [
+            PVContour([p + SVector(1.8, 0.0) for p in circular_patch(1.0, 96, 1.0).nodes], 1.0),
+            PVContour([p + SVector(1.8, 0.0) for p in circular_patch(0.98, 96, 1.0).nodes], 1.0),
+        ]
+        nested_state = DeviceContourState(deepcopy(nested), CPU())
+        raw_nested = ContourDynamics._device_close_pair_candidate_buffer(
+            nested_state, 0.05, domain, CPU())
+        admissible_nested = ContourDynamics._device_admissible_close_segment_buffer(
+            nested_state, 0.05, domain, CPU())
+        nested_index = ContourDynamics.build_spatial_index(nested, 0.05, domain)
+        expected_nested = ContourDynamics.find_close_segments(
+            nested, nested_index, 0.05, domain)
+        @test !isempty(ContourDynamics._unpack_close_pair_candidates(raw_nested))
+        @test isempty(expected_nested)
+        @test isempty(ContourDynamics._unpack_close_pair_candidates(admissible_nested))
+    end
+
     @testset "Device close-pair admissibility honors interior vorticity" begin
         δ = 0.05
         outer = circular_patch(1.0, 96, 1.0)
@@ -904,6 +972,31 @@ end
         end
     end
 
+    @testset "State-based point velocity stays on the KA backend" begin
+        point = SVector(0.17, -0.11)
+        contours_in = [
+            circular_patch(0.35, 20, 1.0),
+            PVContour([p + SVector(0.7, -0.25) for p in circular_patch(0.16, 12, -0.4).nodes], -0.4),
+        ]
+        for domain in (UnboundedDomain(), PeriodicDomain(2.0, 2.0)),
+            kernel in (EulerKernel(), QGKernel(1.25), SQGKernel(0.02))
+            clear_ewald_cache!()
+            prob = ContourProblem(kernel, domain, deepcopy(contours_in); dev=CPU())
+            state = DeviceContourState(deepcopy(contours_in), CPU())
+            @test ContourDynamics._ka_velocity_at_state(
+                state, kernel, domain, point, CPU()) ≈ velocity(prob, point) rtol=1e-8 atol=1e-10
+        end
+
+        domain = PeriodicDomain(2.0, 2.0)
+        reference = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
+        kernel = BetaPlaneQGKernel(0.4, 1.0, reference)
+        live = vcat(deepcopy(reference), [circular_patch(0.25, 16, 2π; cy=0.5)])
+        prob = ContourProblem(kernel, domain, deepcopy(live); dev=CPU())
+        state = DeviceContourState(deepcopy(live), CPU())
+        @test ContourDynamics._ka_velocity_at_state(
+            state, kernel, domain, point, CPU()) ≈ velocity(prob, point) rtol=1e-8 atol=1e-10
+    end
+
     @testset "KA SQG velocity matches direct CPU" begin
         c = circular_patch(0.5, 32, 1.0)
         prob = ContourProblem(SQGKernel(0.02), UnboundedDomain(), [c])
@@ -1072,6 +1165,17 @@ end
         ranges3 = ContourDynamics._layer_state_ranges(states3)
         @test ranges3[1] == 1:0
         @test ranges3[2] == 1:8
+
+        F = 0.5
+        kernel = MultiLayerQGKernel(
+            SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers3 = (PVContour{Float64}[], [circular_patch(0.2, 8, 1.0)])
+        prob3 = MultiLayerContourProblem(kernel, UnboundedDomain(), layers3)
+        point = SVector(0.17, -0.11)
+        @test all(isapprox.(
+            ContourDynamics._ka_multilayer_velocity_at_states(
+                states3, kernel, UnboundedDomain(), point, CPU()),
+            velocity(prob3, point); rtol=1e-8, atol=1e-10))
     end
 
     @testset "Multi-layer output validation uses authoritative state sizes" begin
@@ -1134,6 +1238,11 @@ end
         ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
                                                              domain, CPU())
         @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+        point = SVector(0.17, -0.11)
+        @test all(isapprox.(
+            ContourDynamics._ka_multilayer_velocity_at_states(
+                states, ml_kernel, domain, point, CPU()),
+            velocity(cpu_prob, point); rtol=1e-8, atol=1e-10))
     end
 
     @testset "State-based 3-layer velocity matches CPU modal velocity (asymmetric P)" begin
@@ -1177,6 +1286,11 @@ end
             ContourDynamics._ka_multilayer_velocity_from_states!(flat, states, ml_kernel,
                                                                  UnboundedDomain(), CPU())
             @test all(isapprox.(flat, expected; rtol=1e-8, atol=1e-10))
+            point = SVector(0.17, -0.11)
+            @test all(isapprox.(
+                ContourDynamics._ka_multilayer_velocity_at_states(
+                    states, ml_kernel, UnboundedDomain(), point, CPU()),
+                velocity(cpu_prob, point); rtol=1e-8, atol=1e-10))
         end
     end
 
