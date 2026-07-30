@@ -112,7 +112,8 @@ function _materialize_rewrite_outputs(flat::FlatContourTopology{T},
             plan.op, plan.valid, plan.node_from_first, plan.node_idx,
             plan.seg_idx, plan.inserted_idx, plan.split_reverse1,
             plan.split_reverse2, plan.merge_reverse_second, plan.stitch_x,
-            plan.stitch_y, flat.x, flat.y, flat.corners, flat.offsets,
+            plan.stitch_y, plan.merge_shift_x, plan.merge_shift_y,
+            flat.x, flat.y, flat.corners, flat.offsets,
             flat.lengths, layout.total_nodes)
     end
 
@@ -195,6 +196,21 @@ function _device_rewrite_state!(state::DeviceContourState{T},
                                                       Vector{Tuple{Int,Int,Int,Int}}},
                                 dev::AbstractDevice=CPU()) where {T}
     outputs = _device_materialize_full_rewrite_outputs(state, selected_pairs, dev)
+    return _replace_device_state!(state, outputs, dev)
+end
+
+function _device_rewrite_state!(state::DeviceContourState{T},
+                                selected_pairs::Union{DeviceClosePairCandidates,
+                                                      Vector{Tuple{Int,Int,Int,Int}}},
+                                domain::AbstractDomain,
+                                dev::AbstractDevice=CPU()) where {T}
+    plan = selected_pairs isa DeviceClosePairCandidates ?
+        _device_topology_rewrite_plan(state, selected_pairs, domain, dev) :
+        _device_topology_rewrite_plan_from_vectors(
+            _flat_topology(state, dev), _pack_pair_vectors(selected_pairs, dev)...,
+            domain, dev)
+    layout = _device_full_rewrite_output_layout(state, plan, dev)
+    outputs = _materialize_rewrite_outputs(state, plan, layout, dev)
     return _replace_device_state!(state, outputs, dev)
 end
 

@@ -77,15 +77,29 @@ end
     return area2
 end
 
+@inline function _flat_point_segment_dist2_in_domain(px, py, ax, ay, bx, by,
+                                                     periodic, Lx, Ly)
+    if periodic
+        px = _flat_wrap_coord(px, Lx)
+        py = _flat_wrap_coord(py, Ly)
+        ax, ay, bx, by = _flat_shift_segment_to_image(
+            ax, ay, bx, by, px, py, periodic, Lx, Ly)
+    end
+    d2, _, _ = _flat_point_segment_closest(px, py, ax, ay, bx, by)
+    return d2
+end
+
 @kernel function _topology_rewrite_size_kernel!(op, valid, node_from_first,
                                                 node_idx, seg_idx, inserted_idx,
                                                 split_reverse1, split_reverse2,
                                                 merge_reverse_second,
-                                                stitch_x, stitch_y, out_count,
+                                                stitch_x, stitch_y,
+                                                merge_shift_x, merge_shift_y,
+                                                out_count,
                                                 out_len1, out_len2, pair_ci,
                                                 pair_i, pair_cj, pair_j, x, y,
                                                 wrapx, wrapy, offsets, lengths,
-                                                npairs)
+                                                periodic, Lx, Ly, npairs)
     k = @index(Global)
     if k <= npairs
         ci = pair_ci[k]
@@ -123,7 +137,22 @@ end
             by2 = y[offsets[cj]] + wrapy[cj]
         end
 
-        best_d2, _, _ = _flat_point_segment_closest(ax1, ay1, ax2, ay2, bx2, by2)
+
+        shift_x = zero(eltype(x))
+        shift_y = zero(eltype(y))
+        if op_k == UInt8(2) && periodic
+            raw_x = ax1 - ax2
+            raw_y = ay1 - ay2
+            shift_x = round(raw_x / (2 * Lx)) * (2 * Lx)
+            shift_y = round(raw_y / (2 * Ly)) * (2 * Ly)
+            ax2 += shift_x
+            ay2 += shift_y
+            bx2 += shift_x
+            by2 += shift_y
+        end
+
+        best_d2 = _flat_point_segment_dist2_in_domain(
+            ax1, ay1, ax2, ay2, bx2, by2, periodic, Lx, Ly)
         best_x = ax1
         best_y = ay1
         best_node_from_first = UInt8(1)
@@ -132,7 +161,8 @@ end
 
         x1_end = x[g1_end]
         y1_end = y[g1_end]
-        d2, _, _ = _flat_point_segment_closest(x1_end, y1_end, ax2, ay2, bx2, by2)
+        d2 = _flat_point_segment_dist2_in_domain(
+            x1_end, y1_end, ax2, ay2, bx2, by2, periodic, Lx, Ly)
         if d2 < best_d2
             best_d2 = d2
             best_x = x1_end
@@ -142,7 +172,8 @@ end
             best_seg_idx = j_eff
         end
 
-        d2, _, _ = _flat_point_segment_closest(ax2, ay2, ax1, ay1, bx1, by1)
+        d2 = _flat_point_segment_dist2_in_domain(
+            ax2, ay2, ax1, ay1, bx1, by1, periodic, Lx, Ly)
         if d2 < best_d2
             best_d2 = d2
             best_x = ax2
@@ -152,7 +183,8 @@ end
             best_seg_idx = i
         end
 
-        d2, _, _ = _flat_point_segment_closest(bx2, by2, ax1, ay1, bx1, by1)
+        d2 = _flat_point_segment_dist2_in_domain(
+            bx2, by2, ax1, ay1, bx1, by1, periodic, Lx, Ly)
         if d2 < best_d2
             best_x = bx2
             best_y = by2
@@ -215,6 +247,8 @@ end
         merge_reverse_second[k] = reverse_second ? UInt8(1) : UInt8(0)
         stitch_x[k] = best_x
         stitch_y[k] = best_y
+        merge_shift_x[k] = shift_x
+        merge_shift_y[k] = shift_y
         out_count[k] = count_k
         out_len1[k] = len1
         out_len2[k] = len2
@@ -223,6 +257,7 @@ end
 
 function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T},
                                                     pair_ci, pair_i, pair_cj, pair_j,
+                                                    domain::AbstractDomain,
                                                     dev::AbstractDevice=CPU()) where {T}
     npairs = length(pair_ci)
     op = device_zeros(dev, UInt8, npairs)
@@ -236,25 +271,37 @@ function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T}
     merge_reverse_second = device_zeros(dev, UInt8, npairs)
     stitch_x = device_zeros(dev, T, npairs)
     stitch_y = device_zeros(dev, T, npairs)
+    merge_shift_x = device_zeros(dev, T, npairs)
+    merge_shift_y = device_zeros(dev, T, npairs)
     out_count = device_zeros(dev, Int, npairs)
     out_len1 = device_zeros(dev, Int, npairs)
     out_len2 = device_zeros(dev, Int, npairs)
 
     if npairs > 0
+        periodic, Lx, Ly = _flat_surgery_domain(domain, T)
         @_ka_launch dev npairs _topology_rewrite_size_kernel!(
             op, valid, node_from_first, node_idx, seg_idx, inserted_idx,
             split_reverse1, split_reverse2, merge_reverse_second, stitch_x,
-            stitch_y, out_count, out_len1, out_len2, pair_ci, pair_i,
+            stitch_y, merge_shift_x, merge_shift_y,
+            out_count, out_len1, out_len2, pair_ci, pair_i,
             pair_cj, pair_j, flat.x, flat.y, flat.wrapx, flat.wrapy,
-            flat.offsets, flat.lengths, npairs)
+            flat.offsets, flat.lengths, periodic, Lx, Ly, npairs)
     end
 
     return DeviceTopologyRewritePlan(pair_ci, pair_i, pair_cj, pair_j, op,
                                      valid, node_from_first, node_idx, seg_idx,
                                      inserted_idx, split_reverse1,
                                      split_reverse2, merge_reverse_second,
-                                     stitch_x, stitch_y, out_count, out_len1,
-                                     out_len2)
+                                     stitch_x, stitch_y,
+                                     merge_shift_x, merge_shift_y,
+                                     out_count, out_len1, out_len2)
+end
+
+function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T},
+                                                    pair_ci, pair_i, pair_cj, pair_j,
+                                                    dev::AbstractDevice=CPU()) where {T}
+    return _device_topology_rewrite_plan_from_vectors(
+        flat, pair_ci, pair_i, pair_cj, pair_j, UnboundedDomain(), dev)
 end
 
 function _device_topology_rewrite_plan_from_vectors(contours::Vector{PVContour{T}},
@@ -290,6 +337,15 @@ function _device_topology_rewrite_plan(state::DeviceContourState{T},
                                                       selected_pairs.i,
                                                       selected_pairs.cj,
                                                       selected_pairs.j, dev)
+end
+
+function _device_topology_rewrite_plan(state::DeviceContourState{T},
+                                       selected_pairs::DeviceClosePairCandidates,
+                                       domain::AbstractDomain,
+                                       dev::AbstractDevice=CPU()) where {T}
+    return _device_topology_rewrite_plan_from_vectors(
+        _flat_topology(state, dev), selected_pairs.ci, selected_pairs.i,
+        selected_pairs.cj, selected_pairs.j, domain, dev)
 end
 
 function _device_topology_rewrite_plan(flat::FlatContourTopology{T},
@@ -332,7 +388,9 @@ end
                                                        node_idx, seg_idx, inserted_idx,
                                                        split_reverse1, split_reverse2,
                                                        merge_reverse_second,
-                                                       stitch_x, stitch_y, in_x, in_y,
+                                                       stitch_x, stitch_y,
+                                                       merge_shift_x, merge_shift_y,
+                                                       in_x, in_y,
                                                        in_corners, in_offsets,
                                                        in_lengths, total_out_nodes)
     g = @index(Global)
@@ -406,8 +464,12 @@ end
                     source_local = source_local > c2_len ? source_local - c2_len : source_local
                     ox, oy, corner = _inserted_oriented_contour_node(
                         in_x, in_y, in_corners, in_offsets, in_lengths, cj,
-                        c2_inserted, stitch_x[op_idx], stitch_y[op_idx],
+                        c2_inserted,
+                        stitch_x[op_idx] - merge_shift_x[op_idx],
+                        stitch_y[op_idx] - merge_shift_y[op_idx],
                         source_local, reverse_second)
+                    ox += merge_shift_x[op_idx]
+                    oy += merge_shift_y[op_idx]
                     local2 == 1 && (corner = UInt8(1))
                 end
             end
