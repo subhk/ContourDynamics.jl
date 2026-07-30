@@ -1,7 +1,7 @@
 # Filamentation Example
 #
-# This example follows the perturbed elliptic-vortex calculation in Fig. 5
-# and Table IV, case 1, of:
+# Literature case: the perturbed elliptic-vortex calculation in equation (13),
+# Figure 5, and Table IV, case 1, of:
 #
 #   Dritschel, D.G. (1988). "Contour surgery: a topological reconnection
 #   scheme for extended integrations using contour dynamics."
@@ -20,28 +20,26 @@
 # nodes. The package's `mu` and `Delta_max` below are segment-length bounds
 # for the implemented remeshing, not Dritschel's node-density parameter p.
 
-# Optional GPU:
-#   FILAMENTATION_GPU=true julia --project=. examples/filamentation.jl
-#   Requires CUDA.jl and an NVIDIA GPU. This unbounded single-layer Euler setup
-#   runs velocity plus topology surgery/remeshing/reconnection on the GPU path.
+# Optional GPU: set `use_gpu = true` below. This requires CUDA.jl and an NVIDIA
+# GPU. The unbounded single-layer Euler setup runs velocity plus topology
+# surgery/remeshing/reconnection on the GPU path.
 
 using ContourDynamics
 using JLD2
 using StaticArrays
 
-envflag(name) = lowercase(get(ENV, name, "false")) in ("1", "true", "yes", "on")
-save_media = !envflag("FILAMENTATION_SKIP_MEDIA")
+save_media = true
 save_media && include("visualization.jl")
-use_gpu = envflag("FILAMENTATION_GPU")
+use_gpu = false
 
 if use_gpu
     try
         @eval using CUDA
     catch err
-        error("FILAMENTATION_GPU=true requires CUDA.jl in the active environment. " *
-              "Install CUDA.jl or unset FILAMENTATION_GPU. Original error: $err")
+        error("use_gpu=true requires CUDA.jl in the active environment. " *
+              "Install CUDA.jl or set use_gpu=false. Original error: $err")
     end
-    CUDA.functional() || error("FILAMENTATION_GPU=true was requested, but CUDA is not functional on this machine.")
+    CUDA.functional() || error("use_gpu=true was requested, but CUDA is not functional on this machine.")
 end
 device = use_gpu ? GPU() : CPU()
 
@@ -54,10 +52,10 @@ epsilon = 0.005
 mode = 3
 N = 153
 pv = 2π
-dt = parse(Float64, get(ENV, "FILAMENTATION_DT", "0.05"))
-t_final = parse(Float64, get(ENV, "FILAMENTATION_T_FINAL", "17.25"))
-nsteps = parse(Int, get(ENV, "FILAMENTATION_NSTEPS", string(round(Int, t_final / dt))))
-save_dt = parse(Float64, get(ENV, "FILAMENTATION_SAVE_DT", "0.25"))
+dt = 0.05
+t_final = 17.25
+nsteps = round(Int, t_final / dt)
+save_dt = 0.25
 delta = 1e-4
 mu = 0.01
 Delta_max = 0.15
@@ -190,5 +188,5 @@ end
 if save_media
     save_animation(mediabase, snaps; title="Dritschel Fig. 5 filamentation")
 else
-    println("Skipped media export because FILAMENTATION_SKIP_MEDIA is set.")
+    println("Skipped media export because save_media=false.")
 end

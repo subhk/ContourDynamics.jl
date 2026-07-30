@@ -17,14 +17,18 @@ That is the contour-only form of the Lam-Dritschel decomposed inversion
 ``(\nabla^2 - R_d^{-2})\psi_r = q_r - \beta y``. The beta contours remain
 material and can deform; no contour-to-grid velocity solve is introduced.
 
-The parameters follow vortex D from Lam & Dritschel (2001): their equation
-(2.5) sets ``\beta = 1`` and ``R_d = 1``, section 3.1 uses domain half-width
-``l = 5\pi``, and Table 1 gives vortex radius ``R = 1``, PV anomaly
-``\omega_0 = 5``, and ``n_\beta = 50`` beta contours. The paper used CASL with
-Table 1 parameters ``\bar n_h = 512``, ``m_g = 2``, and
-``\delta = 10^{-3}``, and ran to ``t = 28``. This package example is direct
-contour dynamics with the analytic beta-plane correction, not the full CASL
-algorithm.
+The physical initial condition is equation (2.4) and case D in Table 1 of Lam &
+Dritschel (2001), plotted in their Figure 5. Their equation (2.5) sets
+``\beta=1`` and ``R_d=1``; case D has ``R=1`` and ``\omega_0=5``; and section
+3.1 uses domain half-width ``l=5\pi``. The paper uses ``n_\beta=50``, a CASL
+grid with ``\bar n_h=512`` and ``m_g=2``, surgery scale
+``\delta=10^{-3}``, and a time window ending at ``t=28``.
+
+The default `demo` preset preserves the literature model and vortex parameters
+but reduces contour resolution and duration. The `paper` preset restores
+``n_\beta=50`` and ``t=28``. Neither preset is an exact reproduction because
+this package evaluates velocity directly on contours instead of using the
+paper's contour-advective semi-Lagrangian grid inversion.
 
 Run the default demonstration with:
 
@@ -32,20 +36,21 @@ Run the default demonstration with:
 julia -t 5 examples/beta_drift.jl
 ```
 
-To use the paper time window and the paper beta-contour count:
+To use the paper time window and the paper beta-contour count, set
+`preset = "paper"` near the top of `examples/beta_drift.jl`, then run:
 
 ```bash
-BETA_DRIFT_PRESET=paper julia -t 5 examples/beta_drift.jl
+julia -t 5 examples/beta_drift.jl
 ```
 
-Useful controls:
+Useful in-file controls:
 
-- `BETA_DRIFT_NBETA` sets the number of beta-staircase contours
-- `BETA_DRIFT_BETA_NODES` sets nodes per spanning beta contour
-- `BETA_DRIFT_VORTEX_NODES` sets the vortex contour resolution
-- `BETA_DRIFT_DT`, `BETA_DRIFT_T_FINAL`, and `BETA_DRIFT_NSTEPS` control time
-- `BETA_DRIFT_SAVE_DT` controls snapshot and animation cadence
-- `BETA_DRIFT_DRY_RUN=true` checks parameters without evolving or writing media
+- `n_beta` sets the number of beta-staircase contours
+- `nodes_per_beta_contour` sets nodes per spanning beta contour
+- `vortex_nodes` sets the vortex contour resolution
+- `dt`, `t_final`, and `nsteps` control time
+- `save_dt` controls snapshot and animation cadence
+- `dry_run = true` checks parameters without evolving or writing media
 
 What to look for:
 

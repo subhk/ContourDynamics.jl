@@ -12,15 +12,16 @@ What to look for:
 
 SQG dynamics and their role in atmospheric front formation are described in [Held et al. (1995)](https://doi.org/10.1017/S0022112095000012) and [Constantin, Majda & Tabak (1994)](https://doi.org/10.1088/0951-7715/7/6/001). Filament cascades in contour SQG are studied by [Scott & Dritschel (2014)](https://doi.org/10.1103/PhysRevLett.112.144505).
 
-The setup below follows the elliptical-vortex example in Held et al. (1995),
-where the smooth initial field is
+The setup below follows equation (19) and Figure 2 of Held et al. (1995), where
+the smooth initial field is
 ``\Theta(x,y,0)=\exp(-x^2-(4y)^2)`` in a periodic square of side ``2\pi``. Since
 ContourDynamics.jl evolves contours rather than grid values, the smooth Gaussian
 is approximated by nested level-set contours. This is closer to Held's figure
 than a single uniform patch, but it is still not the original 512×512 spectral
-calculation with hyperviscosity. The full example script defaults to the
-unbounded SQG contour solver for runtime; setting `SQG_ELLIPSE_PERIODIC=true`
-uses the periodic box from the paper.
+calculation with hyperviscosity. The contour levels, nodes, surgery settings,
+timestep, and regularization length are package discretization choices. The full
+example script defaults to the unbounded SQG contour solver for runtime; setting
+`periodic_domain = true` uses the periodic box from the paper.
 
 ```@repl example_sqg_ellipse
 using ContourDynamics

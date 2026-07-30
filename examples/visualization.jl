@@ -1,3 +1,6 @@
+# Shared output helper for the literature-derived physical examples. This file
+# defines plotting utilities; it is not a standalone physical example.
+
 using ContourDynamics
 import CairoMakie
 

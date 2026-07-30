@@ -1,6 +1,6 @@
 # Vortex Merger Example
 #
-# This example uses the symmetric nested-vortex merger described in Fig. 13 of:
+# Literature case: the symmetric nested-vortex merger in Figure 13 of:
 #
 #   Dritschel, D.G. (1988). "Contour surgery: a topological reconnection
 #   scheme for extended integrations using contour dynamics."

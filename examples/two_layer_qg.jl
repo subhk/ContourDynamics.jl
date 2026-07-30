@@ -1,10 +1,9 @@
 # Two-Layer QG Example
 #
-# Reproduces the upper-layer vortex-merger initial-value problem from
-# Polvani, Zabusky & Flierl (1989): two initially circular, equal-PV,
-# unit-radius vortices in the upper layer, with nondimensional initial
-# centroid distance d_i = 2.2. Their figure 19 uses depth ratio delta = 0.2
-# and gamma = R/L_d = 5; those are the defaults below.
+# Literature case: the upper-layer vortex merger in Figure 19 of Polvani,
+# Zabusky & Flierl (1989): two initially circular, equal-PV, unit-radius
+# vortices in the upper layer, with nondimensional initial centroid distance
+# d_i = 2.2, depth ratio delta = 0.2, and gamma = R/L_d = 5.
 #
 # The paper's lower layer has constant geostrophic PV. For delta > 0 we use a
 # symmetric similarity transform of the two-layer Phillips stretching operator,
@@ -14,21 +13,22 @@
 #   Polvani, L.M., Zabusky, N.J. & Flierl, G.R. (1989). "Two-layer
 #   geostrophic vortex dynamics. Part 1. Upper-layer V-states and merger."
 #   J. Fluid Mech. 205, 215-242. doi:10.1017/S0022112089002016
+#
+# The initial condition and nondimensional physical parameters match the paper.
+# Contour resolution, timestep, automatic surgery settings, and the shorter
+# t_final = 20 run are package choices; the paper displays Figure 19 through
+# t = 74 and used a different adaptive contour implementation.
 
 using ContourDynamics
 using StaticArrays
 using JLD2
 using LinearAlgebra
 
-envint(name, default) = parse(Int, get(ENV, name, string(default)))
-envfloat(name, default) = parse(Float64, get(ENV, name, string(default)))
-envflag(name) = lowercase(get(ENV, name, "false")) in ("1", "true", "yes", "on")
-
 # --- Output ---
-OUTDIR = get(ENV, "TWO_LAYER_QG_OUTDIR", joinpath(@__DIR__, "output", "two_layer_qg"))
+OUTDIR = joinpath(@__DIR__, "output", "two_layer_qg")
 
 # --- Polvani, Zabusky & Flierl (1989), upper-layer merger case ---
-nodes_per_contour = envint("TWO_LAYER_QG_N", 128)
+nodes_per_contour = 128
 R = 1.0
 pv = 1.0
 depth_ratio = 0.2
@@ -36,15 +36,15 @@ gamma = 5.0
 initial_distance = 2.2
 
 # --- Numerical controls ---
-dt = envfloat("TWO_LAYER_QG_DT", 0.01)
-t_final = envfloat("TWO_LAYER_QG_T_FINAL", 20.0)
-nsteps = envint("TWO_LAYER_QG_NSTEPS", round(Int, t_final / dt))
-save_dt = envfloat("TWO_LAYER_QG_SAVE_DT", 0.5)
-surgery_delta = envfloat("TWO_LAYER_QG_SURGERY_DELTA", 0.0025)
-surgery_mu = envfloat("TWO_LAYER_QG_SURGERY_MU", 0.01)
-max_segment = envfloat("TWO_LAYER_QG_MAX_SEGMENT", 0.12)
-surgery_every = envint("TWO_LAYER_QG_SURGERY_EVERY", 25)
-save_media = !envflag("TWO_LAYER_QG_SKIP_MEDIA")
+dt = 0.01
+t_final = 20.0
+nsteps = round(Int, t_final / dt)
+save_dt = 0.5
+surgery_delta = 0.0025
+surgery_mu = 0.01
+max_segment = 0.12
+surgery_every = 25
+save_media = true
 save_media && include("visualization.jl")
 
 function polvani_upper_layer_merger_problem(; nodes_per_contour=nodes_per_contour,

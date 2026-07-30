@@ -1,7 +1,20 @@
 # Examples
 
-This section collects short, runnable examples. Each page isolates one workflow
-or one physical effect in a compact setup.
+This section collects short, runnable adaptations of published benchmark cases.
+Every physical example has a specific literature source; package-specific
+discretization choices are identified separately and are not presented as values
+from the source paper.
+
+| Script | Literature case | Package adaptation |
+|:--|:--|:--|
+| `vortex_merger.jl` | [Dritschel (1988), Figure 13](https://doi.org/10.1016/0021-9991(88)90165-9) | Shorter run and package remeshing/surgery |
+| `filamentation.jl` | [Dritschel (1988), equation (13), Figure 5, Table IV case 1](https://doi.org/10.1016/0021-9991(88)90165-9) | Package remeshing parameters and diagnostics |
+| `beta_drift.jl` | [Lam & Dritschel (2001), Table 1 case D and Figure 5](https://doi.org/10.1017/S0022112001003974) | Direct contour dynamics; reduced-resolution `demo` preset |
+| `sqg_elliptical_vortex.jl` | [Held et al. (1995), equation (19) and Figure 2](https://doi.org/10.1017/S0022112095000012) | Smooth field represented by contour levels; unbounded default |
+| `two_layer_qg.jl` | [Polvani, Zabusky & Flierl (1989), Figure 19](https://doi.org/10.1017/S0022112089002016) | Symmetric modal transform, automatic surgery, and shorter run |
+
+`visualization.jl` and `visualization_geometry.jl` are shared output helpers,
+not standalone physical examples.
 
 Suggested reading order:
 
@@ -25,7 +38,8 @@ Each example page includes:
 - a short statement of the physical setup
 - a runnable code block
 - expected qualitative behavior
-- references to the classical literature where relevant
+- the exact equation, table, or figure that defines the physical case
+- an explicit note about package-specific numerical adaptations
 
 The repository currently includes full scripts for:
 

@@ -6,26 +6,33 @@
 # analytic `reference staircase - beta*y` correction, so the regular beta-plane
 # inversion remains contour-based while the staircase contours stay material.
 #
-# This follows the contour-dynamics structure of Lam & Dritschel (2001), but it
-# is still a compact package example rather than a CASL reproduction.
+# Literature case: vortex D in Table 1 and Figure 5 of:
+#
+#   Lam, J.S.-L. & Dritschel, D.G. (2001). "On the beta-drift of an
+#   initially circular vortex patch." J. Fluid Mech. 436, 107-129.
+#   doi:10.1017/S0022112001003974
+#
+# The physical initial condition is their equation (2.4), nondimensionalized
+# with beta = Rd = 1 as in equation (2.5), using the case-D values R = 1 and
+# omega0 = 5. The "paper" preset also uses their n_beta = 50 and t_final = 28.
+# The "demo" preset only reduces contour resolution and duration. This package
+# uses direct contour dynamics rather than the paper's 512x512 CASL inversion,
+# so nodes per contour and surgery cadence are implementation choices rather
+# than parameters quoted from the paper.
 
 using ContourDynamics
 
-envint(name, default) = parse(Int, get(ENV, name, string(default)))
-envfloat(name, default) = parse(Float64, get(ENV, name, string(default)))
-envbool(name, default) = parse(Bool, lowercase(get(ENV, name, string(default))))
-
-dry_run = envbool("BETA_DRIFT_DRY_RUN", false)
+dry_run = false
 if !dry_run
     using JLD2
     include("visualization.jl")
 end
 
-preset = lowercase(get(ENV, "BETA_DRIFT_PRESET", "demo"))
-preset in ("demo", "paper") || error("BETA_DRIFT_PRESET must be either demo or paper")
+preset = "demo"
+preset in ("demo", "paper") || error("preset must be either demo or paper")
 paper_preset = preset == "paper"
 
-OUTDIR = get(ENV, "BETA_DRIFT_OUTDIR", joinpath(@__DIR__, "output", "beta_drift"))
+OUTDIR = joinpath(@__DIR__, "output", "beta_drift")
 
 # Lam & Dritschel (2001), case D metadata.
 beta = 1.0
@@ -38,27 +45,27 @@ casl_grid_nh = 512
 casl_grid_mg = 2
 casl_surgery_delta = 1e-3
 
-n_beta = envint("BETA_DRIFT_NBETA", paper_preset ? 50 : 16)
-nodes_per_beta_contour = envint("BETA_DRIFT_BETA_NODES", paper_preset ? 64 : 16)
-vortex_nodes = envint("BETA_DRIFT_VORTEX_NODES", paper_preset ? 128 : 48)
+n_beta = paper_preset ? 50 : 16
+nodes_per_beta_contour = paper_preset ? 64 : 16
+vortex_nodes = paper_preset ? 128 : 48
 
-dt = envfloat("BETA_DRIFT_DT", paper_preset ? 0.005 : 0.01)
-t_final = envfloat("BETA_DRIFT_T_FINAL", paper_preset ? paper_t_final : 1.0)
-nsteps = envint("BETA_DRIFT_NSTEPS", round(Int, t_final / dt))
-save_dt = envfloat("BETA_DRIFT_SAVE_DT", paper_preset ? 0.25 : 0.1)
+dt = paper_preset ? 0.005 : 0.01
+t_final = paper_preset ? paper_t_final : 1.0
+nsteps = round(Int, t_final / dt)
+save_dt = paper_preset ? 0.25 : 0.1
 
-surgery_delta = envfloat("BETA_DRIFT_SURGERY_DELTA", casl_surgery_delta)
-surgery_mu = envfloat("BETA_DRIFT_SURGERY_MU", 0.01)
-max_segment = envfloat("BETA_DRIFT_MAX_SEGMENT", 0.3)
-surgery_every = envint("BETA_DRIFT_SURGERY_EVERY", nsteps + 1)
+surgery_delta = casl_surgery_delta
+surgery_mu = 0.01
+max_segment = 0.3
+surgery_every = nsteps + 1
 
-n_beta >= 2 || error("BETA_DRIFT_NBETA must be at least 2")
-nodes_per_beta_contour >= 3 || error("BETA_DRIFT_BETA_NODES must be at least 3")
-vortex_nodes >= 3 || error("BETA_DRIFT_VORTEX_NODES must be at least 3")
-dt > 0 || error("BETA_DRIFT_DT must be positive")
-nsteps >= 0 || error("BETA_DRIFT_NSTEPS must be non-negative")
-save_dt > 0 || error("BETA_DRIFT_SAVE_DT must be positive")
-surgery_every >= 1 || error("BETA_DRIFT_SURGERY_EVERY must be at least 1")
+n_beta >= 2 || error("n_beta must be at least 2")
+nodes_per_beta_contour >= 3 || error("nodes_per_beta_contour must be at least 3")
+vortex_nodes >= 3 || error("vortex_nodes must be at least 3")
+dt > 0 || error("dt must be positive")
+nsteps >= 0 || error("nsteps must be non-negative")
+save_dt > 0 || error("save_dt must be positive")
+surgery_every >= 1 || error("surgery_every must be at least 1")
 
 domain = PeriodicDomain(L, L)
 staircase = beta_staircase(beta, domain, n_beta;
@@ -86,7 +93,7 @@ println("Lam & Dritschel Table 1 CASL metadata: nbar_h=$casl_grid_nh, mg=$casl_g
 println("Contour resolution: beta contours=$(length(staircase)), beta nodes/contour=$nodes_per_beta_contour, vortex nodes=$vortex_nodes")
 println("Total nodes: $(total_nodes(prob)); dt=$dt, nsteps=$nsteps, save_dt=$save_dt")
 if surgery_every > nsteps
-    println("Surgery cadence: disabled for this run (set BETA_DRIFT_SURGERY_EVERY to enable)")
+    println("Surgery cadence: disabled for this run (lower surgery_every to enable)")
 else
     println("Surgery cadence: every $surgery_every steps")
 end
