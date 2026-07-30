@@ -874,6 +874,27 @@ end
         @test all(zip(full_materialized, cpu_contours)) do (dev_c, cpu_c)
             all(isapprox.(dev_c.nodes, cpu_c.nodes; atol=1e-12, rtol=1e-12))
         end
+
+        domain = PeriodicDomain(4.0, 4.0)
+        periodic_state = DeviceContourState(deepcopy(contours), CPU())
+        periodic_candidates = ContourDynamics._device_admissible_close_segment_buffer(
+            periodic_state, δ, domain, CPU())
+        periodic_selected = ContourDynamics._device_select_reconnection_pair_buffer(
+            periodic_state, periodic_candidates, domain, CPU())
+        ContourDynamics._device_rewrite_state!(
+            periodic_state, periodic_selected, domain, CPU())
+        periodic_actual = materialize_contours(periodic_state)
+        periodic_expected = deepcopy(contours)
+        periodic_index = ContourDynamics.build_spatial_index(
+            periodic_expected, δ, domain)
+        periodic_pairs = ContourDynamics.find_close_segments(
+            periodic_expected, periodic_index, δ, domain)
+        ContourDynamics.reconnect!(periodic_expected, periodic_pairs, domain)
+        @test nnodes.(periodic_actual) == nnodes.(periodic_expected)
+        @test all(zip(periodic_actual, periodic_expected)) do (a, b)
+            a.corners == b.corners &&
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
+        end
     end
 
     @testset "Device full topology rewrite preserves unchanged contours" begin
@@ -1126,6 +1147,23 @@ end
             @test isapprox(vel_ka[2][i][1], vel_ref[2][i][1]; atol=1e-8, rtol=1e-8)
             @test isapprox(vel_ka[2][i][2], vel_ref[2][i][2]; atol=1e-8, rtol=1e-8)
         end
+    end
+
+
+    @testset "Advertised GPU dispatch contains no CPU fallback" begin
+        root = normpath(joinpath(@__DIR__, ".."))
+        velocity_source = read(joinpath(root, "src", "velocity", "common.jl"), String)
+        surgery_source = read(
+            joinpath(root, "src", "accel", "ka", "surgery", "driver.jl"), String)
+        device_docs = read(joinpath(root, "docs", "src", "api", "devices.md"), String)
+        velocity_docs = read(joinpath(root, "docs", "src", "api", "velocity.md"), String)
+
+        @test !occursin("ContourProblem(kernel, domain, materialize_contours", velocity_source)
+        @test !occursin("MultiLayerContourProblem(kernel, domain, host_layers", velocity_source)
+        @test !occursin("_host_boundary_surgery!", surgery_source)
+        @test !occursin("runs the CPU surgery pass", device_docs)
+        @test !occursin("periodic surgery intentionally materializes", velocity_docs)
+        @test !occursin("runs the scalar direct evaluator", velocity_docs)
     end
 
 end
@@ -1488,7 +1526,7 @@ end
         end
     end
 
-    @testset "Periodic multi-layer host-boundary surgery matches CPU" begin
+    @testset "Periodic multi-layer device surgery matches CPU" begin
         F = 0.5
         kernel = MultiLayerQGKernel(
             SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
@@ -1502,15 +1540,55 @@ end
         states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
 
         surgery!(cpu_prob, params)
+        ContourDynamics._device_multilayer_surgery!(states, params, domain, CPU())
         for layer in 1:2
-            ContourDynamics._host_boundary_surgery!(
-                states[layer], domain, params, CPU(); layer_label=" layer $layer")
             actual = materialize_contours(states[layer])
             @test length(actual) == length(cpu_prob.layers[layer])
             @test all(zip(actual, cpu_prob.layers[layer])) do (a, b)
                 a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
                     all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
             end
+        end
+    end
+
+    @testset "Periodic device surgery handles cross-seam reconnect and cleanup" begin
+        function surgery_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
+            nodes = SVector{2,Float64}[]
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
+            end
+            return PVContour(nodes, pv)
+        end
+
+        domain = PeriodicDomain(2.0, 2.0)
+        contours_in = [
+            surgery_rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
+            surgery_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
+            PVContour([SVector(0.0, 1.5), SVector(1e-6, 1.5),
+                       SVector(0.0, 1.5 + 1e-6)], 1.0),
+        ]
+        params = SurgeryParams(0.03, 0.12, 0.25, 1e-8, 10)
+        cpu_prob = ContourProblem(EulerKernel(), domain, deepcopy(contours_in))
+        state = DeviceContourState(deepcopy(contours_in), CPU())
+
+        surgery!(cpu_prob, params)
+        ContourDynamics._device_surgery_pipeline!(state, params, domain, CPU())
+        actual = materialize_contours(state)
+
+        @test length(actual) == length(cpu_prob.contours) == 1
+        @test nnodes.(actual) == nnodes.(cpu_prob.contours)
+        @test all(zip(actual, cpu_prob.contours)) do (a, b)
+            a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-10))
         end
     end
 end

@@ -651,7 +651,9 @@ function _select_reconnection_pairs(contours::Vector{PVContour{T}},
     for (k, pair) in pairs(close_pairs)
         ranked[k] = (_close_pair_distance2(contours, pair, domain), pair)
     end
-    sort!(ranked, by=first)
+    # Include the canonical pair in the ordering so exactly tied distances are
+    # deterministic across CPU spatial-index and device-compaction traversal.
+    sort!(ranked)
 
     # Process the closest independent reconnections first.  Limiting each
     # contour to one reconnect per pass avoids repeated local surgery on the
