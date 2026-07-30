@@ -13,18 +13,19 @@ RK4/leapfrog timestepping, periodic wrapping, surgery, and geometry diagnostics.
 Energy is available for single-layer Euler, QG, and SQG and for multi-layer QG;
 beta-plane QG has no energy diagnostic on either CPU or GPU.
 
-Surgery differs by domain. On unbounded domains the whole pass — cleanup flags,
-close-pair scans, reconnection planning, contour rewrites, and Dritschel
-remeshing — runs on the device. On periodic domains the pass materializes at the
-host boundary, runs the CPU surgery pass (whose cross-seam merge logic handles
-minimum-image proximity and periodic frame shifts), and reloads the device
-state in place; that cost is amortized over the `n_surgery` steps between
-passes.
+The whole surgery pass — cleanup flags, close-pair scans, reconnection planning,
+contour rewrites, and Dritschel remeshing — runs on the device in both unbounded
+and periodic domains. Periodic close-pair and interior-vorticity tests use
+minimum-image geometry, and cross-seam merge translations are applied by the
+device topology-rewrite kernels.
 
-Two paths deliberately cross to CPU representations. A `velocity(prob, x)`
-single-point probe materializes the authoritative device state and evaluates
-the scalar direct method on that current geometry. The OrdinaryDiffEq bridge
-uses a CPU vector state.
+Single-point `velocity(prob, x)` probes also evaluate from the authoritative
+device state with the same KA segment kernels as node velocity. Only the final
+two velocity scalars are copied back. Small scalar counts and diagnostic results
+may cross to the host for allocation, control flow, or return values. Bulk host
+copies occur only at explicit output boundaries such as `materialize_contours`,
+snapshots, plotting, and animation. The CPU-vector OrdinaryDiffEq bridge rejects
+GPU problems instead of falling back.
 
 The device velocity and energy paths cache scratch workspaces in task-local
 storage and size them to the current topology, so repeated calls reuse segment,

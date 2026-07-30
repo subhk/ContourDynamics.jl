@@ -16,7 +16,7 @@ Current large-problem behavior is:
 - periodic single-layer CPU: direct reference evaluation with Ewald corrections
 - multi-layer CPU: direct modal decomposition
 - beta-plane QG: direct CPU evaluation with analytic beta-plane correction
-- GPU velocity: direct KernelAbstractions evaluation for single-layer Euler, QG, and SQG on unbounded or periodic domains; multi-layer QG velocity through modal single-layer KA calls
+- GPU velocity: direct KernelAbstractions evaluation for single-layer Euler, QG, and SQG on unbounded or periodic domains, periodic beta-plane QG, and multi-layer QG through modal single-layer KA calls
 
 The production velocity path is intentionally direct at the moment. This keeps
 the contour surgery and curved-segment geometry coupled to one reference
@@ -28,13 +28,14 @@ analytic straight-segment formulas.
 Multi-layer `GPU()` problems keep their authoritative state on the device.
 Modal velocity, RK4/leapfrog timestepping, periodic wrapping, and diagnostics
 read the per-layer `DeviceContourState` directly. Unbounded surgery also runs on
-that state; periodic surgery intentionally materializes at the host boundary
-and reloads the resulting topology.
+that state. Periodic surgery uses the same device pipeline with minimum-image
+pair detection and cross-seam topology translations.
 
 `BetaPlaneQGKernel` also has a device path. The frozen reference staircase is
 packed once, with negated PV, into the tail of a cached segment buffer, so a
 single periodic-QG kernel launch over the concatenated segments yields
 `current − reference`; the analytic sawtooth zonal jet is then added per target.
-For a GPU problem, the single-point `velocity(prob, x)` probe is an explicit
-inspection boundary: it materializes the authoritative device state and runs
-the scalar direct evaluator on that current geometry.
+For a GPU problem, the single-point `velocity(prob, x)` probe uploads one target,
+runs the applicable KA segment kernels against authoritative device state, and
+copies back only the returned velocity scalars. Multi-layer probes perform the
+modal projection on-device.

@@ -260,6 +260,17 @@ function _device_reconnect!(state::DeviceContourState{T},
 end
 
 function _device_reconnect!(state::DeviceContourState{T},
+                            close_pairs::DeviceClosePairCandidates,
+                            domain::AbstractDomain,
+                            dev::AbstractDevice=CPU()) where {T}
+    selected_pairs = _device_select_reconnection_pair_buffer(
+        state, close_pairs, domain, dev)
+    length(selected_pairs.ci) == 0 && return false
+    _device_rewrite_state!(state, selected_pairs, domain, dev)
+    return true
+end
+
+function _device_reconnect!(state::DeviceContourState{T},
                             close_pairs::Vector{Tuple{Int,Int,Int,Int}},
                             dev::AbstractDevice=CPU()) where {T}
     return _device_reconnect!(state, _pack_close_pair_candidates(close_pairs, dev), dev)
@@ -374,7 +385,7 @@ end
 
 function _device_surgery_reconnect_loop!(state::DeviceContourState{T},
                                          params::SurgeryParams,
-                                         domain::UnboundedDomain,
+                                         domain::AbstractDomain,
                                          dev::AbstractDevice,
                                          cleanup_reconnect_artifacts!) where {T}
     reconnected = false
@@ -425,7 +436,7 @@ function _device_surgery_reconnect_loop!(state::DeviceContourState{T},
         end
 
         prev_n_pairs = n_pairs
-        _device_reconnect!(state, close_pairs, dev) || break
+        _device_reconnect!(state, close_pairs, domain, dev) || break
         reconnected = true
         _device_remove_filaments!(state, params, dev)
         cleanup_reconnect_artifacts!()
@@ -485,7 +496,8 @@ end
 @kernel function _spanning_proximity_flags_kernel!(flags, x, y, wrapx, wrapy,
                                                    offsets, lengths,
                                                    contour_of_node,
-                                                   total_nodes, ncontours, δ2)
+                                                   total_nodes, ncontours,
+                                                   periodic, Lx, Ly, δ2)
     g = @index(Global)
     if g <= total_nodes
         ci = contour_of_node[g]
@@ -501,6 +513,10 @@ end
                     h = off + li - 1
                     dx = gx - x[h]
                     dy = gy - y[h]
+                    if periodic
+                        dx -= round(dx / (2 * Lx)) * (2 * Lx)
+                        dy -= round(dy / (2 * Ly)) * (2 * Ly)
+                    end
                     if dx * dx + dy * dy < δ2
                         close = true
                         break
@@ -516,15 +532,17 @@ end
 end
 
 function _check_spanning_proximity(state::DeviceContourState{T}, δ,
-                                   ::UnboundedDomain,
+                                   domain::AbstractDomain,
                                    dev::AbstractDevice=CPU()) where {T}
     total_nodes = length(state.x)
     ncontours = length(state.lengths)
     (total_nodes == 0 || ncontours == 0) && return nothing
     flags = device_zeros(dev, UInt8, total_nodes)
+    periodic, Lx, Ly = _flat_surgery_domain(domain, T)
     @_ka_launch dev total_nodes _spanning_proximity_flags_kernel!(
         flags, state.x, state.y, state.wrapx, state.wrapy, state.offsets,
-        state.lengths, state.contour_of_node, total_nodes, ncontours, T(δ)^2)
+        state.lengths, state.contour_of_node, total_nodes, ncontours,
+        periodic, Lx, Ly, T(δ)^2)
     slots = device_zeros(dev, Int, total_nodes)
     count_store = device_zeros(dev, Int, 1)
     _device_compact_scan!(slots, count_store, flags, total_nodes, dev)
@@ -543,7 +561,7 @@ corner demotion/promotion, remesh, reconnection loop with artifact cleanup, fina
 filament sweep, and spanning-proximity check.
 """
 function _device_surgery_pipeline!(state::DeviceContourState, params::SurgeryParams,
-                                   domain::UnboundedDomain, dev::AbstractDevice)
+                                   domain::AbstractDomain, dev::AbstractDevice)
     _device_remove_filaments!(state, params, dev)
     _demote_obtuse_corners!(state, dev)
     _promote_high_curvature_corners!(state, params.δ, dev)
@@ -568,35 +586,10 @@ function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
     return prob
 end
 
-"""
-    _host_boundary_surgery!(state, domain, params, dev; layer_label="")
-
-Run one CPU surgery pass on materialized contours and reload the device state
-in place. Periodic surgery involves cross-seam topology (minimum-image
-proximity scans, merge frame shifts) that lives on the battle-tested CPU path;
-running it at the host boundary keeps GPU periodic evolution fully supported
-while the device-resident scan pipeline remains unbounded-only. The transfer
-cost is amortized over `n_surgery` steps of device-resident stepping.
-"""
-function _host_boundary_surgery!(state::DeviceContourState{T},
-                                 domain::AbstractDomain,
-                                 params::SurgeryParams,
-                                 dev::AbstractDevice;
-                                 layer_label::AbstractString="") where {T}
-    contours = materialize_contours(state)
-    remesh_buf = SVector{2, T}[]
-    arc_buf = T[]
-    vnodes_buf = SVector{2, T}[]
-    _surgery_pass!(contours, domain, params, remesh_buf, arc_buf, vnodes_buf;
-                   layer_label=layer_label)
-    _reload_state!(state, contours, dev)
-    return state
-end
-
 function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel},
                                        <:PeriodicDomain, T, GPU},
                   params::SurgeryParams) where {T}
-    _host_boundary_surgery!(prob.device_state, prob.domain, params, prob.dev)
+    _device_surgery_pipeline!(prob.device_state, params, prob.domain, prob.dev)
     return prob
 end
 
@@ -616,7 +609,7 @@ the same per-layer structure).
 """
 function _device_multilayer_surgery!(states::NTuple{N, <:DeviceContourState},
                                      params::SurgeryParams,
-                                     domain::UnboundedDomain,
+                                     domain::AbstractDomain,
                                      dev::AbstractDevice) where {N}
     for ℓ in 1:N
         _device_surgery_pipeline!(states[ℓ], params, domain, dev)
@@ -632,11 +625,6 @@ end
 
 function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:PeriodicDomain, T, GPU},
                   params::SurgeryParams) where {N, T}
-    # Same per-layer structure as CPU multi-layer surgery; layers never
-    # reconnect across layer boundaries.
-    for ℓ in 1:N
-        _host_boundary_surgery!(prob.device_state[ℓ], prob.domain, params, prob.dev;
-                                layer_label=" layer $ℓ")
-    end
+    _device_multilayer_surgery!(prob.device_state, params, prob.domain, prob.dev)
     return prob
 end

@@ -232,9 +232,9 @@ The KA layer contains:
   multi-layer problems) that uses device-side cleanup flags, close-pair scans,
   remeshing, reconnection planning, and contour rewrites, then updates the
   active `DeviceContourState`
-- a periodic `GPU()` surgery dispatch that materializes at the host boundary,
-  runs the CPU surgery pass, and reloads the device state in place, so
-  cross-seam topology reuses the CPU minimum-image and frame-shift logic
+- a periodic `GPU()` surgery dispatch using device-side minimum-image
+  admissibility, deterministic pair selection, and cross-seam frame shifts in
+  the topology rewrite kernels
 - multi-layer velocity evaluation through the state-based modal evaluator,
   which packs per-layer segments with modal PV weights and reuses the
   single-layer KA kernels once per vertical mode
@@ -267,13 +267,12 @@ device-resident `DeviceContourState`. Velocity, timestepping, surgery, and
 diagnostics read that state directly, for single-layer Euler, QG, SQG, and
 beta-plane QG as well as multi-layer QG. CPU contour reconstruction is reserved
 for explicit output boundaries such as `materialize_contours`, JLD2 snapshots,
-Makie animation frames, and interactive inspection — plus the periodic surgery
-pass, which deliberately round-trips to the host.
+Makie animation frames, and interactive inspection.
 
-Two paths deliberately cross to CPU representations. A `velocity(prob, x)`
-single-point probe on a GPU problem materializes the authoritative
-`DeviceContourState` and evaluates the scalar direct method on that current
-geometry. The OrdinaryDiffEq bridge likewise uses a CPU vector state.
+Single-point velocity probes upload one target and copy back the two result
+scalars; scalar surgery counts and diagnostic reductions may likewise cross for
+control flow or return values. The OrdinaryDiffEq bridge uses a CPU vector state
+and therefore rejects GPU problems rather than falling back.
 
 ## Read This File If...
 
