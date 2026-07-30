@@ -248,6 +248,38 @@ end
         @test all(isapprox.(actual_multi, expected_multi; rtol=1e-12, atol=1e-12))
     end
 
+    @testset "Mixed-precision point probes retain device-specific dispatch" begin
+        contours_in = [circular_patch(0.5, 24, 1.0)]
+        cpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), contours_in)
+        state_type = typeof(cpu_prob.device_state)
+        gpu_prob_type = ContourProblem{
+            EulerKernel,UnboundedDomain,Float64,GPU,state_type}
+        cpu_method = which(velocity, (typeof(cpu_prob), SVector{2,Float32}))
+        gpu_method = which(velocity, (gpu_prob_type, SVector{2,Float32}))
+
+        @test gpu_method !== cpu_method
+        @test velocity(cpu_prob, SVector{2,Float32}(0.1, 0.2)) isa
+              SVector{2,Float64}
+
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)),
+                                    SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers = ([circular_patch(0.35, 16, 1.0)],
+                  [circular_patch(0.25, 12, -0.5; cx=0.4)])
+        cpu_multi = MultiLayerContourProblem(kernel, UnboundedDomain(), layers)
+        multi_state_type = typeof(cpu_multi.device_state)
+        gpu_multi_type = MultiLayerContourProblem{
+            2,typeof(kernel),UnboundedDomain,Float64,GPU,multi_state_type}
+        cpu_multi_method = which(
+            velocity, (typeof(cpu_multi), SVector{2,Float32}))
+        gpu_multi_method = which(
+            velocity, (gpu_multi_type, SVector{2,Float32}))
+
+        @test gpu_multi_method !== cpu_multi_method
+        @test all(v -> v isa SVector{2,Float64},
+                  velocity(cpu_multi, SVector{2,Float32}(0.1, 0.2)))
+    end
+
     @testset "DeviceContourState RK4 step matches CPU contour RK4" begin
         contours_in = [
             circular_patch(0.35, 18, 1.0),
@@ -645,6 +677,17 @@ end
             rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 2.0),
         ]
         @test isempty(ContourDynamics._device_close_pair_candidates(contours_different_pv, δ, CPU()))
+
+        spanning_nodes = [SVector(cospi(2k / 256), sinpi(2k / 256))
+                          for k in 0:255]
+        spanning = PVContour(spanning_nodes, 1.0, SVector(4.0, 0.0))
+        with_spanning = vcat(contours_same, [spanning])
+        flat = ContourDynamics._pack_flat_topology(with_spanning, CPU())
+        eligible = ContourDynamics._device_eligible_surgery_segment_indices(
+            flat, CPU())
+        @test length(eligible) == sum(nnodes, contours_same)
+        @test Set(ContourDynamics._device_close_pair_candidates(
+            with_spanning, δ, CPU())) == dev_pairs
     end
 
     @testset "Device close-pair admissibility uses periodic minimum images" begin
@@ -669,7 +712,7 @@ end
         δ = 0.03
         contours_in = [
             periodic_rectangle_patch(1.2, 1.99, -0.5, 0.5, 6, 1.0),
-            periodic_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 6, 1.0),
+            periodic_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 6, 1.0 + 1e-8),
         ]
         index = ContourDynamics.build_spatial_index(contours_in, δ, domain)
         expected = ContourDynamics.find_close_segments(contours_in, index, δ, domain)

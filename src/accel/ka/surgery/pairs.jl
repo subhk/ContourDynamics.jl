@@ -66,76 +66,115 @@ end
 @inline _flat_surgery_domain(domain::PeriodicDomain, ::Type{T}) where {T} =
     (true, T(domain.Lx), T(domain.Ly))
 
-@kernel function _close_pair_candidate_kernel!(valid, x, y, pv, wrapx, wrapy, offsets,
+@kernel function _eligible_surgery_segment_flags_kernel!(flags, wrapx, wrapy,
+                                                         lengths, active,
+                                                         contour_of_node,
+                                                         total_nodes)
+    g = @index(Global)
+    if g <= total_nodes
+        ci = contour_of_node[g]
+        keep = !iszero(active[ci]) && lengths[ci] >= 3 &&
+               iszero(wrapx[ci]) && iszero(wrapy[ci])
+        flags[g] = keep ? UInt8(1) : UInt8(0)
+    end
+end
+
+@kernel function _compact_eligible_surgery_segments_kernel!(eligible, slots,
+                                                            flags, total_nodes)
+    g = @index(Global)
+    if g <= total_nodes && !iszero(flags[g])
+        eligible[slots[g]] = g
+    end
+end
+
+function _device_eligible_surgery_segment_indices(flat::FlatContourTopology,
+                                                  dev::AbstractDevice=CPU())
+    total_nodes = _flat_nnodes(flat)
+    total_nodes == 0 && return device_zeros(dev, Int, 0)
+
+    flags = device_zeros(dev, UInt8, total_nodes)
+    @_ka_launch dev total_nodes _eligible_surgery_segment_flags_kernel!(
+        flags, flat.wrapx, flat.wrapy, flat.lengths, flat.active,
+        flat.contour_of_node, total_nodes)
+    slots = device_zeros(dev, Int, total_nodes)
+    count_store = device_zeros(dev, Int, 1)
+    _device_compact_scan!(slots, count_store, flags, total_nodes, dev)
+    neligible = to_cpu(count_store)[1]
+    eligible = device_zeros(dev, Int, neligible)
+    if neligible > 0
+        @_ka_launch dev total_nodes _compact_eligible_surgery_segments_kernel!(
+            eligible, slots, flags, total_nodes)
+    end
+    return eligible
+end
+
+@kernel function _close_pair_candidate_kernel!(valid, eligible, x, y, pv, wrapx, wrapy, offsets,
                                                lengths, contour_of_node, local_index,
                                                corners, periodic, Lx, Ly, δ2,
-                                               total_nodes)
+                                               neligible)
     pair_idx = @index(Global)
-    npairs = total_nodes * total_nodes
+    npairs = neligible * neligible
     if pair_idx <= npairs
         is_valid = false
-        g1 = ((pair_idx - 1) % total_nodes) + 1
-        g2 = ((pair_idx - 1) ÷ total_nodes) + 1
+        g1 = eligible[((pair_idx - 1) % neligible) + 1]
+        g2 = eligible[((pair_idx - 1) ÷ neligible) + 1]
         if g1 < g2
             ci = contour_of_node[g1]
             cj = contour_of_node[g2]
-            spanning = !iszero(wrapx[ci]) || !iszero(wrapy[ci]) ||
-                       !iszero(wrapx[cj]) || !iszero(wrapy[cj])
-            if !spanning
-                li = local_index[g1]
-                lj = local_index[g2]
-                g1_next = li < lengths[ci] ? g1 + 1 : offsets[ci]
-                g2_next = lj < lengths[cj] ? g2 + 1 : offsets[cj]
-                has_corner = !iszero(corners[g1]) || !iszero(corners[g1_next]) ||
-                             !iszero(corners[g2]) || !iszero(corners[g2_next])
-                if !has_corner
-                    admissible = false
-                    if ci == cj
-                        nc = lengths[ci]
-                        dist_along = abs(li - lj)
-                        dist_along = min(dist_along, nc - dist_along)
-                        admissible = dist_along > 2
+            li = local_index[g1]
+            lj = local_index[g2]
+            g1_next = li < lengths[ci] ? g1 + 1 : offsets[ci]
+            g2_next = lj < lengths[cj] ? g2 + 1 : offsets[cj]
+            has_corner = !iszero(corners[g1]) || !iszero(corners[g1_next]) ||
+                         !iszero(corners[g2]) || !iszero(corners[g2_next])
+            if !has_corner
+                admissible = false
+                if ci == cj
+                    nc = lengths[ci]
+                    dist_along = abs(li - lj)
+                    dist_along = min(dist_along, nc - dist_along)
+                    admissible = dist_along > 2
+                else
+                    tol = sqrt(eps(one(δ2))) *
+                          max(one(δ2), abs(pv[ci]), abs(pv[cj]))
+                    admissible = abs(pv[ci] - pv[cj]) <= tol
+                end
+
+                if admissible
+                    ax1 = x[g1]
+                    ay1 = y[g1]
+                    if li < lengths[ci]
+                        bx1 = x[g1 + 1]
+                        by1 = y[g1 + 1]
                     else
-                        tol = sqrt(eps(δ2)) * max(one(δ2), abs(pv[ci]), abs(pv[cj]))
-                        admissible = abs(pv[ci] - pv[cj]) <= tol
+                        off = offsets[ci]
+                        bx1 = x[off] + wrapx[ci]
+                        by1 = y[off] + wrapy[ci]
                     end
 
-                    if admissible
-                        ax1 = x[g1]
-                        ay1 = y[g1]
-                        if li < lengths[ci]
-                            bx1 = x[g1 + 1]
-                            by1 = y[g1 + 1]
-                        else
-                            off = offsets[ci]
-                            bx1 = x[off] + wrapx[ci]
-                            by1 = y[off] + wrapy[ci]
-                        end
-
-                        ax2 = x[g2]
-                        ay2 = y[g2]
-                        if lj < lengths[cj]
-                            bx2 = x[g2 + 1]
-                            by2 = y[g2 + 1]
-                        else
-                            off = offsets[cj]
-                            bx2 = x[off] + wrapx[cj]
-                            by2 = y[off] + wrapy[cj]
-                        end
-
-                        if periodic
-                            refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
-                            refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
-                            ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
-                                ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
-                            ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
-                                ax2, ay2, bx2, by2, refx, refy, periodic, Lx, Ly)
-                        end
-
-                        d2 = _flat_surgery_contact_distance2(ax1, ay1, bx1, by1,
-                                                             ax2, ay2, bx2, by2)
-                        is_valid = d2 < δ2
+                    ax2 = x[g2]
+                    ay2 = y[g2]
+                    if lj < lengths[cj]
+                        bx2 = x[g2 + 1]
+                        by2 = y[g2 + 1]
+                    else
+                        off = offsets[cj]
+                        bx2 = x[off] + wrapx[cj]
+                        by2 = y[off] + wrapy[cj]
                     end
+
+                    if periodic
+                        refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
+                        refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
+                        ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
+                            ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
+                        ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
+                            ax2, ay2, bx2, by2, refx, refy, periodic, Lx, Ly)
+                    end
+
+                    d2 = _flat_surgery_contact_distance2(ax1, ay1, bx1, by1,
+                                                         ax2, ay2, bx2, by2)
+                    is_valid = d2 < δ2
                 end
             end
         end
@@ -146,14 +185,15 @@ end
 @kernel function _compact_close_pair_candidates_kernel!(pair_ci, pair_i,
                                                         pair_cj, pair_j,
                                                         slots, valid,
+                                                        eligible,
                                                         contour_of_node,
                                                         local_index,
-                                                        total_nodes, npairs)
+                                                        neligible, npairs)
     pair_idx = @index(Global)
     if pair_idx <= npairs && !iszero(valid[pair_idx])
         slot = slots[pair_idx]
-        g1 = ((pair_idx - 1) % total_nodes) + 1
-        g2 = ((pair_idx - 1) ÷ total_nodes) + 1
+        g1 = eligible[((pair_idx - 1) % neligible) + 1]
+        g2 = eligible[((pair_idx - 1) ÷ neligible) + 1]
         pair_ci[slot] = contour_of_node[g1]
         pair_i[slot] = local_index[g1]
         pair_cj[slot] = contour_of_node[g2]
@@ -170,13 +210,20 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
         return DeviceClosePairCandidates(empty_ints, empty_ints, empty_ints, empty_ints)
     end
 
-    npairs = total_nodes * total_nodes
+    eligible = _device_eligible_surgery_segment_indices(flat, dev)
+    neligible = length(eligible)
+    if neligible == 0
+        empty_ints = device_zeros(dev, Int, 0)
+        return DeviceClosePairCandidates(empty_ints, empty_ints, empty_ints, empty_ints)
+    end
+
+    npairs = neligible * neligible
     valid = device_zeros(dev, UInt8, npairs)
     periodic, Lx, Ly = _flat_surgery_domain(domain, T)
     @_ka_launch dev npairs _close_pair_candidate_kernel!(
-        valid, flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy, flat.offsets,
+        valid, eligible, flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy, flat.offsets,
         flat.lengths, flat.contour_of_node, flat.local_index, flat.corners,
-        periodic, Lx, Ly, T(δ)^2, total_nodes)
+        periodic, Lx, Ly, T(δ)^2, neligible)
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
@@ -190,7 +237,7 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
     if ncandidates > 0
         @_ka_launch dev npairs _compact_close_pair_candidates_kernel!(
             pair_ci, pair_i, pair_cj, pair_j, slots, valid,
-            flat.contour_of_node, flat.local_index, total_nodes, npairs)
+            eligible, flat.contour_of_node, flat.local_index, neligible, npairs)
     end
 
     return DeviceClosePairCandidates(pair_ci, pair_i, pair_cj, pair_j)
@@ -324,7 +371,7 @@ end
                                                 offsets, lengths, cj,
                                                 pair_j[k], δ, ncontours,
                                                 periodic, Lx, Ly)
-            tol = sqrt(eps(δ)) * max(one(δ), abs(qi), abs(qj))
+            tol = sqrt(eps(one(δ))) * max(one(δ), abs(qi), abs(qj))
             ok = abs(qi - qj) <= tol
         end
         valid[k] = ok ? UInt8(1) : UInt8(0)

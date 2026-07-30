@@ -316,9 +316,11 @@ end
 
 Compute velocity at a single point `x` from all contours in `prob`.
 """
-function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
+function velocity(prob::ContourProblem{<:AbstractKernel,<:AbstractDomain,T,CPU},
+                  x::SVector{2,S}) where {T,S}
     # Single-point evaluation mirrors the node-wise direct evaluator, but avoids
     # allocating a temporary one-node problem.
+    xT = SVector{2,T}(x)
     v = zero(SVector{2,T})
     ewald = _prefetch_ewald(prob.domain, prob.kernel)
     for c in prob.contours
@@ -328,7 +330,7 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
             a = c.nodes[j]
             b = next_node(c, j)
             v = v + c.pv * _segment_velocity_with_geometry(
-                prob.kernel, prob.domain, x, a, b,
+                prob.kernel, prob.domain, xT, a, b,
                 _signed_node_curvature(c, j),
                 _signed_node_curvature(c, mod1(j + 1, nc)),
                 ewald)
@@ -338,9 +340,9 @@ function velocity(prob::ContourProblem, x::SVector{2,T}) where {T}
 end
 
 function velocity(prob::ContourProblem{K,D,T,GPU},
-                  x::SVector{2,T}) where {K,D,T}
+                  x::SVector{2,S}) where {K,D,T,S}
     return _ka_velocity_at_state(prob.device_state, prob.kernel,
-                                 prob.domain, x, prob.dev)
+                                 prob.domain, SVector{2,T}(x), prob.dev)
 end
 
 """
@@ -349,13 +351,14 @@ end
 Compute the velocity induced at point `x` in each layer of a multi-layer
 problem. Returns an `NTuple` with one velocity vector per target layer.
 """
-function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
-                  x::SVector{2,T}) where {N, T}
+function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
+                  x::SVector{2,S}) where {N,T,S}
     # Single-point multilayer velocity is evaluated in vertical modes, then
     # projected back to physical layers. Each mode behaves like an Euler or QG
     # single-layer problem depending on its eigenvalue.
     kernel = prob.kernel
     domain = prob.domain
+    xT = SVector{2,T}(x)
     evals = kernel.eigenvalues
     scratch = prob.velocity_scratch
     P, P_inv = _prepare_modal_matrices!(scratch, kernel)
@@ -373,11 +376,11 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
         # their Ld-specific correction coefficients, the Euler mode does not.
         v_mode = if abs(lam) < eps(T) * 100
             _accumulate_mode_node_velocity(EulerKernel(), domain, prob.layers,
-                source_curvatures, _prefetch_ewald(domain, EulerKernel()), P_inv, mode, x)
+                source_curvatures, _prefetch_ewald(domain, EulerKernel()), P_inv, mode, xT)
         else
             mode_kernel = QGKernel(one(T) / sqrt(abs(lam)))
             _accumulate_mode_node_velocity(mode_kernel, domain, prob.layers,
-                source_curvatures, _prefetch_ewald(domain, mode_kernel), P_inv, mode, x)
+                source_curvatures, _prefetch_ewald(domain, mode_kernel), P_inv, mode, xT)
         end
 
         # Project the completed modal velocity back onto each physical target
@@ -393,9 +396,9 @@ function velocity(prob::MultiLayerContourProblem{N, <:Any, <:Any, T},
 end
 
 function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
-                  x::SVector{2,T}) where {N,K,D,T}
+                  x::SVector{2,S}) where {N,K,D,T,S}
     return _ka_multilayer_velocity_at_states(prob.device_state, prob.kernel,
-                                             prob.domain, x, prob.dev)
+                                             prob.domain, SVector{2,T}(x), prob.dev)
 end
 
 # Sum the modal velocity at one target point `x` from every source layer/segment,

@@ -55,6 +55,8 @@ function _test_cuda_velocity_and_energy(kernel, domain; atol=1e-8, rtol=1e-8)
     @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) atol=atol rtol=rtol
     stale_shadow = deepcopy(gpu_prob.contours)
     gpu_prob.contours[1].nodes[1] = SVector(99.0, 99.0)
+    mixed_point = SVector{2,Float32}(point)
+    @test velocity(gpu_prob, mixed_point) ≈ velocity(cpu_prob, mixed_point) atol=atol rtol=rtol
     @test energy(gpu_prob) ≈ energy(cpu_prob) rtol=1e-7 atol=1e-10
     @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
     @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
@@ -99,6 +101,10 @@ function _test_cuda_multilayer_paths(domain)
     gpu_prob.layers[1][1].nodes[1] = SVector(99.0, 99.0)
     point = SVector(0.1, -0.15)
     @test all(isapprox.(velocity(gpu_prob, point), velocity(cpu_prob, point);
+                        rtol=1e-8, atol=1e-8))
+    mixed_point = SVector{2,Float32}(point)
+    @test all(isapprox.(velocity(gpu_prob, mixed_point),
+                        velocity(cpu_prob, mixed_point);
                         rtol=1e-8, atol=1e-8))
     @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
     @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
@@ -202,7 +208,12 @@ end
             surgery!(gpu_prob, params)
             actual = materialize_contours(gpu_prob)
 
-            @test gpu_prob.contours == stale_shadow
+            @test all(zip(gpu_prob.contours, stale_shadow)) do (actual_shadow, stale)
+                actual_shadow.nodes == stale.nodes &&
+                    actual_shadow.pv == stale.pv &&
+                    actual_shadow.wrap == stale.wrap &&
+                    actual_shadow.corners == stale.corners
+            end
             @test nnodes.(actual) == nnodes.(cpu_prob.contours)
             @test all(zip(actual, cpu_prob.contours)) do (a, b)
                 a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
@@ -223,8 +234,15 @@ end
             velocity!(expected, cpu_prob)
             velocity!(actual, gpu_prob)
             @test all(isapprox.(to_cpu(actual), expected; rtol=1e-8, atol=1e-8))
+            flat = ContourDynamics._flat_topology(gpu_prob.device_state, GPU())
+            eligible = ContourDynamics._device_eligible_surgery_segment_indices(
+                flat, GPU())
+            @test length(eligible) == nnodes(live[end])
             point = SVector(0.13, -0.17)
             @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) rtol=1e-8 atol=1e-8
+            mixed_point = SVector{2,Float32}(point)
+            @test velocity(gpu_prob, mixed_point) ≈
+                  velocity(cpu_prob, mixed_point) rtol=1e-8 atol=1e-8
 
             cpu_stepper = RK4Stepper(0.001, total_nodes(cpu_prob); dev=CPU())
             gpu_stepper = RK4Stepper(0.001, total_nodes(gpu_prob); dev=GPU())
