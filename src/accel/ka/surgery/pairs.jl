@@ -547,7 +547,7 @@ function _device_select_reconnection_pairs_from_plan(contours::Vector{PVContour{
     @inbounds for k in eachindex(close_pairs)
         ranked[k] = (distance2[k], close_pairs[k])
     end
-    sort!(ranked, by=first)
+    sort!(ranked)
 
     used_contours = Set{Int}()
     selected_pairs = Tuple{Int,Int,Int,Int}[]
@@ -568,8 +568,8 @@ function _device_select_reconnection_pairs_from_plan(contours::Vector{PVContour{
 end
 
 @kernel function _select_independent_pairs_kernel!(selected, used_contours,
-                                                   distance2, pair_ci,
-                                                   pair_cj, npairs)
+                                                   distance2, pair_ci, pair_i,
+                                                   pair_cj, pair_j, npairs)
     worker = @index(Global)
     if worker == 1
         @inbounds for _ in 1:npairs
@@ -581,7 +581,19 @@ end
                 cj = pair_cj[k]
                 (iszero(used_contours[ci]) && iszero(used_contours[cj])) || continue
                 d2 = distance2[k]
-                if best == 0 || d2 < best_d2
+                tied_before = false
+                if best != 0 && d2 == best_d2
+                    best_ci = pair_ci[best]
+                    best_i = pair_i[best]
+                    best_cj = pair_cj[best]
+                    best_j = pair_j[best]
+                    tied_before = ci < best_ci ||
+                        (ci == best_ci && pair_i[k] < best_i) ||
+                        (ci == best_ci && pair_i[k] == best_i && cj < best_cj) ||
+                        (ci == best_ci && pair_i[k] == best_i && cj == best_cj &&
+                         pair_j[k] < best_j)
+                end
+                if best == 0 || d2 < best_d2 || tied_before
                     best = k
                     best_d2 = d2
                 end
@@ -625,7 +637,8 @@ function _device_select_reconnection_pair_buffer(flat::FlatContourTopology{T},
     plan = _device_reconnection_plan(flat, candidates, domain, dev)
     used_contours = device_zeros(dev, UInt8, _flat_ncontours(flat))
     @_ka_launch dev 1 _select_independent_pairs_kernel!(
-        plan.selected, used_contours, plan.distance2, plan.ci, plan.cj, npairs)
+        plan.selected, used_contours, plan.distance2, plan.ci, plan.i,
+        plan.cj, plan.j, npairs)
 
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)

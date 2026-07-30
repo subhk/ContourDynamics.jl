@@ -874,6 +874,27 @@ end
         @test all(zip(full_materialized, cpu_contours)) do (dev_c, cpu_c)
             all(isapprox.(dev_c.nodes, cpu_c.nodes; atol=1e-12, rtol=1e-12))
         end
+
+        domain = PeriodicDomain(4.0, 4.0)
+        periodic_state = DeviceContourState(deepcopy(contours), CPU())
+        periodic_candidates = ContourDynamics._device_admissible_close_segment_buffer(
+            periodic_state, δ, domain, CPU())
+        periodic_selected = ContourDynamics._device_select_reconnection_pair_buffer(
+            periodic_state, periodic_candidates, domain, CPU())
+        ContourDynamics._device_rewrite_state!(
+            periodic_state, periodic_selected, domain, CPU())
+        periodic_actual = materialize_contours(periodic_state)
+        periodic_expected = deepcopy(contours)
+        periodic_index = ContourDynamics.build_spatial_index(
+            periodic_expected, δ, domain)
+        periodic_pairs = ContourDynamics.find_close_segments(
+            periodic_expected, periodic_index, δ, domain)
+        ContourDynamics.reconnect!(periodic_expected, periodic_pairs, domain)
+        @test nnodes.(periodic_actual) == nnodes.(periodic_expected)
+        @test all(zip(periodic_actual, periodic_expected)) do (a, b)
+            a.corners == b.corners &&
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
+        end
     end
 
     @testset "Device full topology rewrite preserves unchanged contours" begin
