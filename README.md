@@ -43,17 +43,7 @@ control over kernels, domains, time steppers, and contour surgery.
 - Energy, circulation, enstrophy, and geometry diagnostics
 - Threaded CPU execution
 - Optional NVIDIA GPU support through CUDA.jl
-- Optional plotting, snapshots, diagnostic recording, and
-  DifferentialEquations.jl integration
-
-## Learn more
-
-- Read the [stable documentation](https://subhk.github.io/ContourDynamics.jl/stable/)
-  or the [development documentation](https://subhk.github.io/ContourDynamics.jl/dev/).
-- Follow the [Euler](docs/src/tutorial_euler.md) or
-  [QG](docs/src/tutorial_qg.md) tutorial.
-- Browse the runnable [`examples/`](examples/) and the
-  [API reference](docs/src/api.md).
+- Optional plotting, snapshots, diagnostic recording, and DifferentialEquations.jl integration
 
 ## Contributing
 
