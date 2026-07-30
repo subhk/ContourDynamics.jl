@@ -1,8 +1,11 @@
 # Filamentation
 
-A perturbed 4:1 elliptical vortex patch sheds thin filaments, following the
-Fig. 5 setup in Dritschel (1988). This example shows how surgery keeps the
-contour manageable once those filaments become too thin to resolve well.
+A perturbed 4:1 elliptical vortex patch sheds thin filaments, following
+equation (13), Figure 5, and Table IV case 1 of Dritschel (1988). The initial
+condition uses ``\lambda=4``, perturbation amplitude ``\epsilon=0.005``, mode
+``m=3``, peak vorticity ``2\pi``, and 153 nodes. This example shows how surgery
+keeps the contour manageable once those filaments become too thin to resolve
+well.
 
 What to look for:
 
@@ -15,9 +18,13 @@ The full script in `examples/filamentation.jl` writes snapshots, a final figure,
 an MP4 animation, and `filamentation_diagnostics.csv` with the conservation
 diagnostics used to track the Fig. 5 calculation.
 
+The physical initial condition, timestep, and cutoff scale come from the paper.
+The package's segment-length bounds and automatic reconnection implementation
+are numerical adaptations, not Dritschel's node-density algorithm.
+
 To run the velocity calculation on an NVIDIA GPU, install/load CUDA.jl and set
-`FILAMENTATION_GPU=true` when running the script. This unbounded single-layer
-Euler setup uses the CUDA velocity path and the device-side surgery backend.
+`use_gpu = true` near the top of the script. This unbounded single-layer Euler
+setup uses the CUDA velocity path and the device-side surgery backend.
 
 ```@repl example_filamentation
 using ContourDynamics, StaticArrays
@@ -56,4 +63,4 @@ println("Relative energy change: $(round(abs(energy(prob) - energy0) / abs(energ
 ```
 
 **References:**
-- Dritschel, D.G. (1988). *Contour surgery.* J. Comput. Phys. **77**(1), 240--266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)
+- Dritschel, D.G. (1988). *Contour surgery: a topological reconnection scheme for extended integrations using contour dynamics.* J. Comput. Phys. **77**(1), 240--266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)

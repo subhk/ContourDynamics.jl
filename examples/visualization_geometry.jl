@@ -1,3 +1,6 @@
+# Geometry helpers used by visualization.jl. This file contains no physical
+# setup and is not a standalone scientific example.
+
 function _contour_curve(contour)
     nodes = contour.nodes
     n = length(nodes)

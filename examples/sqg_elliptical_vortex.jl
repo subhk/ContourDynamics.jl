@@ -6,7 +6,7 @@
 #   Compared with Euler, the SQG kernel tends to produce sharper fronts and
 #   stronger filamentation.
 #
-# The initial geometry follows the elliptical-vortex example in:
+# Literature case: equation (19) and Figure 2 of:
 #
 #   Held, I.M., Pierrehumbert, R.T., Garner, S.T. & Swanson, K.L. (1995).
 #   "Surface quasi-geostrophic dynamics." J. Fluid Mech. 282, 1–20.
@@ -17,13 +17,14 @@
 #   Θ(x, y, 0) = exp(-x^2 - (4y)^2),
 #
 # in a doubly periodic square of side 2π and show the evolution at t = 0, 8,
-# 16, and 26. This script approximates that smooth field with a stack of nested
-# constant-temperature contours. The default run uses the unbounded SQG contour
-# solver so the example remains practical; set SQG_ELLIPSE_PERIODIC=true to use
-# the 2π-periodic square from the paper. It is still a contour-dynamics
-# approximation, not Held et al.'s 512×512 spectral model with hyperviscosity.
-# The SQG regularization length below is a numerical parameter for the contour
-# kernel, not a parameter in Held et al.
+# 16, and 26. This script preserves that literature initial condition and time
+# window, but approximates the smooth field by nested constant-temperature
+# contours. The default uses the unbounded SQG contour solver so the example
+# remains practical; set `periodic_domain = true` below for the paper's domain.
+# It is therefore a literature-derived contour approximation, not a reproduction
+# of Held et al.'s 512×512 spectral model with hyperviscosity. The contour levels,
+# node counts, surgery settings, timestep, and SQG regularization are package
+# discretization choices rather than parameters quoted from the paper.
 #
 # Run:
 #   julia --project=. examples/sqg_elliptical_vortex.jl
@@ -35,21 +36,22 @@
 using ContourDynamics
 using JLD2
 
-envflag(name) = lowercase(get(ENV, name, "false")) in ("1", "true", "yes", "on")
-save_media = !envflag("SQG_ELLIPSE_SKIP_MEDIA")
+save_media = true
 save_media && include("visualization.jl")
 
 # --- Output ---
 OUTDIR = joinpath(@__DIR__, "output", "sqg_elliptical_vortex")
 
 # --- Held et al. (1995) smooth elliptical vortex, contoured by level sets ---
-N = parse(Int, get(ENV, "SQG_ELLIPSE_N", "32"))
+N = 200
 aspect_ratio = 4.0
 levels = collect(0.1:0.1:0.9)
 
 function held_gaussian_contours(levels, nodes_per_outer_contour::Int,
                                 aspect_ratio::Real; T=Float64)
+
     issorted(levels) || throw(ArgumentError("levels must increase from outer to inner contour"))
+
     all(θ -> 0 < θ < 1, levels) || throw(ArgumentError("levels must lie between 0 and 1"))
 
     outer_radius = sqrt(-log(T(first(levels))))
@@ -70,14 +72,14 @@ function held_gaussian_contours(levels, nodes_per_outer_contour::Int,
 end
 
 # --- Parameters ---
-delta   = parse(Float64, get(ENV, "SQG_ELLIPSE_DELTA", "0.01"))
-dt      = parse(Float64, get(ENV, "SQG_ELLIPSE_DT", "0.1"))
-t_final = parse(Float64, get(ENV, "SQG_ELLIPSE_T_FINAL", "26.0"))
-nsteps  = parse(Int, get(ENV, "SQG_ELLIPSE_NSTEPS", string(round(Int, t_final / dt))))
-save_dt = parse(Float64, get(ENV, "SQG_ELLIPSE_SAVE_DT", "0.2"))
-L       = parse(Float64, get(ENV, "SQG_ELLIPSE_L", string(Float64(π))))
-periodic_domain = envflag("SQG_ELLIPSE_PERIODIC")
-surgery_mode = lowercase(get(ENV, "SQG_ELLIPSE_SURGERY", "remesh"))
+delta   = 0.01
+dt      = 0.05
+t_final = 26.0
+nsteps  = round(Int, t_final / dt)
+save_dt = 0.2
+L       = Float64(π)
+periodic_domain = false
+surgery_mode = "remesh"
 
 surgery = if surgery_mode == "none"
     :none
@@ -88,10 +90,11 @@ elseif surgery_mode == "remesh"
     # nested temperature levels are not topologically reconnected.
     SurgeryParams(1e-5, 0.01, 0.12, 1e-10, 5)
 else
-    throw(ArgumentError("SQG_ELLIPSE_SURGERY must be one of: remesh, reconnect, none"))
+    throw(ArgumentError("surgery_mode must be one of: remesh, reconnect, none"))
 end
 
 contours0 = held_gaussian_contours(levels, N, aspect_ratio)
+
 prob = if periodic_domain
     Problem(; contours=contours0,
               dt=dt,
@@ -112,7 +115,9 @@ end
 circulation0 = circulation(prob)
 mkpath(OUTDIR)
 outfile = joinpath(OUTDIR, "sqg_elliptical_vortex.jld2")
+
 rm(outfile; force=true)
+
 mediabase = joinpath(OUTDIR, "sqg_elliptical_vortex")
 
 println("Writing outputs under $OUTDIR")
