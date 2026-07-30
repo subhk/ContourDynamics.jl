@@ -185,6 +185,31 @@ end
             _test_cuda_multilayer_paths(PeriodicDomain(2.0, 2.0))
         end
 
+        @testset "CUDA periodic surgery stays device-resident across the seam" begin
+            domain = PeriodicDomain(2.0, 2.0)
+            contours = [
+                _cuda_rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
+                _cuda_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
+            ]
+            params = SurgeryParams(0.03, 0.12, 0.25, 1e-8, 10)
+            cpu_prob = ContourProblem(
+                EulerKernel(), domain, deepcopy(contours); dev=CPU())
+            gpu_prob = ContourProblem(
+                EulerKernel(), domain, deepcopy(contours); dev=GPU())
+            stale_shadow = deepcopy(gpu_prob.contours)
+
+            surgery!(cpu_prob, params)
+            surgery!(gpu_prob, params)
+            actual = materialize_contours(gpu_prob)
+
+            @test gpu_prob.contours == stale_shadow
+            @test nnodes.(actual) == nnodes.(cpu_prob.contours)
+            @test all(zip(actual, cpu_prob.contours)) do (a, b)
+                a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                    all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-10))
+            end
+        end
+
         @testset "CUDA beta-plane velocity matches CPU reference" begin
             domain = PeriodicDomain(2.0, 2.0)
             reference = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
