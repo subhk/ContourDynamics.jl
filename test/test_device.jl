@@ -43,6 +43,17 @@ end
         @test_throws ErrorException device_array(GPU())
     end
 
+    @testset "CUDA extension hooks do not overwrite core methods" begin
+        if !_TEST_CUDA_LOADED[]
+            dispatch_device(f, types) =
+                Base.unwrap_unionall(which(f, types).sig).parameters[2]
+            @test dispatch_device(device_array, Tuple{GPU}) === AbstractDevice
+            @test dispatch_device(device_zeros, Tuple{GPU,Type{Float64},Int}) === AbstractDevice
+            @test dispatch_device(to_device, Tuple{GPU,Vector{Float64}}) === AbstractDevice
+            @test dispatch_device(ContourDynamics._ka_backend, Tuple{GPU}) === AbstractDevice
+        end
+    end
+
     @testset "GPU velocity! without CUDA gives helpful error" begin
         c = circular_patch(0.5, 32, 1.0)
         if _TEST_CUDA_LOADED[]
