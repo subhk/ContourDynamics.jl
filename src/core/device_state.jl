@@ -95,7 +95,7 @@ end
 
 Repack `contours` into `state` in place, replacing every field. The mutable
 state object keeps its identity, so problem structs and stepper references
-stay valid across host-boundary topology changes (e.g. periodic surgery).
+stay valid when an explicit host-side operation reloads the device state.
 """
 function _reload_state!(state::DeviceContourState{T}, contours::Vector{PVContour{T}},
                         dev::AbstractDevice) where {T}
