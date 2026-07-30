@@ -168,9 +168,9 @@ multi-layer QG:
 
 All GPU-tagged problems are device-resident: velocity, RK4/leapfrog
 timestepping, periodic wrapping, surgery, and diagnostics operate on
-`DeviceContourState` without a per-step host round-trip. Surgery on unbounded
-domains runs entirely on the device; periodic surgery materializes at the host
-boundary, runs the CPU pass, and reloads the device state in place.
+`DeviceContourState` without a per-step host round-trip. Surgery runs entirely
+on the device in both unbounded and periodic domains, including periodic
+minimum-image pair detection and cross-seam topology rewrites.
 
 ## Velocity Backends
 
