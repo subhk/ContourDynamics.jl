@@ -1509,7 +1509,7 @@ end
         end
     end
 
-    @testset "Periodic multi-layer host-boundary surgery matches CPU" begin
+    @testset "Periodic multi-layer device surgery matches CPU" begin
         F = 0.5
         kernel = MultiLayerQGKernel(
             SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
@@ -1523,15 +1523,55 @@ end
         states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
 
         surgery!(cpu_prob, params)
+        ContourDynamics._device_multilayer_surgery!(states, params, domain, CPU())
         for layer in 1:2
-            ContourDynamics._host_boundary_surgery!(
-                states[layer], domain, params, CPU(); layer_label=" layer $layer")
             actual = materialize_contours(states[layer])
             @test length(actual) == length(cpu_prob.layers[layer])
             @test all(zip(actual, cpu_prob.layers[layer])) do (a, b)
                 a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
                     all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
             end
+        end
+    end
+
+    @testset "Periodic device surgery handles cross-seam reconnect and cleanup" begin
+        function surgery_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
+            nodes = SVector{2,Float64}[]
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
+            end
+            for k in 0:(nside - 1)
+                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
+            end
+            return PVContour(nodes, pv)
+        end
+
+        domain = PeriodicDomain(2.0, 2.0)
+        contours_in = [
+            surgery_rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
+            surgery_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
+            PVContour([SVector(0.0, 1.5), SVector(1e-6, 1.5),
+                       SVector(0.0, 1.5 + 1e-6)], 1.0),
+        ]
+        params = SurgeryParams(0.03, 0.12, 0.25, 1e-8, 10)
+        cpu_prob = ContourProblem(EulerKernel(), domain, deepcopy(contours_in))
+        state = DeviceContourState(deepcopy(contours_in), CPU())
+
+        surgery!(cpu_prob, params)
+        ContourDynamics._device_surgery_pipeline!(state, params, domain, CPU())
+        actual = materialize_contours(state)
+
+        @test length(actual) == length(cpu_prob.contours) == 1
+        @test nnodes.(actual) == nnodes.(cpu_prob.contours)
+        @test all(zip(actual, cpu_prob.contours)) do (a, b)
+            a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-10))
         end
     end
 end
