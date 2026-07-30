@@ -67,6 +67,8 @@ struct DeviceTopologyRewritePlan{T<:AbstractFloat,
     merge_reverse_second::BA
     stitch_x::FA
     stitch_y::FA
+    merge_shift_x::FA
+    merge_shift_y::FA
     out_count::IA         # number of output contours for this operation
     out_len1::IA
     out_len2::IA
@@ -158,4 +160,3 @@ function _pack_flat_topology(contours::Vector{PVContour{T}}, dev::AbstractDevice
                                to_device(dev, corners),
                                to_device(dev, active))
 end
-

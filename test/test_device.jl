@@ -684,6 +684,20 @@ end
         @test Set(ContourDynamics._unpack_close_pair_candidates(actual)) == Set(expected)
         @test isempty(ContourDynamics._unpack_close_pair_candidates(unbounded))
 
+        expected_merge = deepcopy(contours_in)
+        ContourDynamics.reconnect!(expected_merge, expected, domain)
+        rewrite_state = DeviceContourState(deepcopy(contours_in), CPU())
+        selected = ContourDynamics._device_select_reconnection_pair_buffer(
+            rewrite_state, actual, domain, CPU())
+        ContourDynamics._device_rewrite_state!(
+            rewrite_state, selected, domain, CPU())
+        actual_merge = materialize_contours(rewrite_state)
+        @test length(actual_merge) == length(expected_merge)
+        @test all(zip(actual_merge, expected_merge)) do (a, b)
+            a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                all(isapprox.(a.nodes, b.nodes; rtol=1e-12, atol=1e-12))
+        end
+
         nested = [
             PVContour([p + SVector(1.8, 0.0) for p in circular_patch(1.0, 96, 1.0).nodes], 1.0),
             PVContour([p + SVector(1.8, 0.0) for p in circular_patch(0.98, 96, 1.0).nodes], 1.0),
