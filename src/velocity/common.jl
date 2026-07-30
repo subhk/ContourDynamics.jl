@@ -546,8 +546,9 @@ function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     return _multilayer_velocity_policy!(vel, prob)
 end
 
-# GPU dispatch — velocity computed in SoA layout via KernelAbstractions from the
-# device-resident contour state, then repacked into the CPU vel buffer.
+# GPU host-output dispatch — velocity is computed in SoA layout via
+# KernelAbstractions from the device-resident contour state, then copied into
+# the explicitly requested CPU output buffer.
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{K, D, T, GPU}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}}, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
     return _velocity_policy!(vel, prob)
@@ -558,7 +559,7 @@ function velocity!(vel::AbstractVector{SVector{2,T}},
     return _ka_velocity!(vel, prob, prob.dev)
 end
 
-# Fallback for unsupported GPU kernel/domain combinations
+# Reject unsupported GPU kernel/domain combinations without computing on CPU.
 function velocity!(vel::Vector{SVector{2,T}},
                    prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
     throw(ArgumentError(
@@ -577,7 +578,7 @@ function velocity!(vel::AbstractVector{SVector{2,T}},
         "Use dev=CPU() for other kernel/domain combinations."))
 end
 
-# GPU fallback for multi-layer problems
+# GPU host-output adapter for multi-layer problems.
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                    prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU}) where {N, T}
     _validate_multilayer_state_velocity_buffer!(vel, prob.device_state)
