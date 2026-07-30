@@ -55,9 +55,9 @@ println("Circulation: $(round(circulation(prob); digits=6))");
     Single-layer Euler, QG, and SQG (unbounded or periodic), beta-plane QG
     (periodic), and multi-layer QG all support device-resident velocity,
     RK4/leapfrog timestepping, periodic wrapping, surgery, and diagnostics.
-    Surgery on unbounded domains runs entirely on the device; periodic surgery
-    materializes at the host boundary, runs the CPU surgery pass, and reloads
-    the device state.
+    Surgery on both unbounded and periodic domains runs entirely on the device;
+    periodic reconnection uses minimum-image proximity and device-side
+    cross-seam topology shifts.
 
 At this stage, the only new ingredient compared with the Euler tutorial is the
 deformation radius `Ld`. Everything else about the high-level workflow is the

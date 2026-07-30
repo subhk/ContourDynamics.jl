@@ -1149,6 +1149,23 @@ end
         end
     end
 
+
+    @testset "Advertised GPU dispatch contains no CPU fallback" begin
+        root = normpath(joinpath(@__DIR__, ".."))
+        velocity_source = read(joinpath(root, "src", "velocity", "common.jl"), String)
+        surgery_source = read(
+            joinpath(root, "src", "accel", "ka", "surgery", "driver.jl"), String)
+        device_docs = read(joinpath(root, "docs", "src", "api", "devices.md"), String)
+        velocity_docs = read(joinpath(root, "docs", "src", "api", "velocity.md"), String)
+
+        @test !occursin("ContourProblem(kernel, domain, materialize_contours", velocity_source)
+        @test !occursin("MultiLayerContourProblem(kernel, domain, host_layers", velocity_source)
+        @test !occursin("_host_boundary_surgery!", surgery_source)
+        @test !occursin("runs the CPU surgery pass", device_docs)
+        @test !occursin("periodic surgery intentionally materializes", velocity_docs)
+        @test !occursin("runs the scalar direct evaluator", velocity_docs)
+    end
+
 end
 
 @testset "Multi-layer device state" begin
