@@ -109,3 +109,8 @@ function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},
     return _beta_plane_velocity_at(kernel, prob.domain, x, prob.contours,
                                    contour_curvatures, reference_curvatures, ewald)
 end
+
+function velocity(prob::ContourProblem{BetaPlaneQGKernel{T},D,T,CPU},
+                  x::SVector{2,S}) where {T,S,D<:PeriodicDomain{T}}
+    return velocity(prob, SVector{2,T}(x))
+end
