@@ -1,5 +1,5 @@
 using ContourDynamics
-using Documenter, DocumenterVitepress
+using Documenter
 
 # On PRs, skip execution of @repl / @example / @setup / @eval blocks so the
 # preview build is fast; full evaluation runs on push to main / tags.
@@ -15,10 +15,12 @@ makedocs(;
     draft = DRAFT,
     build = BUILD_DIR,
     checkdocs = :exports,
-    format = DocumenterVitepress.MarkdownVitepress(
-        repo = "https://github.com/subhk/ContourDynamics.jl",
-        devbranch = "main",
-        devurl = "dev",
+    format = Documenter.HTML(
+        collapselevel = 2,
+        prettyurls = get(ENV, "CI", "false") == "true",
+        canonical = "https://subhk.github.io/ContourDynamics.jl/stable/",
+        edit_link = "main",
+        repolink = "https://github.com/subhk/ContourDynamics.jl",
     ),
     pages = [
         "Home" => "index.md",
@@ -67,5 +69,6 @@ makedocs(;
 
 deploydocs(;
     repo = "github.com/subhk/ContourDynamics.jl",
+    devbranch = "main",
     push_preview = true,
 )
