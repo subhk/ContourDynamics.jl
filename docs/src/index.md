@@ -1,52 +1,15 @@
-```@raw html
----
-layout: home
+# ContourDynamics.jl Documentation
 
-hero:
-  name: "ContourDynamics.jl"
-  text: "Lagrangian Vortex Patch Simulations"
-  tagline: Simulate vortex patches by tracking their boundaries directly, with contour surgery for long runs in 2D Euler, SQG, QG, and multi-layer QG flows
-  actions:
-    - theme: brand
-      text: Get Started
-      link: /tutorial_euler
-    - theme: alt
-      text: Theory & Method
-      link: /theory
-    - theme: alt
-      text: API Reference
-      link: /api
-    - theme: alt
-      text: View on GitHub
-      link: https://github.com/subhk/ContourDynamics.jl
+## Overview
 
-features:
-  - title: 2D Euler, SQG & QG Kernels
-    details: Built-in kernels for Euler, SQG, QG, and multi-layer QG. Straight Euler/SQG segment integrals use analytic antiderivatives, curved Dritschel arcs use fixed quadrature, and QG uses stable singular subtraction.
-    link: /theory
-    linkText: Theory
-  - title: Contour Surgery
-    details: Adaptive remeshing, reconnection, and filament removal keep contours well resolved during long integrations.
-    link: /tutorial_euler
-    linkText: Tutorial
-  - title: Doubly-Periodic Domains
-    details: Periodic domains use Ewald summation and automatic node wrapping. The package also supports beta-plane PV staircases for geophysical examples.
-    link: /tutorial_qg#periodic-domains-and-beta-staircases
-    linkText: Periodic example
-  - title: Analytical Diagnostics
-    details: Compute energy, enstrophy, circulation, angular momentum, and ellipse moments directly from the contour geometry, with support depending on the kernel/domain combination.
-    link: /api/diagnostics
-    linkText: View diagnostics API
-  - title: Ecosystem Integration
-    details: Optional extensions connect to DifferentialEquations.jl, Makie.jl, RecordedArrays.jl, and JLD2.jl.
-  - title: High Performance
-    details: Fast contour kernels, threaded CPU execution, device-resident GPU state for supported paths, and low-allocation timestepping.
-  - title: GPU Acceleration
-    details: Pass `dev=GPU()` to keep supported single-layer velocity, timestepping, surgery, and diagnostics on an NVIDIA GPU. CPU copies are explicit output boundaries via `materialize_contours`, snapshots, and animation frames.
-    link: /api/devices
-    linkText: Devices API
----
-```
+`ContourDynamics.jl` simulates two-dimensional vortex patches by tracking their
+boundaries directly. It supports 2D Euler, surface quasi-geostrophic (SQG),
+single-layer QG, beta-plane QG, and multi-layer QG flows in unbounded and
+doubly-periodic domains.
+
+The package combines fast contour-integral kernels with adaptive remeshing,
+reconnection, and filament removal for long integrations. Supported workflows
+run on threaded CPUs or NVIDIA GPUs.
 
 ## Quick Start
 
@@ -77,17 +40,35 @@ For lower-level control, build `ContourProblem`, `RK4Stepper`, and
 the default entry point.
 
 !!! tip "GPU Acceleration"
-Pass `dev=GPU()` to keep supported single-layer simulation work on an NVIDIA GPU:
+    Pass `dev=GPU()` to keep supported simulation work on an NVIDIA GPU:
+
     ```julia
     using CUDA
-prob = Problem(; contours=[circular_patch(1.0, 128, 2π)], dt=0.01, dev=GPU())
+    prob = Problem(; contours=[circular_patch(1.0, 128, 2π)],
+                   dt=0.01, dev=GPU())
     ```
+
     GPU problems keep the active contour state in device buffers. Use
     `materialize_contours(prob)` only when you need a CPU copy for output,
     plotting, file writing, or inspection. Unsupported GPU operations throw
     instead of silently falling back to CPU work. Single-layer Euler, QG, SQG,
     and beta-plane QG, and multi-layer QG, all support device-resident
     velocity, timestepping, surgery, and diagnostics.
+
+## Core capabilities
+
+- **2D Euler, SQG, and QG kernels:** analytic segment integrals and stable QG
+  singular subtraction for single- and multi-layer models.
+- **Contour surgery:** adaptive remeshing, reconnection, and filament removal
+  keep stretched contours resolved.
+- **Doubly-periodic domains:** Ewald summation, automatic node wrapping, and
+  beta-plane PV staircases.
+- **Diagnostics:** energy, enstrophy, circulation, angular momentum, vortex
+  area, and ellipse moments where supported by the kernel and domain.
+- **Ecosystem integration:** optional Makie, JLD2, RecordedArrays, and
+  DifferentialEquations.jl extensions.
+- **High performance:** threaded CPU kernels, device-resident CUDA paths, and
+  low-allocation time integration.
 
 ## Installation
 
