@@ -51,8 +51,15 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
                     kx = π * m / domain.Lx
                     ky = π * n / domain.Ly
                     k2 = kx^2 + ky^2
-                    coeff = kernel isa EulerKernel ? 1 / (area * k2) :
+                    coeff = if kernel isa EulerKernel
+                        1 / (area * k2)
+                    elseif kernel isa QGKernel
                         1 / (area * (k2 + kappa2))
+                    else
+                        # Fourier transform of 1/(2π√(r²+δ²)) in two
+                        # dimensions is exp(-δ|k|)/|k|.
+                        exp(-kernel.delta * sqrt(k2)) / (area * sqrt(k2))
+                    end
                     k_dot_ds = kx * ds[1] + ky * ds[2]
                     phase = kx * (x[1] - a[1]) + ky * (x[2] - a[2])
                     segment_average = abs(k_dot_ds) < 1e-13 ? cos(phase) :
@@ -285,8 +292,10 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         v_ewald = velocity(prob, x)
         v_images = direct_sqg_image_velocity(kernel, domain, contours, x)
+        v_fourier = periodic_fourier_velocity(kernel, domain, contours, x; modes=80)
 
         @test v_ewald ≈ v_images rtol=2e-3
+        @test v_ewald ≈ v_fourier rtol=5e-6
     end
 
     @testset "SQG periodic energy potential matches velocity kernel" begin
@@ -298,7 +307,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         phi(rv) = ContourDynamics._eval_sqg_periodic_energy_potential(
             rv, cache, domain, kernel.delta)
-        h = 2e-4
+        h = 1e-3
         ex = SVector(h, 0.0)
         ey = SVector(0.0, h)
         laplacian_phi = (phi(r + ex) + phi(r - ex) + phi(r + ey) + phi(r - ey) -
