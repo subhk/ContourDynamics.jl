@@ -19,6 +19,16 @@ function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T};
     return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
 
+# Log-Green pair integral retained for the legacy QG modal decomposition.  Its
+# normalization is coupled to the nonzero QG modes, so standalone Euler uses
+# the Hamiltonian-specific helper above while multilayer QG keeps this path.
+function _energy_contour_pair_log_green(ci::PVContour{T}, cj::PVContour{T};
+                                         _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
+    Φ = rv -> log(max(rv[1]^2 + rv[2]^2, eps(T))) / 2
+    self_quad = (mid, half_ds, g_nodes, g_weights) -> _log_self_seg_quad(half_ds)
+    return _energy_contour_pair(ci, cj, Φ, self_quad; _partial=_partial)
+end
+
 function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = prob.contours

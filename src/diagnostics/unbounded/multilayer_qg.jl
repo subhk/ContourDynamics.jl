@@ -32,7 +32,7 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
                         ncj < 3 && continue
                         is_spanning(cj) && continue
                         if abs(lam) < eps(T) * 100
-                            pair_E = _energy_contour_pair_euler(ci, cj; _partial=_partial)
+                            pair_E = _energy_contour_pair_log_green(ci, cj; _partial=_partial)
                         else
                             Ld_mode = one(T) / sqrt(abs(lam))
                             pair_E = _energy_contour_pair_qg(ci, cj, Ld_mode; _partial=_partial)

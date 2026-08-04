@@ -448,6 +448,45 @@ end
     partial[i] = pv[i] * local_s
 end
 
+@kernel function _log_green_energy_ka!(partial, ax, ay, bx, by, pv,
+                                       contour_id, local_index, n_seg)
+    i = @index(Global)
+    T = eltype(partial)
+    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
+        _energy_segment_geometry(ax, ay, bx, by, i, T)
+    g_nodes, g_weights = _gl3_nodes_weights(T)
+    self_seg_const = T(4) * log(T(2)) - T(6)
+    local_s = zero(T)
+
+    @inbounds for j in 1:n_seg
+        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
+            _energy_segment_geometry(ax, ay, bx, by, j, T)
+        dot_ds = dsix * dsjx + dsiy * dsjy
+        quad = zero(T)
+        if _same_energy_segment(contour_id, local_index, i, j)
+            half_ds_len = sqrt(half_dsix * half_dsix + half_dsiy * half_dsiy)
+            quad = half_ds_len > eps(T) ?
+                   self_seg_const + T(4) * log(half_ds_len) : zero(T)
+        else
+            for qi in 1:3
+                pix = midix + g_nodes[qi] * half_dsix
+                piy = midiy + g_nodes[qi] * half_dsiy
+                for qj in 1:3
+                    pjx = midjx + g_nodes[qj] * half_dsjx
+                    pjy = midjy + g_nodes[qj] * half_dsjy
+                    dx = pix - pjx
+                    dy = piy - pjy
+                    r2 = max(dx * dx + dy * dy, eps(T))
+                    quad += g_weights[qi] * g_weights[qj] * log(r2) / T(2)
+                end
+            end
+        end
+        local_s += pv[j] * quad * dot_ds / T(4)
+    end
+
+    partial[i] = pv[i] * local_s
+end
+
 @kernel function _sqg_energy_ka!(partial, ax, ay, bx, by, pv, contour_id, local_index,
                                  delta, n_seg)
     i = @index(Global)
@@ -1090,7 +1129,7 @@ function _ka_multilayer_energy_with_ws(
         lam = evals[mode]
         raw += if abs(lam) < eps(T) * 100
             _ka_energy_raw_with_workspace!(
-                _euler_energy_ka!, energy_ws, total, dev)
+                _log_green_energy_ka!, energy_ws, total, dev)
         else
             _ka_energy_raw_with_workspace!(
                 _qg_energy_ka!, energy_ws, total, dev,
@@ -1129,12 +1168,11 @@ function _ka_multilayer_energy_with_ws(
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
         energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
         lam = evals[mode]
-        is_euler_mode = abs(lam) < eps(T) * 100
         raw_mode = _ka_energy_raw_with_workspace!(
-            is_euler_mode ? _periodic_euler_energy_ka! : _periodic_green_energy_ka!,
-            energy_ws, total, dev, cache.alpha, domain.Lx, domain.Ly,
+            _periodic_green_energy_ka!, energy_ws, total, dev,
+            cache.alpha, domain.Lx, domain.Ly,
             cache.n_images, kx, ky, fourier, corr0)
-        if !is_euler_mode
+        if abs(lam) >= eps(T) * 100
             raw_mode += _ka_energy_raw_with_workspace!(
                 _periodic_qg_correction_energy_ka!, energy_ws, total, dev,
                 T(abs(lam)), area, kx, ky)

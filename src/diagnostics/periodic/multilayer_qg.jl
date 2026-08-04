@@ -38,13 +38,8 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
                         ncj = nnodes(cj)
                         ncj < 3 && continue
                         is_spanning(cj) && continue
-                        pair_E = if is_euler_mode
-                            _energy_contour_pair_euler_periodic(
-                                ci, cj, mode_cache, domain; _partial=_partial)
-                        else
-                            _energy_contour_pair_periodic_green(
-                                ci, cj, mode_cache, domain; _partial=_partial)
-                        end
+                        pair_E = _energy_contour_pair_periodic_green(
+                            ci, cj, mode_cache, domain; _partial=_partial)
                         if !is_euler_mode
                             pair_E += _energy_contour_pair_qg_correction(ci, cj, mode_cache; _partial=_partial)
                         end
