@@ -106,14 +106,14 @@ integral, we use **singular subtraction**:
 K_0(r/L_d) = -\log(r) + \underbrace{\left[K_0(r/L_d) + \log(r)\right]}_{\text{smooth at } r=0}
 ```
 
-The logarithmic singularity is handled by the exact Euler antiderivative. The smooth remainder ``K_0(r/L_d) + \log(r) \to \log(2L_d) - \gamma`` as ``r \to 0`` is integrated with **5-point Gauss-Legendre quadrature**.
+The logarithmic singularity is handled by the exact Euler antiderivative. The smooth remainder ``K_0(r/L_d) + \log(r) \to \log(2L_d) - \gamma_E`` as ``r \to 0`` is integrated with **5-point Gauss-Legendre quadrature**.
 
 Here:
 
 - ``K_0`` is the modified Bessel function of the second kind
 - ``r`` is the distance from the target point to the integration point
 - ``L_d`` is the deformation radius
-- ``\gamma`` is the Euler-Mascheroni constant
+- ``\gamma_E`` is the Euler-Mascheroni constant (the subscript distinguishes it from unrelated vortex-scale parameters)
 
 The QG kernel is therefore split into an Euler-like singular part and a smooth
 remainder suitable for standard quadrature.
