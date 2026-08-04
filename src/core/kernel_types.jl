@@ -21,7 +21,7 @@ struct EulerKernel <: AbstractKernel end
     QGKernel{T}(Ld)
 
 Kernel for single-layer quasi-geostrophic dynamics with deformation radius `Ld`.
-Uses the modified Bessel function `K₀(r/Ld)` as the Green's function.
+Uses the modified Bessel function Green's function `K₀(r/Ld)/(2π)`.
 """
 struct QGKernel{T<:AbstractFloat} <: AbstractKernel
     Ld::T
@@ -30,6 +30,14 @@ struct QGKernel{T<:AbstractFloat} <: AbstractKernel
         new{T}(Ld)
     end
 end
+
+@inline function _qg_modal_eigenvalue_tolerance(eigenvalues::SVector{N,T}) where {N,T}
+    scale = maximum(abs, eigenvalues)
+    return scale * sqrt(eps(T)) * T(100)
+end
+
+@inline _is_barotropic_mode(kernel, λ) =
+    abs(λ) <= _qg_modal_eigenvalue_tolerance(kernel.eigenvalues)
 
 """
     SQGKernel{T}(delta)
@@ -64,6 +72,7 @@ matrix for efficient velocity evaluation.
 
 The coupling matrix should already incorporate layer thicknesses (i.e. it is the
 full stretching operator, not raw interface stretching coefficients).
+It must be symmetric and negative semidefinite, with one barotropic zero mode.
 
 !!! note
     The evolution and energy diagnostics derive modal deformation radii from the
@@ -89,16 +98,13 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
         # Using transpose is both faster and more numerically stable than inv().
         eigenvectors_inv = SMatrix{N,N,T}(eig.vectors')
 
+        λtol = _qg_modal_eigenvalue_tolerance(eigenvalues)
         for (m, λ) in enumerate(eigenvalues)
-            if λ > eps(T) * T(100)
-                @warn "MultiLayerQGKernel: coupling eigenvalue λ[$m] = $λ is positive; " *
-                      "physical coupling matrices should have non-positive eigenvalues" maxlog=1
-                break
-            end
+            λ > λtol && throw(ArgumentError(
+                "Coupling eigenvalue λ[$m] = $λ is positive; the QG stretching " *
+                "operator must be negative semidefinite."))
         end
 
-        λscale = maximum(abs.(eigenvalues))
-        λtol = λscale * sqrt(eps(T)) * T(100) + eps(T) * T(100)
         modal_radii = T[one(T) / sqrt(abs(λ)) for λ in eigenvalues if abs(λ) > λtol]
         length(modal_radii) == M || throw(ArgumentError(
             "Coupling matrix implies $(length(modal_radii)) significant baroclinic mode(s), " *

@@ -127,6 +127,8 @@ function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     Ld = kernel.Ld
     g_nodes, g_weights = _gl5_nodes_weights(T)
     corr_integral = zero(SVector{2,T})
+    direct_integral = zero(SVector{2,T})
+    min_r = T(Inf)
 
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
@@ -134,10 +136,15 @@ function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
         tangent = _cubic_segment_tangent(a, b, κa, κb, p)
         r_vec = s - x
         r2 = r_vec[1]^2 + r_vec[2]^2
+        r = sqrt(r2)
+        min_r = min(min_r, r)
+        if r2 > eps(T)^2
+            direct_integral += (g_weights[q] / T(2)) *
+                               _besselk0_approx_scalar(r / Ld) * tangent
+        end
         val = if r2 < eps(T)^2
             log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
         else
-            r = sqrt(r2)
             rr = r / Ld
             rr < T(0.5) ?
                 _besselk0_correction(rr) + log(T(2) * Ld) - T(Base.MathConstants.eulergamma) :
@@ -147,6 +154,7 @@ function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     end
 
     inv2pi = one(T) / (2 * T(π))
+    min_r > T(4) * max(Ld, ds_len) && return inv2pi * direct_integral
     return curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb) +
            inv2pi * corr_integral
 end
@@ -290,6 +298,28 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
     ds_len = sqrt(ds[1]^2 + ds[2]^2)
     if ds_len < eps(T)
         return zero(SVector{2,T})
+    end
+
+    # Far from a short panel, evaluate K₀ directly. The singular-subtraction
+    # form is ideal near the contour but otherwise subtracts two logarithmic
+    # O(1) terms to recover an exponentially small velocity.
+    r0 = x - a
+    p_near = clamp((r0[1] * ds[1] + r0[2] * ds[2]) / (ds_len * ds_len),
+                   zero(T), one(T))
+    r_near = x - (a + p_near * ds)
+    min_r = sqrt(r_near[1]^2 + r_near[2]^2)
+    if min_r > T(4) * max(Ld, ds_len)
+        g_nodes, g_weights = _gl5_nodes_weights(T)
+        mid = (a + b) / T(2)
+        half_ds = ds / T(2)
+        direct = zero(T)
+        @inbounds for q in 1:5
+            s = mid + g_nodes[q] * half_ds
+            r = x - s
+            direct += g_weights[q] *
+                      _besselk0_approx_scalar(sqrt(r[1]^2 + r[2]^2) / Ld)
+        end
+        return (one(T) / (T(2) * T(π))) * half_ds * direct
     end
 
     # Analytic Euler contribution (handles the log singularity)

@@ -28,6 +28,18 @@ follow the selected Euler, QG, SQG, or multi-layer kernel rather than a single
 universal scalar formula. See [Contour Dynamics](../theory/contour_dynamics.md)
 and the [notation glossary](../theory/notation.md).
 
+For single-layer QG, with ``\kappa=1/L_d`` and
+``q=(\nabla^2-\kappa^2)\psi``, the reported positive Hamiltonian is
+
+```math
+H=-\frac12\int q\psi\,dA.
+```
+
+On a periodic domain of area ``A``, this includes the spatially constant
+Helmholtz mode ``\Gamma^2/(2A\kappa^2)``. Multi-layer QG energy applies the
+same formula independently to each orthonormal vertical mode, omitting only
+the non-invertible constant barotropic Euler mode.
+
 ```@docs
 vortex_area
 centroid

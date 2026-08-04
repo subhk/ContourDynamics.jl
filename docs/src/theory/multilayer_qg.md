@@ -44,6 +44,11 @@ constructor verifies that they equal ``1/\sqrt{|\lambda_m|}`` for the nonzero
 eigenvalues of `coupling`; the approximately zero eigenvalue is the barotropic
 Euler mode.
 
+The constructor rejects positive coupling eigenvalues: the screened ``K_0``
+inversion used by nonbarotropic modes requires a negative-semidefinite
+stretching operator. Mode classification uses the same scale-aware eigenvalue
+tolerance during construction, velocity evaluation, and diagnostics.
+
 The velocity in physical layers is recovered by projecting back through the
 eigenvector matrix. In practical terms, the code solves a set of uncoupled
 single-mode problems, then recombines them into layer velocities.

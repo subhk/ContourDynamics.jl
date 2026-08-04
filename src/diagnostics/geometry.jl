@@ -111,6 +111,20 @@ integrand. Shared by every kernel, domain, and backend — CPU and KA alike.
     return r2 * (T(2) - log(r2)) / T(4)
 end
 
+# Contour potential for the QG Hamiltonian. Distributionally,
+# Δ[K₀(r/Ld) + log(r)] = K₀(r/Ld)/Ld²: the logarithm cancels the
+# delta singularity in K₀, leaving a smooth function at the origin. The
+# factor two matches the shared -raw/(8π) energy normalization.
+@inline function _qg_energy_potential_scalar(r2::T, Ld::T) where {T}
+    limit = log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
+    r2 <= eps(T)^2 && return T(2) * Ld * Ld * limit
+    r = sqrt(r2)
+    rr = r / Ld
+    smooth = rr < T(0.5) ? _besselk0_correction(rr) + limit :
+             _besselk0_approx_scalar(rr) + log(r)
+    return T(2) * Ld * Ld * smooth
+end
+
 """
     _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
 

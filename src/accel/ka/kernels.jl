@@ -111,6 +111,30 @@ end
     ds_len < eps(T) && return zero(T), zero(T)
 
     if max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T))
+        r0x = xi - ax
+        r0y = yi - ay
+        p_near = clamp((r0x * dsx + r0y * dsy) / (ds_len * ds_len),
+                       zero(T), one(T))
+        near_x = r0x - p_near * dsx
+        near_y = r0y - p_near * dsy
+        min_r = sqrt(near_x * near_x + near_y * near_y)
+        if min_r > T(4) * max(Ld, ds_len)
+            g_nodes, g_weights = _gl5_nodes_weights(T)
+            half_dsx = dsx / T(2)
+            half_dsy = dsy / T(2)
+            direct = zero(T)
+            @inbounds for q in 1:5
+                sx = (ax + bx) / T(2) + g_nodes[q] * half_dsx
+                sy = (ay + by) / T(2) + g_nodes[q] * half_dsy
+                rx = sx - xi
+                ry = sy - yi
+                direct += g_weights[q] *
+                          _besselk0_approx_scalar(sqrt(rx * rx + ry * ry) / Ld)
+            end
+            coeff = inv2pi * pv * direct / T(2)
+            return coeff * dsx, coeff * dsy
+        end
+
         vx, vy = _straight_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, inv4pi)
         g_nodes, g_weights = _gl5_nodes_weights(T)
         half_dsx = dsx / T(2)
@@ -137,22 +161,33 @@ end
     g_nodes, g_weights = _gl5_nodes_weights(T)
     cvx = zero(T)
     cvy = zero(T)
+    direct_x = zero(T)
+    direct_y = zero(T)
+    min_r = T(Inf)
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
         sx, sy, tx, ty = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p)
         rx = sx - xi
         ry = sy - yi
         r2 = rx * rx + ry * ry
+        r = sqrt(r2)
+        min_r = min(min_r, r)
+        if r2 > eps(T)^2
+            direct_coeff = inv2pi * pv * (g_weights[q] / T(2)) *
+                           _besselk0_approx_scalar(r / Ld)
+            direct_x += direct_coeff * tx
+            direct_y += direct_coeff * ty
+        end
         val = if r2 < eps(T)^2
             log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
         else
-            r = sqrt(r2)
             _qg_smooth_correction_scalar(r / Ld, r, Ld)
         end
         coeff = inv2pi * pv * (g_weights[q] / T(2)) * val
         cvx += coeff * tx
         cvy += coeff * ty
     end
+    min_r > T(4) * max(Ld, ds_len) && return direct_x, direct_y
     return evx + cvx, evy + cvy
 end
 

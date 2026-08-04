@@ -528,8 +528,6 @@ end
     dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
         _energy_segment_geometry(ax, ay, bx, by, i, T)
     g_nodes, g_weights = _gl3_nodes_weights(T)
-    self_seg_const = T(4) * log(T(2)) - T(6)
-    k0_smooth_at_zero = log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
     local_s = zero(T)
 
     @inbounds for j in 1:n_seg
@@ -538,42 +536,16 @@ end
         dot_ds = dsix * dsjx + dsiy * dsjy
         quad = zero(T)
 
-        if _same_energy_segment(contour_id, local_index, i, j)
-            half_ds_len = sqrt(half_dsix * half_dsix + half_dsiy * half_dsiy)
-            quad_log = half_ds_len > eps(T) ? self_seg_const + T(4) * log(half_ds_len) : zero(T)
-            quad_smooth = zero(T)
-            for qi in 1:3
-                pix = midix + g_nodes[qi] * half_dsix
-                piy = midiy + g_nodes[qi] * half_dsiy
-                for qj in 1:3
-                    pjx = midjx + g_nodes[qj] * half_dsjx
-                    pjy = midjy + g_nodes[qj] * half_dsjy
-                    dx = pix - pjx
-                    dy = piy - pjy
-                    r2 = dx * dx + dy * dy
-                    if r2 < eps(T)^2
-                        quad_smooth += g_weights[qi] * g_weights[qj] * k0_smooth_at_zero
-                    else
-                        r = sqrt(r2)
-                        quad_smooth += g_weights[qi] * g_weights[qj] *
-                            (_besselk0_approx_scalar(r / Ld) + log(r))
-                    end
-                end
-            end
-            quad = -quad_log + quad_smooth
-        else
-            for qi in 1:3
-                pix = midix + g_nodes[qi] * half_dsix
-                piy = midiy + g_nodes[qi] * half_dsiy
-                for qj in 1:3
-                    pjx = midjx + g_nodes[qj] * half_dsjx
-                    pjy = midjy + g_nodes[qj] * half_dsjy
-                    dx = pix - pjx
-                    dy = piy - pjy
-                    r = sqrt(dx * dx + dy * dy)
-                    r < eps(T) * Ld && continue
-                    quad += g_weights[qi] * g_weights[qj] * _besselk0_approx_scalar(r / Ld)
-                end
+        for qi in 1:3
+            pix = midix + g_nodes[qi] * half_dsix
+            piy = midiy + g_nodes[qi] * half_dsiy
+            for qj in 1:3
+                pjx = midjx + g_nodes[qj] * half_dsjx
+                pjy = midjy + g_nodes[qj] * half_dsjy
+                dx = pix - pjx
+                dy = piy - pjy
+                quad += g_weights[qi] * g_weights[qj] *
+                        _qg_energy_potential_scalar(dx * dx + dy * dy, Ld)
             end
         end
         local_s += pv[j] * quad * dot_ds / T(4)
@@ -702,9 +674,9 @@ end
     partial[i] = pv[i] * local_s
 end
 
-@kernel function _periodic_qg_correction_energy_ka!(partial, ax, ay, bx, by, pv,
-                                                    contour_id, local_index,
-                                                    kappa2, area, kx, ky, n_seg)
+@kernel function _periodic_qg_energy_ka!(partial, ax, ay, bx, by, pv,
+                                         contour_id, local_index,
+                                         kappa2, area, kx, ky, n_seg)
     i = @index(Global)
     T = eltype(partial)
     dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
@@ -726,7 +698,7 @@ end
                 pjy = midjy + g_nodes[qj] * half_dsjy
                 dx = pix - pjx
                 dy = piy - pjy
-                G_corr = zero(T)
+                phi = zero(T)
                 nkx = length(kx)
                 nky = length(ky)
                 for mi in 1:nkx
@@ -737,11 +709,12 @@ end
                         kyi = ky[ni]
                         k2 = kxi * kxi + kyi * kyi
                         k2 < eps(T) && continue
-                        coeff = kappa2 / (k2 * (k2 + kappa2) * area)
-                        G_corr -= coeff * (cx * cos(kyi * dy) - sx_trig * sin(kyi * dy))
+                        phase_cos = cx * cos(kyi * dy) - sx_trig * sin(kyi * dy)
+                        phi -= T(4) * T(pi) * phase_cos /
+                               (area * k2 * (k2 + kappa2))
                     end
                 end
-                quad += g_weights[qi] * g_weights[qj] * (-T(2) * T(pi) * G_corr)
+                quad += g_weights[qi] * g_weights[qj] * phi
             end
         end
         local_s += pv[j] * quad * dot_ds / T(4)
@@ -851,6 +824,15 @@ CPU-device path (`prob.contours`) and the GPU path (`prob.device_state`).
 """
 const _EnergySource{T} = Union{DeviceContourState{T}, Vector{PVContour{T}}}
 
+@inline function _energy_contour_circulation(contours::Vector{PVContour{T}}) where {T}
+    gamma = zero(T)
+    for c in contours
+        _valid_energy_contour(c) || continue
+        gamma += c.pv * vortex_area(c)
+    end
+    return gamma
+end
+
 # Upload the Ewald tables once per call — every periodic energy kernel takes
 # the same (kx, ky, fourier_coeffs) triple.
 @inline function _device_ewald_tables(cache::EwaldCache, dev::AbstractDevice)
@@ -897,21 +879,16 @@ end
 function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
-    # G_QG_per = G_Euler_per + correction, so this reads the domain's *Euler*
-    # Ewald cache and adds the analytic Fourier correction on top.
-    cache = _get_ewald_cache(domain, EulerKernel())
+    cache = _get_ewald_cache(domain, kernel)
     data = _pack_energy_segments(src, dev, T)
-    length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
+    length(data.seg.ax) == 0 && return zero(T)
     kx, ky, fourier = _device_ewald_tables(cache, dev)
-    corr0 = _periodic_euler_corr_at_zero(cache, domain)
-    raw = _ka_energy_raw_with_segments!(_periodic_green_energy_ka!, data, dev, T,
-                                        cache.alpha, domain.Lx, domain.Ly,
-                                        cache.n_images, kx, ky, fourier, corr0)
     kappa2 = one(T) / (kernel.Ld * kernel.Ld)
     area = T(4) * domain.Lx * domain.Ly
-    raw += _ka_energy_raw_with_segments!(_periodic_qg_correction_energy_ka!, data, dev, T,
-                                         kappa2, area, kx, ky)
-    return _normalize_energy(raw)
+    raw = _ka_energy_raw_with_segments!(
+        _periodic_qg_energy_ka!, data, dev, T, kappa2, area, kx, ky)
+    gamma = _energy_contour_circulation(src)
+    return _normalize_energy(raw) + gamma * gamma / (T(2) * area * kappa2)
 end
 
 function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
@@ -976,20 +953,16 @@ end
 function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel{T},
                                   domain::PeriodicDomain{T}, dev::AbstractDevice,
                                   ws::_EnergyWorkspace{T}) where {T}
-    cache = _get_ewald_cache(domain, EulerKernel())
+    cache = _get_ewald_cache(domain, kernel)
     n = _pack_energy_workspace!(ws, state, dev)
-    n == 0 && return _normalize_energy(zero(T))
+    n == 0 && return zero(T)
     kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
-    corr0 = _periodic_euler_corr_at_zero(cache, domain)
-    raw = _ka_energy_raw_with_workspace!(
-        _periodic_green_energy_ka!, ws, n, dev, cache.alpha,
-        domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier, corr0)
     kappa2 = one(T) / (kernel.Ld * kernel.Ld)
     area = T(4) * domain.Lx * domain.Ly
-    raw += _ka_energy_raw_with_workspace!(
-        _periodic_qg_correction_energy_ka!, ws, n, dev,
-        kappa2, area, kx, ky)
-    return _normalize_energy(raw)
+    raw = _ka_energy_raw_with_workspace!(
+        _periodic_qg_energy_ka!, ws, n, dev, kappa2, area, kx, ky)
+    gamma = _state_circulation(state, dev)
+    return _normalize_energy(raw) + gamma * gamma / (T(2) * area * kappa2)
 end
 
 function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKernel{T},
@@ -1127,9 +1100,9 @@ function _ka_multilayer_energy_with_ws(
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
         energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
         lam = evals[mode]
-        raw += if abs(lam) < eps(T) * 100
+        raw += if _is_barotropic_mode(kernel, lam)
             _ka_energy_raw_with_workspace!(
-                _log_green_energy_ka!, energy_ws, total, dev)
+                _euler_energy_ka!, energy_ws, total, dev)
         else
             _ka_energy_raw_with_workspace!(
                 _qg_energy_ka!, energy_ws, total, dev,
@@ -1154,9 +1127,8 @@ function _ka_multilayer_energy_with_ws(
         ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
     P_inv = kernel.eigenvectors_inv
-    # Every mode reads the domain's Euler Ewald tables; QG modes add the
-    # analytic Fourier correction with κ² = |λ| (matching the single-layer
-    # periodic QG energy path).
+    # Every mode uses the same Fourier grid; its kernel differs only through
+    # the modal eigenvalue in the denominator.
     cache = _get_ewald_cache(domain, EulerKernel())
     kx, ky, fourier = _ensure_energy_ewald!(ws.energy, cache, dev)
     corr0 = _periodic_euler_corr_at_zero(cache, domain)
@@ -1164,20 +1136,26 @@ function _ka_multilayer_energy_with_ws(
     layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
     total == 0 && return zero(T)
     raw = zero(T)
+    E_zero = zero(T)
+    layer_circulation = ntuple(ℓ -> _state_circulation(states[ℓ], dev), Val(N))
     for mode in 1:N
         weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
         energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
         lam = evals[mode]
-        raw_mode = _ka_energy_raw_with_workspace!(
-            _periodic_green_energy_ka!, energy_ws, total, dev,
-            cache.alpha, domain.Lx, domain.Ly,
-            cache.n_images, kx, ky, fourier, corr0)
-        if abs(lam) >= eps(T) * 100
-            raw_mode += _ka_energy_raw_with_workspace!(
-                _periodic_qg_correction_energy_ka!, energy_ws, total, dev,
+        is_euler_mode = _is_barotropic_mode(kernel, lam)
+        raw_mode = if is_euler_mode
+            _ka_energy_raw_with_workspace!(
+                _periodic_euler_energy_ka!, energy_ws, total, dev,
+                cache.alpha, domain.Lx, domain.Ly,
+                cache.n_images, kx, ky, fourier, corr0)
+        else
+            gamma_mode = sum(P_inv[mode, ℓ] * layer_circulation[ℓ] for ℓ in 1:N)
+            E_zero += gamma_mode * gamma_mode / (T(2) * area * abs(lam))
+            _ka_energy_raw_with_workspace!(
+                _periodic_qg_energy_ka!, energy_ws, total, dev,
                 T(abs(lam)), area, kx, ky)
         end
         raw += raw_mode
     end
-    return _normalize_energy(raw)
+    return _normalize_energy(raw) + E_zero
 end

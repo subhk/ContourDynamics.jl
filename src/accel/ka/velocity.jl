@@ -485,7 +485,7 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
         # Velocity kernels overwrite mode_vx/mode_vy, so they are reused across modes.
         # Branch to a concrete kernel type so the launch is statically dispatched
         # (no Union-typed `mode_kernel` per mode).
-        if abs(lam) < eps(T) * 100
+        if _is_barotropic_mode(kernel, lam)
             _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg, EulerKernel(), domain, dev, ws)
         else
             _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg,
@@ -554,7 +554,7 @@ function _ka_multilayer_velocity_at_states(
         end
         seg = SegmentData(ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb)
         lam = kernel.eigenvalues[mode]
-        if abs(lam) < eps(T) * 100
+        if _is_barotropic_mode(kernel, lam)
             _ka_apply_velocity!(point_x, point_y, target_x, target_y, seg,
                                 EulerKernel(), domain, dev, ws)
         else

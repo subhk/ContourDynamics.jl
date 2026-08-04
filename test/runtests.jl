@@ -5,6 +5,7 @@ include("test_utils.jl")
 include("test_example_visualization_geometry.jl")
 include("test_beta_plane.jl")
 include("test_euler.jl")
+include("test_qg.jl")
 
 @testset "ContourDynamics.jl" begin
     @testset "Core Types" begin

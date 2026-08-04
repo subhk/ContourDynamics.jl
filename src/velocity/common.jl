@@ -374,7 +374,7 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
         # segment_velocity is fully specialised (no Union-typed dynamic
         # dispatch per segment). Each mode fetches its own cache: QG modes need
         # their Ld-specific correction coefficients, the Euler mode does not.
-        v_mode = if abs(lam) < eps(T) * 100
+        v_mode = if _is_barotropic_mode(kernel, lam)
             _accumulate_mode_node_velocity(EulerKernel(), domain, prob.layers,
                 source_curvatures, _prefetch_ewald(domain, EulerKernel()), P_inv, mode, xT)
         else
@@ -517,7 +517,7 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
         # eigenvalues become QG modes with deformation radius 1/sqrt(abs(lambda)).
         # Each mode fetches its own cache so the QG modes read their Ld-specific
         # correction coefficients (the Euler cache has none).
-        if abs(lam) < eps(T) * 100
+        if _is_barotropic_mode(kernel, lam)
             _multilayer_mode_velocity!(vel, prob, mode, EulerKernel(),
                                        target_nodes, mode_vel, source_curvatures,
                                        _prefetch_ewald(domain, EulerKernel()), P, P_inv)

@@ -110,6 +110,34 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
 
+function _energy_contour_pair_qg_periodic(ci::PVContour{T}, cj::PVContour{T},
+                                          cache::EwaldCache{T},
+                                          domain::PeriodicDomain{T}, Ld::T;
+                                          _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
+    # For G_k=1/[A(k²+κ²)], k≠0, the contour potential required by
+    # the shared normalization is -4π cos(k·r)/[A k²(k²+κ²)].
+    # The spatially constant k=0 energy is added by the problem-level caller.
+    area = T(4) * domain.Lx * domain.Ly
+    kappa2 = one(T) / (Ld * Ld)
+    kx, ky = cache.kx, cache.ky
+    Φ = rv -> begin
+        val = zero(T)
+        for kxi in kx
+            cx = cos(kxi * rv[1])
+            sx = sin(kxi * rv[1])
+            for kyi in ky
+                k2 = kxi * kxi + kyi * kyi
+                k2 < eps(T) && continue
+                phase_cos = cx * cos(kyi * rv[2]) - sx * sin(kyi * rv[2])
+                val -= T(4) * T(π) * phase_cos /
+                       (area * k2 * (k2 + kappa2))
+            end
+        end
+        val
+    end
+    return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
+end
+
 """
 Radial potential whose 2-D Laplacian is `erfc(alpha * r) / r`, up to an
 irrelevant additive constant.  The constant is chosen so `phi(0) = 0`, which

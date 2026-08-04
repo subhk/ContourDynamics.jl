@@ -62,26 +62,6 @@ end
 
 function _energy_contour_pair_qg(ci::PVContour{T}, cj::PVContour{T}, Ld::T;
                                   _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
-    # Smooth limit of K₀(r/Ld) + log(r) as r→0
-    k0_smooth_at_zero = log(2 * Ld) - T(Base.MathConstants.eulergamma)
-    Φ = rv -> begin
-        r = sqrt(rv[1]^2 + rv[2]^2)
-        # Near-coincident quadrature points contribute nothing (the singular
-        # part is handled analytically in the self branch).
-        r < eps(T) * Ld ? zero(T) : _besselk0_approx_scalar(r / Ld)
-    end
-    # Self-segment: singular subtraction. Decompose
-    # K₀(r/Ld) = [-log(r)] + [K₀(r/Ld) + log(r)]. The -log(r) part integrates
-    # analytically (hence -_log_self_seg_quad); the remainder is smooth and
-    # tends to log(2Ld) - γ at r=0, so plain GL quadrature is safe.
-    Φ_smooth = rv -> begin
-        r2 = rv[1]^2 + rv[2]^2
-        r2 < eps(T)^2 && return k0_smooth_at_zero
-        r = sqrt(r2)
-        return _besselk0_approx_scalar(r / Ld) + log(r)
-    end
-    self_quad = (mid, half_ds, g_nodes, g_weights) ->
-        -_log_self_seg_quad(half_ds) +
-        _gl3_pair_quad(mid, half_ds, mid, half_ds, g_nodes, g_weights, Φ_smooth)
-    return _energy_contour_pair(ci, cj, Φ, self_quad; _partial=_partial)
+    Φ = rv -> _qg_energy_potential_scalar(rv[1]^2 + rv[2]^2, Ld)
+    return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
