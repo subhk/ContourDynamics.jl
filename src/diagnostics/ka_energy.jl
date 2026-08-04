@@ -380,7 +380,6 @@ end
                                                        Lx::T, Ly::T, delta::T,
                                                        n_images::Int, kx, ky,
                                                        fourier_coeffs) where {T}
-    delta_sq = delta * delta
     phi = zero(T)
 
     for px in -n_images:n_images
@@ -390,8 +389,9 @@ end
             sx = rx - shiftx
             sy = ry - shifty
             r2 = sx * sx + sy * sy
-            r = (px == 0 && py == 0) ? sqrt(r2 + delta_sq) : sqrt(r2)
-            phi += _sqg_ewald_real_potential_scalar(r, alpha)
+            r = sqrt(r2)
+            phi += _sqg_ewald_real_potential_scalar(r, alpha) +
+                   _sqg_regularized_energy_potential_scalar(r2, delta) - r
         end
     end
 

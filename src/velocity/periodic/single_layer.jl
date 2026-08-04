@@ -137,11 +137,15 @@ smooth periodic correction ``G_{\\text{per}} - G_\\infty`` is integrated with 5-
 Gauss-Legendre quadrature.
 
 The periodic correction decomposes as:
-- Central-image real-space: ``-(1/(2\\pi))\\operatorname{erf}(\\alpha r_\\delta)/r_\\delta``,
-  where ``r_\\delta = \\sqrt{r^2+\\delta^2}``
-- Non-central real-space: ``(1/(2\\pi)) \\operatorname{erfc}(\\alpha|\\mathbf{r}-\\mathbf{R}_n|)/|\\mathbf{r}-\\mathbf{R}_n|``
+- Central-image real-space: ``-(1/(2\\pi))\\operatorname{erf}(\\alpha r)/r``
+- Non-central real-space: the unregularized Ewald term plus
+  ``(1/(2\\pi))(1/r_\\delta-1/r)``, where
+  ``r_\\delta = \\sqrt{r^2+\\delta^2}``
 - Fourier space: ``(1/(2\\pi)) \\sum c_k \\cos(\\mathbf{k}\\cdot\\mathbf{r})``
   with ``c_k = (2\\pi/|k|) \\operatorname{erfc}(|k|/(2\\alpha))/A``
+
+This is the Ewald sum of the regularized kernel over every periodic image.  The
+central correction has the finite limit ``-2\\alpha/\\sqrt{\\pi}`` at ``r=0``.
 """
 function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -269,11 +273,14 @@ end
             r_vec = r_vec0 - shift
             r2 = r_vec[1]^2 + r_vec[2]^2
             if px == 0 && py == 0
-                r_reg = sqrt(r2 + delta_sq)
-                G_corr -= inv2pi * erf(alpha * r_reg) / r_reg
+                G_corr -= inv2pi * _sqg_erf_over_r(alpha, r2)
             elseif r2 > eps(T)
                 r = sqrt(r2)
-                G_corr += inv2pi * erfc(alpha * r) / r
+                r_reg = sqrt(r2 + delta_sq)
+                # erfc(αr)/r + (1/rδ - 1/r), written so the softening
+                # adjustment does not lose precision when δ ≪ r.
+                softening = -delta_sq / (r * r_reg * (r + r_reg))
+                G_corr += inv2pi * (erfc(alpha * r) / r + softening)
             end
         end
     end
@@ -294,6 +301,14 @@ end
     end
 
     return G_corr
+end
+
+@inline function _sqg_erf_over_r(alpha::T, r2::T) where {T}
+    if r2 > eps(T)^2
+        r = sqrt(r2)
+        return erf(alpha * r) / r
+    end
+    return T(2) * alpha / sqrt(T(π))
 end
 
 function curved_segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},

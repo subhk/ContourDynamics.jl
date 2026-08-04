@@ -122,11 +122,21 @@ The periodic segment velocity again uses singular subtraction:
 - the regularized unbounded SQG segment velocity handles the near-singular part analytically
 - the periodic correction is smooth enough to integrate with 5-point Gauss-Legendre quadrature
 
-The central-image correction is evaluated with the regularized radius
-``r_\delta = \sqrt{r^2+\delta^2}``, giving
-``-\operatorname{erf}(\alpha r_\delta)/r_\delta`` after subtracting the
-regularized unbounded contribution. This keeps the correction bounded even for
-near-coincident quadrature points.
+Regularization is applied to every periodic image. For the central image, the
+exact regularized unbounded contribution is added analytically and the Ewald
+correction is ``-\operatorname{erf}(\alpha r)/r``. This correction remains
+bounded at coincidence, where its limit is ``-2\alpha/\sqrt{\pi}``. Each
+non-central real-space image adds
+
+```math
+\frac{\operatorname{erfc}(\alpha r)}{r}
++ \left(\frac{1}{r_\delta}-\frac{1}{r}\right),
+\qquad r_\delta=\sqrt{r^2+\delta^2}.
+```
+
+Thus the combined real-space and Fourier sums represent the periodic sum of
+the documented softened kernel ``1/r_\delta``, rather than making the answer
+depend on where the Ewald split is introduced.
 
 Here ``r=|\mathbf r|``, ``r_\delta`` is the regularized distance, and
 ``\delta`` is `SQGKernel.delta` (the `delta_sqg` constructor keyword), not the

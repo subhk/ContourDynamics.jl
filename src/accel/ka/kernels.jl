@@ -327,11 +327,12 @@ end
             r2 = rx * rx + ry * ry
 
             if px == 0 && py == 0
-                r_reg = sqrt(r2 + delta_sq)
-                G_corr -= inv2pi * erf(alpha * r_reg) / r_reg
+                G_corr -= inv2pi * _sqg_erf_over_r(alpha, r2)
             elseif r2 > eps(T)
                 r = sqrt(r2)
-                G_corr += inv2pi * erfc(alpha * r) / r
+                r_reg = sqrt(r2 + delta_sq)
+                softening = -delta_sq / (r * r_reg * (r + r_reg))
+                G_corr += inv2pi * (erfc(alpha * r) / r + softening)
             end
         end
     end
@@ -701,11 +702,12 @@ end
                     r2 = rx * rx + ry * ry
 
                     if px == 0 && py == 0
-                        r_reg = sqrt(r2 + delta_sq)
-                        G_corr -= inv2pi * erf(alpha * r_reg) / r_reg
+                        G_corr -= inv2pi * _sqg_erf_over_r(alpha, r2)
                     elseif r2 > eps(T)
                         r = sqrt(r2)
-                        G_corr += inv2pi * erfc(alpha * r) / r
+                        r_reg = sqrt(r2 + delta_sq)
+                        softening = -delta_sq / (r * r_reg * (r + r_reg))
+                        G_corr += inv2pi * (erfc(alpha * r) / r + softening)
                     end
                 end
             end

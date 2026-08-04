@@ -262,7 +262,10 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         end
 
         domain = PeriodicDomain(1.7, 1.2)
-        kernel = SQGKernel(1e-7)
+        # A material δ is essential here: δ≈0 cannot detect an Ewald split
+        # that regularizes only the central real-space term instead of every
+        # periodic image.
+        kernel = SQGKernel(0.2)
         contours = [
             straight_contour([
                 SVector(-0.31, -0.18), SVector(-0.08, -0.22),
@@ -284,6 +287,27 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         v_images = direct_sqg_image_velocity(kernel, domain, contours, x)
 
         @test v_ewald ≈ v_images rtol=2e-3
+    end
+
+    @testset "SQG periodic energy potential matches velocity kernel" begin
+        domain = PeriodicDomain(1.7, 1.2)
+        kernel = SQGKernel(0.2)
+        cache = build_ewald_cache(domain, kernel; n_fourier=32, n_images=5)
+        r = SVector(0.37, -0.29)
+        origin = zero(r)
+
+        phi(rv) = ContourDynamics._eval_sqg_periodic_energy_potential(
+            rv, cache, domain, kernel.delta)
+        h = 2e-4
+        ex = SVector(h, 0.0)
+        ey = SVector(0.0, h)
+        laplacian_phi = (phi(r + ex) + phi(r - ex) + phi(r + ey) + phi(r - ey) -
+                         4 * phi(r)) / h^2
+
+        G = inv(2π * sqrt(sum(abs2, r) + kernel.delta^2)) +
+            ContourDynamics._periodic_sqg_green_correction(
+                kernel, domain, cache, r, origin)
+        @test laplacian_phi ≈ 2π * G rtol=2e-6
     end
 
     @testset "SQG unbounded energy uses regularized potential" begin

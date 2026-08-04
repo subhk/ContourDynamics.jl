@@ -123,11 +123,15 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
                                              cache::EwaldCache{T},
                                              domain::PeriodicDomain{T},
                                              delta::T) where {T}
-    # SQG energy uses a regularized radial potential. The central image receives
-    # the delta smoothing; non-central images use their physical separation.
+    # Apply the SQG softening to every periodic image.  For each image,
+    #
+    #   Φ_real(r) + Φδ(r) - r
+    #
+    # has Laplacian erfc(αr)/r + 1/sqrt(r²+δ²) - 1/r.  Together with the
+    # unregularized Fourier part this is exactly the Ewald decomposition used by
+    # the periodic velocity kernel.
     alpha = cache.alpha
     Lx, Ly = domain.Lx, domain.Ly
-    delta_sq = delta * delta
     phi = zero(T)
 
     for px in -cache.n_images:cache.n_images
@@ -135,8 +139,9 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
             shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
             rv = r_vec - shift
             r2 = rv[1]^2 + rv[2]^2
-            r = (px == 0 && py == 0) ? sqrt(r2 + delta_sq) : sqrt(r2)
-            phi += _sqg_ewald_real_potential(r, alpha)
+            r = sqrt(r2)
+            phi += _sqg_ewald_real_potential(r, alpha) +
+                   _sqg_regularized_energy_potential_scalar(r2, delta) - r
         end
     end
 
