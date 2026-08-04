@@ -51,15 +51,23 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
 end
 
 """Return the single-layer contour vector stored in a CPU problem."""
-contours(prob::ContourProblem{<:Any, <:Any, <:Any, CPU}) = prob.contours
-contours(prob::ContourProblem{<:Any, <:Any, <:Any, GPU}) = error(
+contours(prob::ContourProblem{K,D,T,CPU,S}) where {
+    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
+} = prob.contours
+contours(prob::ContourProblem{K,D,T,GPU,S}) where {
+    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
+} = error(
     "GPU() problems keep contours in device state. Use materialize_contours(prob) " *
     "only at output, animation, plotting, or host-inspection boundaries.")
 contours(prob::ContourProblem) = prob.contours
 
 """Materialize contours on CPU for output, animation, plotting, or inspection."""
-materialize_contours(prob::ContourProblem{<:Any, <:Any, <:Any, CPU}) = prob.contours
-materialize_contours(prob::ContourProblem{<:Any, <:Any, <:Any, GPU}) =
+materialize_contours(prob::ContourProblem{K,D,T,CPU,S}) where {
+    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
+} = prob.contours
+materialize_contours(prob::ContourProblem{K,D,T,GPU,S}) where {
+    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
+} =
     materialize_contours(prob.device_state)
 
 # Validation helpers keep constructor errors close to the user input. They are
@@ -121,15 +129,23 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
 end
 
 """Return the per-layer contour tuple stored in a CPU problem."""
-contours(prob::MultiLayerContourProblem{<:Any, <:Any, <:Any, <:Any, CPU}) = prob.layers
-contours(prob::MultiLayerContourProblem{<:Any, <:Any, <:Any, <:Any, GPU}) = error(
+contours(prob::MultiLayerContourProblem{N,K,D,T,CPU,S}) where {
+    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
+} = prob.layers
+contours(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
+    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
+} = error(
     "GPU() problems keep contours in device state. Use materialize_contours(prob) " *
     "only at output, animation, plotting, or host-inspection boundaries.")
 contours(prob::MultiLayerContourProblem) = prob.layers
 
 """Materialize per-layer contours on CPU for output, animation, plotting, or inspection."""
-materialize_contours(prob::MultiLayerContourProblem{<:Any, <:Any, <:Any, <:Any, CPU}) = prob.layers
-materialize_contours(prob::MultiLayerContourProblem{N, <:Any, <:Any, <:Any, GPU}) where {N} =
+materialize_contours(prob::MultiLayerContourProblem{N,K,D,T,CPU,S}) where {
+    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
+} = prob.layers
+materialize_contours(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
+    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
+} =
     ntuple(i -> materialize_contours(prob.device_state[i]), N)
 
 """Return the number of layers in a multi-layer contour problem."""
@@ -149,7 +165,9 @@ Total number of nodes across all contours in a [`ContourProblem`](@ref) or
     return s
 end
 
-@inline total_nodes(prob::ContourProblem{<:Any, <:Any, <:Any, GPU}) =
+@inline total_nodes(prob::ContourProblem{K,D,T,GPU,S}) where {
+    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
+} =
     _device_state_nnodes(prob.device_state)
 
 @inline function total_nodes(prob::MultiLayerContourProblem{N}) where {N}
@@ -162,7 +180,9 @@ end
     return s
 end
 
-@inline function total_nodes(prob::MultiLayerContourProblem{N, <:Any, <:Any, <:Any, GPU}) where {N}
+@inline function total_nodes(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
+    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
+}
     s = 0
     for i in 1:N
         s += _device_state_nnodes(prob.device_state[i])

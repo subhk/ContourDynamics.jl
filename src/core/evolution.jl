@@ -212,6 +212,8 @@ end
     N = total_nodes(prob)
     _stepper_buffers_match(stepper, N) && return false
     resize_buffers!(stepper, prob)
+    _stepper_buffers_match(stepper, N) || throw(DimensionMismatch(
+        "Failed to resize stepper buffers to the authoritative node count ($N)."))
     return true
 end
 

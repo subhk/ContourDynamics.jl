@@ -160,6 +160,14 @@ end
             gpu_rk = RK4Stepper(0.002, total_nodes(gpu_prob); dev=GPU())
             stale_first = gpu_prob.contours[1].nodes[1]
 
+            # Device topology is authoritative for GPU problems. Deliberately
+            # desynchronize the host shadow so this catches dispatch falling
+            # through to the generic host-contour implementation.
+            device_n = length(gpu_prob.device_state.x)
+            pop!(gpu_prob.contours[1].nodes)
+            @test total_nodes(gpu_prob) == device_n
+            @test_throws ErrorException contours(gpu_prob)
+
             timestep!(cpu_prob, cpu_rk)
             timestep!(gpu_prob, gpu_rk)
             gpu_contours = materialize_contours(gpu_prob)
