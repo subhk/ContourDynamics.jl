@@ -109,6 +109,25 @@ end
         @test steps_seen == [0, 1, 2, 3, 4, 5]
     end
 
+    @testset "evolve! repairs buffers after callback topology growth" begin
+        c = circular_patch(1.0, 16, 1.0)
+        cp = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+        st = RK4Stepper(0.001, total_nodes(cp))
+
+        grow_once = function (p, step)
+            step == 1 || return
+            contour = p.contours[1]
+            midpoint = (contour.nodes[1] + contour.nodes[2]) / 2
+            insert!(contour.nodes, 2, midpoint)
+            insert!(contour.corners, 2, false)
+        end
+
+        evolve!(cp, st, nothing; nsteps=2, callbacks=[grow_once])
+        @test total_nodes(cp) == 17
+        @test length(st.k1) == 17
+        @test length(st.nodes_buf) == 17
+    end
+
     @testset "Problem evolve! continues global callback steps across batches" begin
         c = circular_patch(1.0, 16, 1.0)
         prob = Problem(ContourProblem(EulerKernel(), UnboundedDomain(), [c]),

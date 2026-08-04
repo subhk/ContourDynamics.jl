@@ -171,6 +171,15 @@ end
             point = SVector(0.1, -0.15)
             @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) rtol=1e-8 atol=1e-8
 
+            # A device topology rewrite may change its flat node count between
+            # timesteps. Post-surgery handling must resize CuArray work buffers
+            # from their actual size, even if the caller's count is stale.
+            stale_gpu_rk = RK4Stepper(0.002, total_nodes(gpu_prob) - 1; dev=GPU())
+            ContourDynamics._handle_post_surgery!(
+                gpu_prob, stale_gpu_rk, total_nodes(gpu_prob))
+            @test length(stale_gpu_rk.k1) == total_nodes(gpu_prob)
+            @test length(stale_gpu_rk.nodes_buf) == total_nodes(gpu_prob)
+
             cpu_lf = LeapfrogStepper(0.002, total_nodes(cpu_prob); dev=CPU())
             gpu_prob_lf = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=GPU())
             gpu_lf = LeapfrogStepper(0.002, total_nodes(gpu_prob_lf); dev=GPU())

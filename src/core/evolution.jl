@@ -192,6 +192,29 @@ function resize_buffers!(stepper::LeapfrogStepper{T}, prob::MultiLayerContourPro
     return stepper
 end
 
+# `evolve!` owns the contract that topology changes (normally from surgery) are
+# reflected in the reusable timestep buffers. Check every work array rather
+# than only the node count before/after surgery: callbacks and device-resident
+# topology rewrites can otherwise leave a stale stepper even when the count
+# comparison used by the surgery caller misses the transition.
+@inline function _stepper_buffers_match(stepper::RK4Stepper, N::Int)
+    return length(stepper.k1) == N && length(stepper.k2) == N &&
+           length(stepper.k3) == N && length(stepper.k4) == N &&
+           length(stepper.nodes_buf) == N
+end
+
+@inline function _stepper_buffers_match(stepper::LeapfrogStepper, N::Int)
+    return length(stepper.nodes_prev) == N && length(stepper.vel_buf) == N &&
+           length(stepper.nodes_buf) == N && length(stepper.vel_mid) == N
+end
+
+@inline function _ensure_stepper_buffers!(prob, stepper)
+    N = total_nodes(prob)
+    _stepper_buffers_match(stepper, N) && return false
+    resize_buffers!(stepper, prob)
+    return true
+end
+
 """
     surgery!(prob::MultiLayerContourProblem, params::SurgeryParams)
 
@@ -348,19 +371,15 @@ end
     return nothing
 end
 
-@inline function _handle_post_surgery!(prob::ContourProblem, stepper, old_N::Int)
-    if total_nodes(prob) != old_N
-        resize_buffers!(stepper, prob)
-    else
+@inline function _handle_post_surgery!(prob::ContourProblem, stepper, ::Int)
+    if !_ensure_stepper_buffers!(prob, stepper)
         _invalidate_history!(stepper)
     end
     return nothing
 end
 
-@inline function _handle_post_surgery!(prob::MultiLayerContourProblem, stepper, old_N::Int)
-    if total_nodes(prob) != old_N
-        resize_buffers!(stepper, prob)
-    else
+@inline function _handle_post_surgery!(prob::MultiLayerContourProblem, stepper, ::Int)
+    if !_ensure_stepper_buffers!(prob, stepper)
         _invalidate_history!(stepper)
     end
     return nothing
@@ -397,6 +416,7 @@ function evolve!(prob::Union{ContourProblem, MultiLayerContourProblem},
     for local_step in 1:nsteps
         step = step_offset + local_step
         if total_nodes(prob) > 0
+            _ensure_stepper_buffers!(prob, stepper)
             timestep!(prob, stepper)
             _maybe_wrap_nodes!(prob, stepper)
         end

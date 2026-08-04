@@ -454,6 +454,14 @@ using Test, ContourDynamics, StaticArrays, Logging
         rk = RK4Stepper(0.01, total_nodes(prob))
         @test ContourDynamics._handle_post_surgery!(prob, rk, total_nodes(prob)) === nothing
 
+        # The post-surgery contract is based on the actual buffer size, not
+        # solely on the caller's old/new node-count comparison. This guards the
+        # device path against carrying stale work arrays into the next step.
+        stale_rk = RK4Stepper(0.01, total_nodes(prob) - 1)
+        ContourDynamics._handle_post_surgery!(prob, stale_rk, total_nodes(prob))
+        @test length(stale_rk.k1) == total_nodes(prob)
+        @test length(stale_rk.nodes_buf) == total_nodes(prob)
+
         # Multi-layer problems share the same post-surgery contract.
         ml_Ld = SVector(1.0)
         F = 1.0 / (2 * ml_Ld[1]^2)
