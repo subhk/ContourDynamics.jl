@@ -102,6 +102,15 @@ integrand. Shared by every kernel, domain, and backend — CPU and KA alike.
 """
 @inline _normalize_energy(raw::T) where {T} = -(one(T) / (T(4) * T(π))) * raw / T(2)
 
+# Contour potential for the unbounded Euler Hamiltonian.  If
+# phi = r²(log(r) - 1)/4, then Δphi = log(r).  The shared energy
+# normalization expects -2phi, which is the expression below.  Its r→0 limit
+# is zero, so unlike the Green function itself it needs no singular self rule.
+@inline function _euler_energy_potential_scalar(r2::T) where {T}
+    r2 <= eps(T)^2 && return zero(T)
+    return r2 * (T(2) - log(r2)) / T(4)
+end
+
 """
     _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
 

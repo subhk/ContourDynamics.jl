@@ -12,13 +12,11 @@ end
 
 function _energy_contour_pair_euler(ci::PVContour{T}, cj::PVContour{T};
                                     _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
-    # Clamp r² to eps(T) instead of skipping near-zero separations: adjacent
-    # segments share a node where log(r²) diverges, but the integral is finite
-    # (integrable singularity). Clamping avoids log(0) while keeping the term.
-    Φ = rv -> log(max(rv[1]^2 + rv[2]^2, eps(T))) / 2
-    # Coincident segments need the log singularity integrated analytically.
-    self_quad = (mid, half_ds, g_nodes, g_weights) -> _log_self_seg_quad(half_ds)
-    return _energy_contour_pair(ci, cj, Φ, self_quad; _partial=_partial)
+    # The Euler Hamiltonian is -(1/4π)∫∫ q(x)q(y)log|x-y| dxdy.
+    # Two applications of Green's theorem convert this area integral to the
+    # smooth contour potential r²(2-log(r²))/4 used here.
+    Φ = rv -> _euler_energy_potential_scalar(rv[1]^2 + rv[2]^2)
+    return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
 
 function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T}

@@ -6,20 +6,6 @@
 # CUDA via the package extension. Data layout (`SegmentData`, workspace) lives in
 # `packing.jl`; launch/dispatch wrappers live in `velocity.jl`.
 
-# Inline Euler antiderivative — scalar version for GPU (no SVector).
-# F(u; h, h_sq) = u*log(u² + h²) - 2u + 2h*arctan(u/h)
-@inline function _euler_antideriv_scalar(u::T, h::T, h_sq::T) where {T}
-    r2 = u * u + h_sq
-    if r2 < eps(T)^2
-        return zero(T)
-    end
-    val = u * log(r2) - 2 * u
-    if abs(h) > eps(T)
-        val += 2 * h * atan(u / h)
-    end
-    return val
-end
-
 @inline function _straight_euler_contribution_scalar(xi::T, yi::T,
                                                      ax::T, ay::T, bx::T, by::T,
                                                      pv::T, inv4pi::T) where {T}
@@ -40,11 +26,8 @@ end
     r0y = yi - ay
     u_a = r0x * tx + r0y * ty
     h = r0x * nx + r0y * ny
-    u_b = u_a - ds_len
-    h_sq = h * h
-
-    F_diff = _euler_antideriv_scalar(u_a, h, h_sq) - _euler_antideriv_scalar(u_b, h, h_sq)
-    contrib = -inv4pi * pv * F_diff
+    integral = _euler_segment_log_integral(u_a, h, ds_len)
+    contrib = -inv4pi * pv * integral
     return contrib * tx, contrib * ty
 end
 
@@ -63,29 +46,25 @@ end
     max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
         return _straight_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, inv4pi)
 
-    nx = -dsy
-    ny = dsx
-    α = -ds_len * (T(2) * κa + κb) / T(6)
-    β = ds_len * κa / T(2)
-    γ = ds_len * (κb - κa) / T(6)
+    vx, vy = _straight_euler_contribution_scalar(
+        xi, yi, ax, ay, bx, by, pv, inv4pi)
     g_nodes, g_weights = _gl5_nodes_weights(T)
-    vx = zero(T)
-    vy = zero(T)
 
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
-        η = p * (α + p * (β + p * γ))
-        η′ = α + T(2) * β * p + T(3) * γ * p^2
-        sx = ax + p * dsx + η * nx
-        sy = ay + p * dsy + η * ny
-        tangent_x = dsx + η′ * nx
-        tangent_y = dsy + η′ * ny
-        rx = xi - sx
-        ry = yi - sy
-        r2 = max(rx * rx + ry * ry, eps(T)^2)
-        coeff = -inv4pi * pv * (g_weights[q] / T(2)) * log(r2)
-        vx += coeff * tangent_x
-        vy += coeff * tangent_y
+        sx, sy, tangent_x, tangent_y = _cubic_point_tangent_scalar(
+            ax, ay, bx, by, κa, κb, p)
+        line_x = ax + p * dsx
+        line_y = ay + p * dsy
+        rx_curve = xi - sx
+        ry_curve = yi - sy
+        rx_line = xi - line_x
+        ry_line = yi - line_y
+        log_curve = log(max(rx_curve * rx_curve + ry_curve * ry_curve, eps(T)^2))
+        log_line = log(max(rx_line * rx_line + ry_line * ry_line, eps(T)^2))
+        coeff = -inv4pi * pv * (g_weights[q] / T(2))
+        vx += coeff * (log_curve * tangent_x - log_line * dsx)
+        vy += coeff * (log_curve * tangent_y - log_line * dsy)
     end
 
     return vx, vy
@@ -429,22 +408,10 @@ end
             continue
         end
 
-        tx = dsx / ds_len
-        ty = dsy / ds_len
-        nx = -ty
-        ny = tx
-
-        r0x = xi - ax
-        r0y = yi - ay
-        u_a = r0x * tx + r0y * ty
-        h = r0x * nx + r0y * ny
-        u_b = u_a - ds_len
-        h_sq = h * h
-
-        F_diff = _euler_antideriv_scalar(u_a, h, h_sq) - _euler_antideriv_scalar(u_b, h, h_sq)
-        contrib = -inv4pi * seg_pv[j] * F_diff
-        vx += contrib * tx
-        vy += contrib * ty
+        dvx, dvy = _straight_euler_contribution_scalar(
+            xi, yi, ax, ay, bx, by, seg_pv[j], inv4pi)
+        vx += dvx
+        vy += dvy
 
         mid_x = (ax + bx) / T(2)
         mid_y = (ay + by) / T(2)

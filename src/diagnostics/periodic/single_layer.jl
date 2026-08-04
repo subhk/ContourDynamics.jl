@@ -21,7 +21,7 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
-        pair_E = _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
+        pair_E = _energy_contour_pair_periodic_green(ci, cj, cache, prob.domain; _partial=partial)
         pair_E += _energy_contour_pair_qg_correction(ci, cj, cache; _partial=partial)
         E += ci.pv * cj.pv * pair_E
     end

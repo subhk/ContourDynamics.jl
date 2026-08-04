@@ -32,6 +32,34 @@ The velocity direction is along `ds = b - a`, not rotated.
     return val
 end
 
+# Evaluate the definite logarithmic integral over a segment in local
+# coordinates.  Subtracting the two antiderivatives directly loses digits when
+# the target is many segment lengths away.  The centered far-field expression
+# rewrites the log ratio with log1p and the angle difference as one atan.
+@inline function _euler_segment_log_integral(u_a::T, h::T, ds_len::T) where {T}
+    half = ds_len / T(2)
+    u = u_a - half
+    h_abs = abs(h)
+
+    if abs(u) > T(16) * max(half, h_abs)
+        up = u + half
+        um = u - half
+        h_sq = h * h
+        rp2 = up * up + h_sq
+        rm2 = um * um + h_sq
+        log_ratio = log1p(T(4) * u * half / rm2)
+        angle = h_abs > eps(T) ?
+            T(2) * h_abs * atan(T(2) * h_abs * half /
+                                (h_sq + u * u - half * half)) : zero(T)
+        return u * log_ratio + half * (log(rp2) + log(rm2)) -
+               T(4) * half + angle
+    end
+
+    h_sq = h * h
+    return _euler_antideriv(u_a, h, h_sq) -
+           _euler_antideriv(u_a - ds_len, h, h_sq)
+end
+
 function segment_velocity(::EulerKernel, ::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
     ds = b - a
@@ -49,12 +77,8 @@ function segment_velocity(::EulerKernel, ::UnboundedDomain,
     # Project onto segment coordinates
     u_a = r0[1] * t_hat[1] + r0[2] * t_hat[2]   # tangential component
     h   = r0[1] * n_hat[1] + r0[2] * n_hat[2]    # normal component
-    u_b = u_a - ds_len
-
-    h_sq = h * h
-
     inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * t_hat * (_euler_antideriv(u_a, h, h_sq) - _euler_antideriv(u_b, h, h_sq))
+    return -inv4pi * t_hat * _euler_segment_log_integral(u_a, h, ds_len)
 end
 
 function curved_segment_velocity(::EulerKernel, ::UnboundedDomain,
@@ -67,19 +91,27 @@ function curved_segment_velocity(::EulerKernel, ::UnboundedDomain,
     max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
         return segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
 
+    # Integrate only the smooth difference from the chord.  The chord's
+    # logarithmic singularity is handled by the exact straight-panel formula,
+    # restoring high-order convergence when x is a panel endpoint.
+    straight = segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
     g_nodes, g_weights = _gl5_nodes_weights(T)
-    integral = zero(SVector{2,T})
+    correction = zero(SVector{2,T})
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
         s = _cubic_segment_point(a, b, κa, κb, p)
         tangent = _cubic_segment_tangent(a, b, κa, κb, p)
-        r = x - s
-        r2 = max(r[1]^2 + r[2]^2, eps(T)^2)
-        integral = integral + (g_weights[q] / T(2)) * log(r2) * tangent
+        s_line = a + p * ds
+        r_curve = x - s
+        r_line = x - s_line
+        log_curve = log(max(r_curve[1]^2 + r_curve[2]^2, eps(T)^2))
+        log_line = log(max(r_line[1]^2 + r_line[2]^2, eps(T)^2))
+        correction += (g_weights[q] / T(2)) *
+                      (log_curve * tangent - log_line * ds)
     end
 
     inv4pi = one(T) / (4 * T(π))
-    return -inv4pi * integral
+    return straight - inv4pi * correction
 end
 
 function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,

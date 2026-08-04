@@ -11,7 +11,7 @@ Returns `G_per(r)` = real-space Ewald sum + Fourier-space sum.
     This function silently skips that term when `r² < eps(T)`, so the
     returned value is *not* valid at zero separation.  Callers that need
     the self-interaction limit must handle `r = 0` separately (see
-    `_energy_contour_pair_euler_periodic` for an example).
+    `_energy_contour_pair_periodic_green` for an example).
 """
 function _eval_ewald_greens(r_vec::SVector{2,T}, cache::EwaldCache{T},
                             domain::PeriodicDomain{T}) where {T}
@@ -45,10 +45,10 @@ function _eval_ewald_greens(r_vec::SVector{2,T}, cache::EwaldCache{T},
     return G_val
 end
 
-function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
-                                              cache::EwaldCache{T},
-                                              domain::PeriodicDomain{T};
-                                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
+function _energy_contour_pair_periodic_green(ci::PVContour{T}, cj::PVContour{T},
+                                             cache::EwaldCache{T},
+                                             domain::PeriodicDomain{T};
+                                             _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     # Double contour integral for periodic Euler energy. The self-pair case
     # subtracts the logarithmic singularity analytically and adds back the smooth
     # periodic correction through quadrature.
@@ -82,6 +82,32 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
         _log_self_seg_quad(half_ds) +
         _gl3_pair_quad(mid, half_ds, mid, half_ds, g_nodes, g_weights, Φ_corr)
     return _energy_contour_pair(ci, cj, Φ, self_quad; _partial=_partial)
+end
+
+function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
+                                              cache::EwaldCache{T},
+                                              domain::PeriodicDomain{T};
+                                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
+    # For G_k = 1/(A|k|²), choose φ_k = -1/(A|k|⁴), so Δφ = G.
+    # The shared normalization then requires the contour integrand 4πφ.
+    # This k⁻⁴ series is smooth, including for coincident segments.
+    area = T(4) * domain.Lx * domain.Ly
+    kx, ky = cache.kx, cache.ky
+    Φ = rv -> begin
+        val = zero(T)
+        for kxi in kx
+            cx = cos(kxi * rv[1])
+            sx = sin(kxi * rv[1])
+            for kyi in ky
+                k2 = kxi * kxi + kyi * kyi
+                k2 < eps(T) && continue
+                phase_cos = cx * cos(kyi * rv[2]) - sx * sin(kyi * rv[2])
+                val -= T(4) * T(π) * phase_cos / (area * k2 * k2)
+            end
+        end
+        val
+    end
+    return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
 
 """
