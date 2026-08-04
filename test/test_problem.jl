@@ -51,6 +51,20 @@ end
         @test prob_nosurg.surgery_params === nothing
     end
 
+    @testset "GPU accessors dispatch to device-state methods" begin
+        state_type = ContourDynamics.DeviceContourState{
+            Float64,Vector{Float64},Vector{Int},Vector{UInt8}}
+        gpu_problem_type = ContourProblem{
+            EulerKernel,UnboundedDomain,Float64,GPU,state_type}
+
+        @test which(total_nodes, Tuple{gpu_problem_type}) !==
+              which(total_nodes, Tuple{ContourProblem})
+        @test which(contours, Tuple{gpu_problem_type}) !==
+              which(contours, Tuple{ContourProblem})
+        @test which(vortex_area, Tuple{gpu_problem_type}) !==
+              which(vortex_area, Tuple{ContourProblem})
+    end
+
     @testset "Problem struct and accessors — multi-layer" begin
         Ld = SVector(1.0)
         F = 1.0 / (2 * Ld[1]^2)
