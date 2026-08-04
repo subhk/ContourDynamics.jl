@@ -12,6 +12,12 @@ The Green's function is ``G(r) = -\frac{1}{2\pi} \log r``, and the velocity at a
 \mathbf{u}(\mathbf{x}) = -\frac{q}{4\pi} \oint_C \log|\mathbf{x} - \mathbf{x}'|^2 \, d\mathbf{x}'
 ```
 
+Here ``\mathbf{x}`` is the target boundary node, ``\mathbf{x}'`` is the
+integration point on the oriented boundary ``C``, ``q`` is the patch PV jump,
+and ``d\mathbf{x}'`` is the tangent line element. The norm
+``|\mathbf{x}-\mathbf{x}'|`` is the source-target distance and
+``\mathbf{u}(\mathbf{x})`` is the resulting velocity.
+
 Straight segment contributions are computed analytically. When remeshing
 supplies nonzero Dritschel endpoint curvature, the same contour integral is
 evaluated on the cubic interpolation arc with fixed Gauss-Legendre quadrature.
@@ -107,7 +113,10 @@ The Kirchhoff ellipse is a standard validation case. An elliptical vortex patch 
 \Omega = \frac{ab}{(a+b)^2} \, q
 ```
 
-For our parameters (``a=2, b=1, q=1``), the predicted angular velocity is ``2/9 \approx 0.222``.
+Here ``a`` and ``b`` are the ellipse semi-axes, ``q`` is its uniform PV jump,
+and ``\Omega`` is the rigid angular velocity. For our parameters
+(``a=2, b=1, q=1``), the predicted angular velocity is
+``2/9 \approx 0.222``.
 
 After evolution, the following checks verify the solution quality:
 

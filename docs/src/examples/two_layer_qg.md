@@ -18,6 +18,12 @@ Polvani et al. write the Phillips stretching operator as
 \gamma^2\begin{bmatrix}-1 & 1 \\ \delta & -\delta\end{bmatrix}.
 ```
 
+Here ``\gamma=R/L_d`` is the ratio of vortex radius ``R`` to deformation
+radius ``L_d``, and ``\delta=H_1/H_2`` is the layer-depth ratio used by the
+paper. The displayed ``2\times2`` matrix is its nondimensional Phillips
+stretching operator; matrix row and column indices identify the affected and
+source layers, respectively.
+
 The package uses its symmetric similar form, whose off-diagonal entries are
 ``\gamma^2\sqrt{\delta}``; this leaves the upper-layer inversion unchanged and
 enables the modal solver. The short docs run below uses fewer nodes and steps

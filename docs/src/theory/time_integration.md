@@ -15,6 +15,21 @@ Here:
 - ``\mathbf{k}_1, \mathbf{k}_2, \mathbf{k}_3, \mathbf{k}_4`` are velocity evaluations at the usual RK4 stages
 - ``\mathbf{x}^{n+1}`` is the updated node position after one time step
 
+Writing ``\mathbf{u}(\mathbf{x})`` for the velocity of the complete contour
+state, the stage velocities are
+
+```math
+\begin{aligned}
+\mathbf{k}_1 &= \mathbf{u}(\mathbf{x}^n),\\
+\mathbf{k}_2 &= \mathbf{u}(\mathbf{x}^n + \tfrac{\Delta t}{2}\mathbf{k}_1),\\
+\mathbf{k}_3 &= \mathbf{u}(\mathbf{x}^n + \tfrac{\Delta t}{2}\mathbf{k}_2),\\
+\mathbf{k}_4 &= \mathbf{u}(\mathbf{x}^n + \Delta t\,\mathbf{k}_3).
+\end{aligned}
+```
+
+Thus each ``\mathbf{k}_r`` has velocity units; the subscript
+``r\in\{1,2,3,4\}`` identifies the RK4 stage rather than a contour or node.
+
 This is the recommended integrator for most applications.
 
 ## Leapfrog with Robert-Asselin Filter
@@ -46,6 +61,10 @@ Here ``\nu \in [0, 1]`` is the filter coefficient, controlled by the
 difference, so the filter is a small amount of numerical diffusion in
 time:
 
+The tilde distinguishes the filtered middle level
+``\tilde{\mathbf{x}}^n`` from its unfiltered value ``\mathbf{x}^n``; it does
+not denote a new physical time level.
+
 - ``\nu = 0`` — pure leapfrog, computational mode undamped.
 - ``\nu > 0`` — the computational mode decays by a factor
   ``1 - \nu`` per step, while the physical mode is only perturbed at
@@ -67,6 +86,11 @@ Per step, the stepper therefore:
 
 The first step is bootstrapped with a 2nd-order midpoint (RK2) method,
 since leapfrog needs two past levels before the main recurrence can start.
+
+After surgery, `evolve!` synchronizes every stepper work buffer to the current
+node count. Leapfrog additionally discards its old history and repeats the RK2
+bootstrap because remeshing changes node correspondence even when the total
+node count is unchanged.
 
 ## Notes
 

@@ -7,6 +7,10 @@ Passing a negative value to `build_ewald_cache` or `setup_ewald_cache!` throws
 `ArgumentError`; zero is valid and is useful for deliberately minimal caches in
 tests or controlled approximations.
 
+For definitions of ``L_x``, ``L_y``, ``A``, ``\alpha``, image indices, and
+Fourier wavevectors, see the [notation and parameter
+glossary](../theory/notation.md).
+
 ```@docs
 EwaldCache
 build_ewald_cache

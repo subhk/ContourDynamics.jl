@@ -4,6 +4,10 @@ The surgery API handles remeshing, reconnection, and filament removal. Most
 workflows use `SurgeryParams` and `surgery!`; the lower-level functions support
 custom surgery pipelines.
 
+The distinction between surgery `delta`, SQG `delta_sqg`, and all remeshing
+symbols is summarized in the [notation and parameter
+glossary](../theory/notation.md).
+
 ```@docs
 surgery!
 remesh

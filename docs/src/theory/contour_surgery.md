@@ -52,7 +52,7 @@ while close pairs remain:
     demote corners that have become obtuse
     remove unresolved filament debris
     rebuild the spatial index and close-pair list
-wrap periodic contours and resize timestep buffers if node counts changed
+wrap periodic contours and synchronize timestep buffers with the final node count
 ```
 
 This is the same conceptual structure as Dritschel's contour-surgery loop, but
@@ -75,10 +75,12 @@ The main implementation points are:
 | Demote corners once they become obtuse | `_demote_obtuse_corners!` after remeshing |
 | Remove unresolved debris | `remove_filaments!` |
 
-The multi-layer surgery path uses the same CPU reference helpers layer by layer.
-The device-side surgery path mirrors the same cleanup, admissibility,
-independent-pair selection, topology rewrite, and remeshing predicates on flat
-device arrays for supported unbounded single-layer GPU problems.
+The multi-layer surgery path applies the same reference algorithm independently
+within each layer; contours never reconnect across layers. For `GPU()` problems,
+the device-side path mirrors the cleanup, admissibility, independent-pair
+selection, topology rewrite, and remeshing predicates on flat device arrays.
+It supports single-layer Euler, QG, and SQG in unbounded and periodic domains,
+periodic beta-plane QG, and multi-layer QG in unbounded and periodic domains.
 
 ## Core Equations
 
@@ -97,6 +99,9 @@ estimated from adjacent chords:
 
 Curvature is set to zero at labelled surgery corners and their immediate
 neighbours. This keeps sharp surgery junctions fixed during redistribution.
+Here ``j`` is a cyclic node index, ``\times`` is the signed scalar 2D cross
+product, ``\mathbf a_j`` and ``\mathbf b_j`` are the incoming and outgoing
+chords, and ``\kappa_j`` is positive for a local left turn.
 
 Dritschel's nonlocal node-density idea is represented by a curvature scale
 ``K_j`` at node ``j``. In this implementation, nearby high-curvature segments
@@ -118,6 +123,10 @@ d_{ij} = |\mathbf{x}_j-\mathbf{m}_i|,
 where ``\mathbf{m}_i`` is the midpoint of source segment ``i`` and
 ``\Delta q_i`` is its PV jump. A small distance floor is used in the code to
 avoid division by zero.
+The sum runs over source segments ``i`` from all contours in the same surgery
+pass; ``\ell_i`` and ``\kappa_i`` are their length and signed curvature, while
+``d_{ij}`` is the distance from target node ``j`` to source midpoint ``i``.
+Absolute values make the density depend on curvature and PV-jump magnitudes.
 
 The raw segment density is then built from the transformed curvature scale and
 saturated near the surgery cutoff ``\delta``:
@@ -134,13 +143,20 @@ saturated near the surgery cutoff ``\delta``:
 ```
 
 Here ``L`` is estimated from the contour perimeter, ``\mu`` is the minimum
-target segment length, and ``\delta`` is the surgery cutoff. After this raw
+target segment length, and ``\delta`` is the surgery cutoff. The transformed
+curvature ``\tilde\kappa_j`` has inverse-length units and
+combines nonlocal curvature ``K_j`` with the large-scale length ``L``. The raw
+density ``\tilde\rho_j`` is its cutoff-saturated form; the final density
+``\rho`` below is the rescaled and spacing-clamped version. After the raw
 density is formed, it is rescaled and clamped so that the effective spacing
 stays in the interval
 
 ```math
 \mu \le \Delta s_j \le \Delta_{\max}.
 ```
+
+Here ``\Delta s_j`` is the target arclength of redistributed segment ``j`` and
+``\Delta_{\max}`` is the maximum allowed target length.
 
 New nodes are placed by equal increments of the weighted arclength measure:
 
@@ -150,9 +166,13 @@ M(s) = \int_0^s \rho(\sigma)\,d\sigma,
 M(s_k) = \frac{k}{N_{\mathrm{seg}}} M(L_c),
 ```
 
-where ``L_c`` is the contour perimeter. Instead of placing these nodes on
-straight chords, the implementation uses the same cubic interpolation arc used
-for curved-segment velocity quadrature:
+In this equation ``s\in[0,L_c]`` is arclength, ``\sigma`` is the dummy
+integration coordinate, ``\rho(\sigma)`` is node density,
+``M(s)`` is cumulative weighted arclength, ``N_{\mathrm{seg}}`` is the chosen
+number of output segments, ``L_c`` is contour perimeter, and ``s_k`` is the
+position of output node ``k``. Instead of placing these nodes on straight
+chords, the implementation uses the same cubic interpolation arc used for
+curved-segment velocity quadrature:
 
 ```math
 \mathbf{X}(p)
@@ -180,6 +200,10 @@ p\left[
 where ``e=|\mathbf{b}-\mathbf{a}|`` and ``\mathbf{n}`` is the left normal to
 the chord. If both endpoint curvatures are numerically zero, the segment reduces
 to the straight-line formula.
+Here ``\mathbf a`` and ``\mathbf b`` are chord endpoints, ``p`` is the local
+coordinate from ``\mathbf a`` to ``\mathbf b``, ``\mathbf X(p)`` is the cubic
+arc position, ``\eta(p)`` is its signed normal displacement, and
+``\kappa_a,\kappa_b`` are endpoint curvatures.
 
 For reconnection, two segment parts are considered close when the node-to-segment
 contact distance satisfies
@@ -187,6 +211,10 @@ contact distance satisfies
 ```math
 d_{\mathrm{contact}}^2 < \delta^2 .
 ```
+
+Here ``d_{\mathrm{contact}}`` is the minimum accepted node-to-opposing-segment
+distance for the candidate pair and ``\delta`` is the surgery proximity
+threshold.
 
 Same-contour contacts are split into two daughter contours. Different-contour
 contacts are merged only when the PV jumps and the locally enclosed interior
@@ -200,9 +228,12 @@ chosen resolution. The main area test is
 |A| < A_{\min},
 ```
 
-with additional cleanup for corner-labelled fragments whose effective width is
-below the remeshing scale. Spanning contours used for periodic PV staircases are
-excluded from this cleanup.
+Here ``A`` is signed enclosed contour area, ``|A|`` is its magnitude, and
+``A_{\min}`` is the minimum retained area (`area_min`).
+
+Additional cleanup removes corner-labelled fragments whose effective width is
+below the remeshing scale. Spanning contours used for periodic PV staircases
+are excluded from this cleanup.
 
 ## Node Redistribution (Remeshing)
 
@@ -241,15 +272,23 @@ well behaved, so no part of the contour becomes excessively crowded or sparse.
 For velocity evaluation, each contour segment is evaluated on the same cubic
 Dritschel arc used by redistribution. With endpoint curvatures
 ``\kappa_a`` and ``\kappa_b``, the segment is parameterized as
-``X(p) = a + p(b-a) + \eta(p)n`` for ``0 \le p \le 1``.
+``\mathbf X(p)=\mathbf a+p(\mathbf b-\mathbf a)+\eta(p)\mathbf n`` for
+``0\le p\le1``. The symbols have the definitions given under Core Equations.
 
 For Euler, the unbounded contribution uses Gauss-Legendre quadrature of the
 contour integral
-``-\frac{1}{4\pi}\int_0^1 \log|x-X(p)|^2 X'(p)\,dp`` and falls back to the
+``-\frac{1}{4\pi}\int_0^1 \log|\mathbf x-\mathbf X(p)|^2
+\mathbf X'(p)\,dp`` and falls back to the
 analytic straight-segment antiderivative when both endpoint curvatures are
 zero. QG uses the same curved Euler singular part plus quadrature of the smooth
 ``K_0(r/L_d) + \log r`` correction. SQG integrates the regularized
 ``1/\sqrt{r^2 + \epsilon^2}`` kernel along the curved tangent.
+
+Here ``\mathbf x`` is the target position, ``\mathbf X'(p)=d\mathbf X/dp`` is
+the tangent derivative, ``r=|\mathbf x-\mathbf X(p)|``, ``L_d`` is QG
+deformation radius, ``K_0`` is the modified Bessel function, and ``\epsilon``
+is the SQG regularization length (`delta_sqg`). The integration variable ``p``
+runs once along the source arc.
 
 On periodic domains, the same curved unbounded singular contribution is
 combined with the existing smooth Fourier/Ewald periodic correction, evaluated

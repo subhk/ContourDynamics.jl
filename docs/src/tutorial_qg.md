@@ -26,7 +26,10 @@ the contour integral is:
 G(r) = \frac{1}{2\pi} K_0\!\left(\frac{r}{L_d}\right)
 ```
 
-where ``K_0`` is the modified Bessel function of the second kind. Two useful limits are:
+Here ``G`` is the scalar Green's function used by the contour integral,
+``r=|\mathbf{x}-\mathbf{x}'|`` is source-target distance, ``L_d`` is the
+Rossby deformation radius (`Ld`), and ``K_0`` is the modified Bessel function
+of the second kind, order zero. Two useful limits are:
 - For ``r \ll L_d``: ``K_0(r/L_d) \approx -\log(r/L_d)``, so the kernel behaves like Euler at small scales
 - For ``r \gg L_d``: ``K_0(r/L_d)`` decays exponentially, so interactions are screened at large scales
 

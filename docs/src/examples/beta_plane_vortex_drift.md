@@ -13,9 +13,18 @@ q_\mathrm{regular}
   + (q_\mathrm{reference\ staircase} - \beta y).
 ```
 
+Here ``q_\mathrm{full\ contours}`` is the PV represented by the evolving live
+contours, ``q_\mathrm{reference\ staircase}`` is the PV of the frozen initial
+straight staircase, ``\beta`` is the planetary-PV gradient, ``y`` is the
+meridional coordinate, and ``q_\mathrm{regular}`` is the field passed to QG
+inversion after the contour/reference decomposition.
+
 That is the contour-only form of the Lam-Dritschel decomposed inversion
 ``(\nabla^2 - R_d^{-2})\psi_r = q_r - \beta y``. The beta contours remain
 material and can deform; no contour-to-grid velocity solve is introduced.
+In this inversion ``\nabla^2`` is the horizontal Laplacian, ``R_d`` is the
+deformation radius (called `Ld` by the package), ``\psi_r`` is the regular
+streamfunction, and ``q_r=q_\mathrm{regular}`` is the regular PV.
 
 The physical initial condition is equation (2.4) and case D in Table 1 of Lam &
 Dritschel (2001), plotted in their Figure 5. Their equation (2.5) sets

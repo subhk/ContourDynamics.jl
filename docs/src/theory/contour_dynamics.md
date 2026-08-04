@@ -8,7 +8,11 @@ Consider a 2D inviscid flow with piecewise-constant potential vorticity (PV). Th
 \mathcal{L}\psi = q(\mathbf{x})
 ```
 
-where ``\mathcal{L}`` is the PV inversion operator (``\nabla^2`` for Euler, ``\nabla^2 - L_d^{-2}`` for QG). The solution is:
+where ``\mathbf{x}=(x,y)`` is position, ``\psi(\mathbf{x})`` is the
+streamfunction, ``q(\mathbf{x})`` is PV (vorticity for Euler), and
+``\mathcal{L}`` is the PV inversion operator (``\nabla^2`` for Euler,
+``\nabla^2-L_d^{-2}`` for single-layer QG). Here ``\nabla^2`` is the horizontal
+Laplacian and ``L_d`` is the deformation radius. The solution is:
 
 ```math
 \psi(\mathbf{x}) = \int\!\!\int G(|\mathbf{x} - \mathbf{x}'|) \, q(\mathbf{x}') \, dA'
@@ -20,7 +24,8 @@ Here:
 - ``q(\mathbf{x}')`` is the PV field at source point ``\mathbf{x}'``
 - ``\mathbf{x}`` is the point where we want to evaluate the solution
 - ``G`` is the Green's function, meaning the response at ``\mathbf{x}`` to a unit source placed at ``\mathbf{x}'``
-- ``dA'`` means we integrate over patch area
+- ``r=|\mathbf{x}-\mathbf{x}'|`` is source-target distance
+- ``dA'`` is the area element at the source point, and the double integral covers the PV-supporting area
 
 The Green's function ``G`` gives the response at one point to a unit source at
 another point.
@@ -37,6 +42,7 @@ Here:
 - ``C`` is the patch boundary
 - ``\mathbf{x}'`` is now a point moving along that boundary
 - ``d\mathbf{x}'`` is a short tangent vector along the contour
+- ``q`` is the jump in PV across ``C``; multiple contours contribute by summing their individual jumps
 - the contour integral ``\oint_C`` means “walk once around the closed boundary”
 
 This is the contour dynamics equation: the velocity at any point depends only on the **boundary** of the PV patch, not its interior.
@@ -57,8 +63,9 @@ In this formula:
 
 - ``\mathbf{a}`` and ``\mathbf{b}`` are the endpoints of one straight contour segment
 - ``\mathbf{b}-\mathbf{a}`` is the segment direction
+- ``\mathbf{x}`` is the target position and ``\mathbf{x}'(t)=\mathbf{a}+t(\mathbf{b}-\mathbf{a})`` is the source position
 - ``t \in [0,1]`` moves from one endpoint to the other
-- ``\mathbf{v}_{\text{seg}}`` is the velocity contribution from that one segment
+- ``\mathbf{v}_{\text{seg}}`` is the unit-PV-jump velocity contribution from that one segment; the contour's stored PV jump supplies the multiplier in the full sum
 
 The full contour velocity is the sum over all segment or cubic-arc
 contributions from all contours.
@@ -82,6 +89,11 @@ The segment velocity is:
 ```math
 \mathbf{v}_{\text{seg}} = -\frac{1}{4\pi}\hat{\mathbf{t}} \left[F(u_a) - F(u_b)\right]
 ```
+
+Here ``\hat{\mathbf{t}}=(\mathbf{b}-\mathbf{a})/|\mathbf{b}-\mathbf{a}|`` is
+the unit tangent, while ``u_a`` and ``u_b`` are the signed tangent coordinates
+of endpoints ``\mathbf{a}`` and ``\mathbf{b}`` relative to the target. The
+normal coordinate ``h`` is constant along a straight segment.
 
 This straight-segment fallback is exact and introduces no quadrature error.
 
@@ -120,9 +132,11 @@ where ``\theta`` is the surface buoyancy. The Green's function is ``G(r) = 1/(2\
 \mathbf{u}(\mathbf{x}) = \frac{1}{2\pi}\oint_C \frac{d\mathbf{x}'}{|\mathbf{x}-\mathbf{x}'|}
 ```
 
-Here ``\theta`` plays the role of the active scalar, and the kernel is more
-singular than in Euler. SQG therefore tends to generate sharper fronts and
-stronger filamentation.
+Here ``(-\nabla^2)^{1/2}`` is the half-order fractional Laplacian,
+``\theta`` plays the role of the active scalar, ``r=|\mathbf{x}-\mathbf{x}'|``,
+``C`` is its patch boundary, and ``d\mathbf{x}'`` is the oriented tangent line
+element. The kernel is more singular than in Euler, so SQG tends to generate
+sharper fronts and stronger filamentation.
 
 The segment integral has a closed-form antiderivative:
 
@@ -136,12 +150,18 @@ Here:
 
 - ``\delta`` is the regularization length used by the implementation
 - ``h_{\text{eff}}`` is the regularized normal distance
+- ``\text{const}`` is an arbitrary additive integration constant, which cancels in endpoint differences
 
 For straight segments, the regularized segment velocity remains exact:
 
 ```math
 \mathbf{v}_{\text{seg}} = \frac{1}{2\pi}\hat{\mathbf{t}} \left[F(u_a) - F(u_b)\right]
 ```
+
+The tangent ``\hat{\mathbf{t}}`` and endpoint coordinates ``u_a,u_b`` have the
+same definitions as in the Euler formula above. In the Julia API this SQG
+regularization is `delta_sqg`; it is distinct from the surgery threshold also
+written ``\delta`` on the surgery page.
 
 ## References and Further Reading
 

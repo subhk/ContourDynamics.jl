@@ -38,6 +38,7 @@ makedocs(;
         ],
         "Theory & Method" => [
             "Overview" => "theory.md",
+            "Notation & Parameters" => "theory/notation.md",
             "Contour Dynamics" => "theory/contour_dynamics.md",
             "Ewald Summation" => "theory/ewald_summation.md",
             "Contour Surgery" => "theory/contour_surgery.md",

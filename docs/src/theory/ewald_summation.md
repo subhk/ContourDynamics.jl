@@ -19,6 +19,7 @@ The basic problem is this:
 In this page:
 
 - ``\mathbf{r}`` is the displacement from the source point to the target point
+- ``|\mathbf{r}|`` is its Euclidean length
 - ``G_{\text{per}}`` is the periodic Green's function
 - ``G_{\text{real}}`` is the short-range part, summed over nearby image copies
 - ``G_{\text{Fourier}}`` is the smooth long-range part, summed in Fourier space
@@ -37,10 +38,11 @@ G_{\text{real}}(\mathbf{r}) = \frac{1}{4\pi} \sum_{\mathbf{n}} E_1(\alpha^2|\mat
 
 Here:
 
-- ``E_1`` is the exponential integral
+- ``E_1(z)=\int_z^\infty e^{-t}/t\,dt`` is the exponential integral
 - ``\alpha = \sqrt{\pi}/\sqrt{L_xL_y}`` is the splitting parameter used by the implementation
-- ``\mathbf{L}_\mathbf{n} = (2nL_x, 2mL_y)`` is the lattice shift to a periodic image
-- the integers ``n`` and ``m`` label image copies of the domain
+- ``\mathbf{n}=(n,m)\in\mathbb{Z}^2`` is a two-dimensional image index
+- ``\mathbf{L}_\mathbf{n} = (2nL_x, 2mL_y)`` is the corresponding lattice shift
+- ``\sum_{\mathbf n}`` is the image sum, truncated in code by `n_images`
 
 This real-space sum contains the short-range part of the interaction. Because of
 the Gaussian damping introduced by Ewald splitting, contributions from distant
@@ -56,9 +58,12 @@ G_{\text{Fourier}}(\mathbf{r}) = \frac{1}{A} \sum_{\mathbf{k} \neq 0} \frac{e^{-
 Here:
 
 - ``\mathbf{k}`` is a Fourier wavevector on the periodic domain
+- specifically, ``\mathbf{k}=(\pi p/L_x,\pi s/L_y)`` for integer mode indices ``p`` and ``s``
 - ``\mathbf{k}\cdot\mathbf{r}`` is the usual Fourier phase
+- ``|\mathbf{k}|^2=k_x^2+k_y^2`` is the squared wavenumber
 - the term ``\mathbf{k} \neq 0`` excludes the zero mode
 - the Gaussian factor ``e^{-|\mathbf{k}|^2/(4\alpha^2)}`` makes the Fourier sum converge rapidly
+- the sum is truncated in code by `n_fourier`
 
 This Fourier-space sum represents the smooth long-range part of the periodic
 interaction. It is the part that would be awkward to compute accurately by
@@ -84,13 +89,15 @@ For the QG kernel on a periodic domain, we decompose:
 G_{\text{QG,per}} = G_{\text{Euler,per}} - \underbrace{\frac{1}{A}\sum_{\mathbf{k}\neq 0} \frac{\kappa^2}{|\mathbf{k}|^2(|\mathbf{k}|^2 + \kappa^2)}\cos(\mathbf{k}\cdot\mathbf{r})}_{\text{smooth QG correction}}
 ```
 
-Here ``\kappa = 1/L_d`` is the inverse deformation radius. The key idea is that
-the QG periodic kernel can be written as:
+Here ``G_{\text{QG,per}}`` and ``G_{\text{Euler,per}}`` are the periodic QG
+and Euler Green's functions, ``\kappa=1/L_d`` is inverse deformation radius,
+and ``A``, ``\mathbf{k}``, and ``\mathbf{r}`` retain their definitions above.
+The key idea is that the QG periodic kernel can be written as:
 
 - an Euler-like periodic part, which already has a validated Ewald treatment
 - a smooth correction, which is easier to evaluate as a Fourier series
 
-That correction decays like ``1/k^4``, so it converges much faster than the
+That correction decays like ``|\mathbf{k}|^{-4}``, so it converges much faster than the
 raw periodic Green's function would.
 
 ## SQG Periodic Decomposition
@@ -100,6 +107,13 @@ For the SQG kernel ``G(r) = 1/(2\pi r)`` on a periodic domain, the Ewald splitti
 ```math
 \sum_{\mathbf{n}} \frac{1}{|\mathbf{r} - \mathbf{L}_\mathbf{n}|} = \sum_{\mathbf{n}} \frac{\operatorname{erfc}(\alpha|\mathbf{r} - \mathbf{L}_\mathbf{n}|)}{|\mathbf{r} - \mathbf{L}_\mathbf{n}|} + \frac{2\pi}{A}\sum_{\mathbf{k}\neq 0} \frac{\operatorname{erfc}(|\mathbf{k}|/(2\alpha))}{|\mathbf{k}|}\cos(\mathbf{k}\cdot\mathbf{r})
 ```
+
+The image index ``\mathbf n``, lattice shift ``\mathbf L_{\mathbf n}``,
+wavevector ``\mathbf k``, splitting parameter ``\alpha``, and area ``A`` are
+defined above. The complementary error function is
+``\operatorname{erfc}(z)=1-\operatorname{erf}(z)``. Both sums omit terms only
+through the configured finite `n_images` and `n_fourier` truncations; the
+displayed equation is the infinite-sum identity.
 
 The Fourier coefficients contain an ``\operatorname{erfc}(|\mathbf{k}|/(2\alpha))`` damping factor and a leading ``1/|\mathbf{k}|`` behavior (compared to ``1/k^2`` for Euler), reflecting the fractional Laplacian's half-order nature. In practical terms, this means SQG is less smooth than Euler in Fourier space and therefore needs a bit more care numerically.
 
@@ -113,6 +127,10 @@ The central-image correction is evaluated with the regularized radius
 ``-\operatorname{erf}(\alpha r_\delta)/r_\delta`` after subtracting the
 regularized unbounded contribution. This keeps the correction bounded even for
 near-coincident quadrature points.
+
+Here ``r=|\mathbf r|``, ``r_\delta`` is the regularized distance, and
+``\delta`` is `SQGKernel.delta` (the `delta_sqg` constructor keyword), not the
+independent contour-surgery threshold.
 
 ## References and Further Reading
 

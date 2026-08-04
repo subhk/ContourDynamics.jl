@@ -143,7 +143,7 @@ agree on precision.
 2. call `timestep!`
 3. wrap nodes for periodic domains
 4. optionally run `surgery!`
-5. resize buffers if surgery changed node counts
+5. synchronize every stepper work buffer with the post-surgery node count
 6. run callbacks for the new step
 
 The low-level flat-buffer packing/scattering helpers live in

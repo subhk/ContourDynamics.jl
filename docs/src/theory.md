@@ -13,6 +13,10 @@ implementation and defines the main symbols as they appear. For example:
 - ``\mathbf{x}'`` is an integration point on a contour or in an area integral
 - ``C`` is a contour boundary
 
+The complete cross-page reference is [Notation and Parameter
+Glossary](theory/notation.md). Every theory page also defines symbols beside
+the equation in which they first appear.
+
 For the core formulation, start with
 [Contour Dynamics](theory/contour_dynamics.md). Numerical details for periodic
 domains, surgery, and multi-layer QG are covered in the topic pages listed in
@@ -21,6 +25,7 @@ the sidebar.
 The left sidebar provides direct access to each topic:
 
 - [Contour Dynamics](theory/contour_dynamics.md)
+- [Notation and Parameter Glossary](theory/notation.md)
 - [Ewald Summation](theory/ewald_summation.md)
 - [Contour Surgery](theory/contour_surgery.md)
 - [Multi-Layer QG](theory/multilayer_qg.md)
@@ -28,6 +33,14 @@ The left sidebar provides direct access to each topic:
 - [References](theory/references.md)
 
 ## Topic Guide
+
+### Notation and Parameters
+
+Maps every recurring equation symbol to its physical meaning and corresponding
+Julia field or keyword, including kernel, Ewald, surgery, time-integration,
+multi-layer, and beta-plane parameters.
+
+Open: [Notation and Parameter Glossary](theory/notation.md)
 
 ### Contour Dynamics
 

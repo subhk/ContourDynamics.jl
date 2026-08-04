@@ -2,23 +2,31 @@
 
 ## Modal Decomposition
 
-For an ``N``-layer QG system, the PV in each layer is coupled to the streamfunction via the coupling matrix ``\mathbf{C}``:
+For an ``N``-layer QG system, PV inversion combines the horizontal Laplacian in
+each layer with a layer-stretching matrix ``\mathbf{C}``:
 
 ```math
-q_i = \sum_j C_{ij} \psi_j
+q_i = \nabla^2\psi_i + \sum_{j=1}^{N} C_{ij}\psi_j,
+\qquad i=1,\ldots,N.
 ```
 
 Here:
 
+- ``N`` is the number of physical layers
+- ``i`` is the affected-layer index and ``j`` is the source-layer index
 - ``q_i`` is the PV in layer ``i``
 - ``\psi_j`` is the streamfunction in layer ``j``
+- ``\nabla^2`` is the horizontal Laplacian, acting on ``\psi_i``
 - ``C_{ij}`` measures how strongly layer ``j`` influences layer ``i``
 - ``\mathbf{C}`` is the full layer-coupling matrix
 
 Instead of evolving that coupled system directly, the implementation changes
 basis into independent vertical modes.
 
-The coupling matrix is diagonalized: ``\mathbf{C} = \mathbf{P}\mathbf{\Lambda}\mathbf{P}^{-1}``. Each eigenmode with eigenvalue ``\lambda_m`` evolves independently:
+The symmetric coupling matrix is diagonalized as
+``\mathbf{C}=\mathbf{P}\mathbf{\Lambda}\mathbf{P}^{-1}``, where
+``\mathbf{\Lambda}=\operatorname{diag}(\lambda_1,\ldots,\lambda_N)``. Each
+eigenmode ``m`` evolves independently:
 
 - If ``|\lambda_m| \approx 0``: **barotropic mode** — uses the Euler kernel
 - Otherwise: ``L_d^{(\text{mode})} = 1/\sqrt{|\lambda_m|}`` — uses a QG kernel
@@ -26,9 +34,15 @@ The coupling matrix is diagonalized: ``\mathbf{C} = \mathbf{P}\mathbf{\Lambda}\m
 Here:
 
 - ``\mathbf{P}`` contains the eigenvectors
+- ``\mathbf{P}^{-1}`` transforms physical-layer fields into modal fields (for the symmetric matrices accepted by the package, ``\mathbf{P}^{-1}=\mathbf{P}^{\mathsf T}``)
 - ``\mathbf{\Lambda}`` is the diagonal matrix of eigenvalues
 - ``\lambda_m`` is the eigenvalue for mode ``m``
 - ``L_d^{(\text{mode})}`` is the deformation radius associated with that mode
+
+The public `Ld` argument contains the ``N-1`` nonbarotropic modal radii. The
+constructor verifies that they equal ``1/\sqrt{|\lambda_m|}`` for the nonzero
+eigenvalues of `coupling`; the approximately zero eigenvalue is the barotropic
+Euler mode.
 
 The velocity in physical layers is recovered by projecting back through the
 eigenvector matrix. In practical terms, the code solves a set of uncoupled
