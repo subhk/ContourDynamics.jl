@@ -51,47 +51,47 @@
  [0.0, 0.0]
  [0.0, 0.0]
  [0.0, 0.0]</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; velocity!(vel_euler, prob_euler)</code><code class="nohighlight hljs ansi" style="display:block;">32-element Vector{StaticArraysCore.SVector{2, Float64}}:
- [1.0408340855860843e-17, 0.49867841499557153]
- [-0.09728733256397847, 0.4890964490824702]
- [-0.190835967496888, 0.4607187809195781]
- [-0.2770508832209356, 0.41463594838001555]
- [-0.352618888874728, 0.35261888887472803]
- [-0.4146359483800156, 0.27705088322093563]
- [-0.460718780919578, 0.190835967496888]
- [-0.4890964490824702, 0.0972873325639785]
- [-0.4986784149955715, 5.0306980803327406e-17]
- [-0.4890964490824701, -0.09728733256397847]
+ [-8.066464163292153e-17, 0.4999824361543018]
+ [-0.097541734471751, 0.4903754138402872]
+ [-0.1913349947897876, 0.46192353937809083]
+ [-0.27777535855995383, 0.4157202023472995]
+ [-0.35354097107887683, 0.35354097107887694]
+ [-0.41572020234729923, 0.27777535855995383]
+ [-0.4619235393780906, 0.19133499478978744]
+ [-0.490375413840287, 0.09754173447175112]
+ [-0.49998243615430177, 2.42861286636753e-17]
+ [-0.4903754138402871, -0.097541734471751]
  ⋮
- [0.48909644908247013, -0.0972873325639787]
- [0.49867841499557153, -1.1622647289044608e-16]
- [0.4890964490824701, 0.09728733256397853]
- [0.46071878091957813, 0.19083596749688808]
- [0.4146359483800158, 0.2770508832209354]
- [0.352618888874728, 0.35261888887472786]
- [0.27705088322093563, 0.41463594838001566]
- [0.19083596749688828, 0.46071878091957796]
- [0.0972873325639787, 0.4890964490824701]</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; velocity!(vel_qg, prob_qg)</code><code class="nohighlight hljs ansi" style="display:block;">32-element Vector{StaticArraysCore.SVector{2, Float64}}:
- [-5.204170427930421e-18, 0.4258662544681423]
- [-0.08308238471999226, 0.4176833538028104]
- [-0.16297195998833344, 0.39344911609035993]
- [-0.23659861423005105, 0.3540948494953634]
- [-0.3011329164129393, 0.3011329164129393]
- [-0.35409484949536346, 0.23659861423005096]
- [-0.39344911609036026, 0.16297195998833347]
- [-0.41768335380281046, 0.08308238471999237]
- [-0.4258662544681423, 5.898059818321144e-17]
- [-0.4176833538028106, -0.0830823847199922]
+ [0.49037541384028716, -0.0975417344717512]
+ [0.4999824361543019, 5.898059818321144e-17]
+ [0.49037541384028727, 0.09754173447175107]
+ [0.4619235393780906, 0.19133499478978774]
+ [0.4157202023472995, 0.2777753585599537]
+ [0.353540971078877, 0.35354097107887694]
+ [0.27777535855995394, 0.4157202023472995]
+ [0.19133499478978783, 0.4619235393780905]
+ [0.09754173447175123, 0.4903754138402872]</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; velocity!(vel_qg, prob_qg)</code><code class="nohighlight hljs ansi" style="display:block;">32-element Vector{StaticArraysCore.SVector{2, Float64}}:
+ [2.42861286636753e-17, 0.4271702756268726]
+ [-0.08333678662776474, 0.4189623185606276]
+ [-0.1634709872812331, 0.3946538745488726]
+ [-0.23732308956906933, 0.35517910346264725]
+ [-0.30205499861708823, 0.30205499861708823]
+ [-0.3551791034626473, 0.23732308956906925]
+ [-0.39465387454887263, 0.16347098728123305]
+ [-0.4189623185606275, 0.08333678662776497]
+ [-0.42717027562687276, 6.938893903907228e-18]
+ [-0.41896231856062754, -0.08333678662776482]
  ⋮
- [0.4176833538028105, -0.0830823847199925]
- [0.42586625446814247, -1.1449174941446927e-16]
- [0.4176833538028106, 0.08308238471999237]
- [0.39344911609036004, 0.1629719599883336]
- [0.3540948494953636, 0.2365986142300509]
- [0.30113291641293943, 0.3011329164129392]
- [0.23659861423005107, 0.3540948494953634]
- [0.16297195998833375, 0.39344911609035993]
- [0.08308238471999248, 0.4176833538028105]</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; # Compare speeds at the first node
-       speed_euler = sqrt(vel_euler[1][1]^2 + vel_euler[1][2]^2)</code><code class="nohighlight hljs ansi" style="display:block;">0.49867841499557153</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; speed_qg = sqrt(vel_qg[1][1]^2 + vel_qg[1][2]^2)</code><code class="nohighlight hljs ansi" style="display:block;">0.4258662544681423</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Euler speed: $(round(speed_euler; digits=6))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">Euler speed: 0.498678</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;QG speed (Ld=$Ld): $(round(speed_qg; digits=6))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">QG speed (Ld=2.0): 0.425866</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Ratio: $(round(speed_qg / speed_euler; digits=6))&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">Ratio: 0.85399</code></pre><p>This comparison illustrates the role of <code>Ld</code>:</p><ul><li>large <code>Ld</code> means weak screening, so QG looks close to Euler</li><li>smaller <code>Ld</code> means stronger screening, so distant interactions weaken</li></ul><h3 id="Evolving-a-QG-Vortex"><a class="docs-heading-anchor" href="#Evolving-a-QG-Vortex">Evolving a QG Vortex</a><a id="Evolving-a-QG-Vortex-1"></a><a class="docs-heading-anchor-permalink" href="#Evolving-a-QG-Vortex" title="Permalink"></a></h3><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; evolve!(prob; nsteps=5)</code><code class="nohighlight hljs ansi" style="display:block;">Problem
+ [0.4189623185606276, -0.08333678662776503]
+ [0.4271702756268727, 3.8163916471489756e-17]
+ [0.4189623185606276, 0.08333678662776489]
+ [0.3946538745488726, 0.16347098728123324]
+ [0.3551791034626473, 0.2373230895690692]
+ [0.3020549986170883, 0.30205499861708823]
+ [0.2373230895690694, 0.3551791034626473]
+ [0.16347098728123333, 0.39465387454887246]
+ [0.08333678662776502, 0.41896231856062754]</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; # Compare speeds at the first node
+       speed_euler = sqrt(vel_euler[1][1]^2 + vel_euler[1][2]^2)</code><code class="nohighlight hljs ansi" style="display:block;">0.4999824361543018</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; speed_qg = sqrt(vel_qg[1][1]^2 + vel_qg[1][2]^2)</code><code class="nohighlight hljs ansi" style="display:block;">0.4271702756268726</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Euler speed: $(round(speed_euler; digits=6))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">Euler speed: 0.499982</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;QG speed (Ld=$Ld): $(round(speed_qg; digits=6))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">QG speed (Ld=2.0): 0.42717</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Ratio: $(round(speed_qg / speed_euler; digits=6))&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">Ratio: 0.854371</code></pre><p>This comparison illustrates the role of <code>Ld</code>:</p><ul><li>large <code>Ld</code> means weak screening, so QG looks close to Euler</li><li>smaller <code>Ld</code> means stronger screening, so distant interactions weaken</li></ul><h3 id="Evolving-a-QG-Vortex"><a class="docs-heading-anchor" href="#Evolving-a-QG-Vortex">Evolving a QG Vortex</a><a id="Evolving-a-QG-Vortex-1"></a><a class="docs-heading-anchor-permalink" href="#Evolving-a-QG-Vortex" title="Permalink"></a></h3><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; evolve!(prob; nsteps=5)</code><code class="nohighlight hljs ansi" style="display:block;">Problem
 ├── ContourProblem{QGKernel, UnboundedDomain, Float64}
 ├── RK4Stepper{Float64}: dt = 0.05
 └── surgery: δ=0.005, μ=0.02, Δ_max=0.2, every 5 steps</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; # QG also conserves circulation and energy
@@ -137,7 +137,7 @@
                       Ld=Ld, coupling=coupling)</code><code class="nohighlight hljs ansi" style="display:block;">Problem
 ├── MultiLayerContourProblem{2, UnboundedDomain, Float64}
 ├── RK4Stepper{Float64}: dt = 0.01
-└── surgery: δ=0.005, μ=0.02, Δ_max=0.2, every 5 steps</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Total nodes: $(total_nodes(prob))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">Total nodes: 32</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Layers: $(nlayers(prob))&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">Layers: 2</code></pre><p>This is the multi-layer analogue of the earlier single-layer <code>Problem</code> call: the only extra pieces are the <code>layers</code> tuple, <code>Ld</code>, and the coupling matrix.</p><h3 id="Evolving-the-Multi-Layer-System"><a class="docs-heading-anchor" href="#Evolving-the-Multi-Layer-System">Evolving the Multi-Layer System</a><a id="Evolving-the-Multi-Layer-System-1"></a><a class="docs-heading-anchor-permalink" href="#Evolving-the-Multi-Layer-System" title="Permalink"></a></h3><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; energy0 = energy(prob)</code><code class="nohighlight hljs ansi" style="display:block;">0.3241956067146972</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; circulation0 = circulation(prob)</code><code class="nohighlight hljs ansi" style="display:block;">4.903154579458687</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; evolve!(prob; nsteps=5)</code><code class="nohighlight hljs ansi" style="display:block;">Problem
+└── surgery: δ=0.005, μ=0.02, Δ_max=0.2, every 5 steps</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Total nodes: $(total_nodes(prob))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">Total nodes: 32</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Layers: $(nlayers(prob))&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">Layers: 2</code></pre><p>This is the multi-layer analogue of the earlier single-layer <code>Problem</code> call: the only extra pieces are the <code>layers</code> tuple, <code>Ld</code>, and the coupling matrix.</p><h3 id="Evolving-the-Multi-Layer-System"><a class="docs-heading-anchor" href="#Evolving-the-Multi-Layer-System">Evolving the Multi-Layer System</a><a id="Evolving-the-Multi-Layer-System-1"></a><a class="docs-heading-anchor-permalink" href="#Evolving-the-Multi-Layer-System" title="Permalink"></a></h3><pre><code class="language-julia-repl hljs" style="display:block;">julia&gt; energy0 = energy(prob)</code><code class="nohighlight hljs ansi" style="display:block;">-2.6201563809509487</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; circulation0 = circulation(prob)</code><code class="nohighlight hljs ansi" style="display:block;">4.903154579458687</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; evolve!(prob; nsteps=5)</code><code class="nohighlight hljs ansi" style="display:block;">Problem
 ├── MultiLayerContourProblem{2, UnboundedDomain, Float64}
 ├── RK4Stepper{Float64}: dt = 0.01
-└── surgery: δ=0.005, μ=0.02, Δ_max=0.2, every 5 steps</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Energy change: $(round(abs(energy(prob) - energy0) / abs(energy0); digits=8))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">Energy change: 0.0</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Circulation change: $(round(abs(circulation(prob) - circulation0) / abs(circulation0); digits=8))&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">Circulation change: 0.0</code></pre><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li><a href="../examples/">Examples</a> for complete runnable scripts</li><li><a href="../theory/">Theory overview</a>, <a href="../theory/ewald_summation/">Ewald Summation</a>, or <a href="../theory/multilayer_qg/">Multi-Layer QG</a> for the underlying mathematics</li><li><a href="../api/">API overview</a> for the relevant functions and types</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../tutorial_euler/">« 2D Euler Vortex Patch</a><a class="docs-footer-nextpage" href="../examples/">Overview »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 4 August 2026 17:28">Tuesday 4 August 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+└── surgery: δ=0.005, μ=0.02, Δ_max=0.2, every 5 steps</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Energy change: $(round(abs(energy(prob) - energy0) / abs(energy0); digits=8))&quot;)</code><code class="nohighlight hljs ansi" style="display:block;">Energy change: 0.0</code><br/><code class="language-julia-repl hljs" style="display:block;">julia&gt; println(&quot;Circulation change: $(round(abs(circulation(prob) - circulation0) / abs(circulation0); digits=8))&quot;);</code><code class="nohighlight hljs ansi" style="display:block;">Circulation change: 0.0</code></pre><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li><a href="../examples/">Examples</a> for complete runnable scripts</li><li><a href="../theory/">Theory overview</a>, <a href="../theory/ewald_summation/">Ewald Summation</a>, or <a href="../theory/multilayer_qg/">Multi-Layer QG</a> for the underlying mathematics</li><li><a href="../api/">API overview</a> for the relevant functions and types</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../tutorial_euler/">« 2D Euler Vortex Patch</a><a class="docs-footer-nextpage" href="../examples/">Overview »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 4 August 2026 18:00">Tuesday 4 August 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
