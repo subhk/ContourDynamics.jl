@@ -22,6 +22,34 @@ function _beta_plane_sawtooth_velocity(beta, Ld, domain, n_beta, x)
     return SVector(Float64(u), 0.0)
 end
 
+# Direct Fourier evaluation of the periodic Helmholtz contour integral. This
+# bypasses both the Ewald implementation and the beta-plane composition code,
+# so it provides an independent end-to-end reference for deformed staircases.
+function _beta_plane_fourier_contour_velocity(Ld, domain, contours, x; modes=240)
+    area = 4 * domain.Lx * domain.Ly
+    kappa2 = inv(Ld)^2
+    velocity = zero(SVector{2,Float64})
+    for c in contours
+        for i in 1:nnodes(c)
+            a = c.nodes[i]
+            b = ContourDynamics.next_node(c, i)
+            ds = b - a
+            for m in -modes:modes, n in -modes:modes
+                (m == 0 && n == 0) && continue
+                kx = π * m / domain.Lx
+                ky = π * n / domain.Ly
+                k_dot_ds = kx * ds[1] + ky * ds[2]
+                phase = kx * (x[1] - a[1]) + ky * (x[2] - a[2])
+                segment_average = abs(k_dot_ds) < 1e-13 ? cos(phase) :
+                    (sin(phase) - sin(phase - k_dot_ds)) / k_dot_ds
+                velocity += c.pv * ds * segment_average /
+                            (area * (kx^2 + ky^2 + kappa2))
+            end
+        end
+    end
+    return velocity
+end
+
 @testset "Beta-plane contour QG kernel" begin
     beta = 1.0
     Ld = 1.0
@@ -30,12 +58,22 @@ end
     staircase = beta_staircase(beta, domain, n_beta; nodes_per_contour=8)
 
     kernel = BetaPlaneQGKernel(beta, Ld, staircase)
+    @test_throws ArgumentError BetaPlaneQGKernel(NaN, Ld, staircase)
+    @test_throws ArgumentError BetaPlaneQGKernel(Inf, Ld, staircase)
     @test kernel.beta == beta
     @test kernel.Ld == Ld
     @test length(kernel.reference_contours) == n_beta
     @test kernel.reference_contours[1].nodes == staircase[1].nodes
     @test kernel.reference_contours[1].nodes !== staircase[1].nodes
     @test [c.nodes[1][2] for c in staircase] ≈ [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]
+
+    negative_staircase = beta_staircase(-beta, domain, n_beta; nodes_per_contour=8)
+    negative_kernel = BetaPlaneQGKernel(-beta, Ld, negative_staircase)
+    sign_probe = SVector(0.11, 0.27)
+    @test negative_staircase[1].pv == -staircase[1].pv
+    @test ContourDynamics._beta_plane_sawtooth_velocity(
+        negative_kernel, domain, sign_probe) ≈
+        -ContourDynamics._beta_plane_sawtooth_velocity(kernel, domain, sign_probe)
 
     straight = ContourProblem(kernel, domain, _copy_contours_for_test(staircase))
     vel = fill(SVector(0.0, 0.0), total_nodes(straight))
@@ -104,6 +142,54 @@ end
 
     @test_throws ArgumentError ContourProblem(kernel, UnboundedDomain(),
                                               _copy_contours_for_test(staircase))
+end
+
+@testset "Deformed beta staircase matches direct physical Fourier inversion" begin
+    beta = 0.7
+    Ld = 0.85
+    domain = PeriodicDomain(2.2, 1.7)
+    n_beta = 4
+    raw_reference = beta_staircase(beta, domain, n_beta; nodes_per_contour=10)
+    reference = [PVContour(copy(c.nodes), c.pv, c.wrap, trues(nnodes(c)))
+                 for c in raw_reference]
+
+    # Deform every material full-PV interface smoothly and add an independent
+    # polygonal PV anomaly. Mark every node as a corner so the implementation
+    # and the Fourier reference both represent exactly the same straight panels.
+    live = PVContour{Float64}[]
+    for (j, c) in pairs(reference)
+        nodes = [SVector(p[1], p[2] + 0.055cos(π * p[1] / domain.Lx + 0.4j))
+                 for p in c.nodes]
+        push!(live, PVContour(nodes, c.pv, c.wrap, trues(length(nodes))))
+    end
+    anomaly_nodes = [SVector(-0.48, -0.24), SVector(-0.12, -0.31),
+                     SVector(0.08, -0.04), SVector(-0.15, 0.19),
+                     SVector(-0.53, 0.07)]
+    push!(live, PVContour(anomaly_nodes, -0.43, zero(SVector{2,Float64}),
+                          trues(length(anomaly_nodes))))
+
+    kernel = BetaPlaneQGKernel(beta, Ld, reference)
+    prob = ContourProblem(kernel, domain, deepcopy(live))
+    # Stay well away from PV discontinuities so the truncated Fourier series
+    # is a rapidly convergent reference rather than a Gibbs-limited one.
+    probe = SVector(0.63, 0.02)
+    clear_ewald_cache!()
+    setup_ewald_cache!(domain, QGKernel(Ld); n_fourier=64, n_images=5)
+
+    contour_reference =
+        _beta_plane_fourier_contour_velocity(Ld, domain, live, probe) -
+        _beta_plane_fourier_contour_velocity(Ld, domain, reference, probe)
+    sawtooth_reference = _beta_plane_sawtooth_velocity(
+        beta, Ld, domain, n_beta, probe)
+    expected = contour_reference + sawtooth_reference
+    actual = velocity(prob, probe)
+    @test norm(actual - expected) / norm(expected) < 1e-4
+
+    state = DeviceContourState(deepcopy(live), CPU())
+    device_actual = ContourDynamics._ka_velocity_at_state(
+        state, kernel, domain, probe, CPU())
+    @test device_actual ≈ actual rtol=2e-12 atol=2e-12
+    clear_ewald_cache!()
 end
 
 @testset "Beta-plane sawtooth jet is accurate at all deformation radii" begin

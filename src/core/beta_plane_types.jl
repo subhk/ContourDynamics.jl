@@ -33,6 +33,7 @@ struct BetaPlaneQGKernel{T<:AbstractFloat} <: AbstractKernel
     reference_contours::Vector{PVContour{T}}
     function BetaPlaneQGKernel(beta::T, Ld::T,
                                reference_contours::Vector{PVContour{T}}) where {T<:AbstractFloat}
+        isfinite(beta) || throw(ArgumentError("Planetary PV gradient beta must be finite, got $beta"))
         Ld > zero(T) || throw(ArgumentError("Deformation radius Ld must be positive, got $Ld"))
         all(is_spanning, reference_contours) || throw(ArgumentError(
             "BetaPlaneQGKernel reference_contours must all be spanning beta-staircase contours."))

@@ -571,7 +571,7 @@ function remesh(c::PVContour{T}, params::SurgeryParams;
 end
 
 """
-    beta_staircase(beta, domain::PeriodicDomain, n_beta; T=Float64)
+    beta_staircase(beta, domain::PeriodicDomain, n_beta; nodes_per_contour=64)
 
 Create spanning contours that discretize the background PV gradient `βy`
 into a PV staircase on a periodic domain.
@@ -585,6 +585,7 @@ rightmost node back to the leftmost node shifted by one period.
 """
 function beta_staircase(beta::T, domain::PeriodicDomain{T}, n_beta::Int;
                         nodes_per_contour::Int=64) where {T}
+    isfinite(beta) || throw(ArgumentError("beta must be finite, got $beta"))
     nodes_per_contour >= 3 || throw(ArgumentError("nodes_per_contour must be >= 3, got $nodes_per_contour"))
     n_beta >= 2 || throw(ArgumentError("n_beta must be >= 2, got $n_beta"))
     Lx, Ly = domain.Lx, domain.Ly

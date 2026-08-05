@@ -136,6 +136,8 @@ using Test, ContourDynamics, StaticArrays
 
     @testset "beta_staircase validation" begin
         domain = PeriodicDomain(1.0, 1.0)
+        @test_throws ArgumentError beta_staircase(NaN, domain, 4)
+        @test_throws ArgumentError beta_staircase(Inf, domain, 4)
         @test_throws ArgumentError beta_staircase(1.0, domain, 1)   # n_beta < 2
         @test_throws ArgumentError beta_staircase(1.0, domain, 4; nodes_per_contour=2)  # < 3
     end
