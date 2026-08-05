@@ -27,7 +27,7 @@ end
 @inline function _periodic_euler_zero_mode(cache::EwaldCache{T},
                                            domain::PeriodicDomain{T}) where {T}
     area = T(4) * domain.Lx * domain.Ly
-    return one(T) / (T(4) * cache.alpha^2 * area)
+    return one(T) / (T(4) * cache.α^2 * area)
 end
 
 """
@@ -132,20 +132,20 @@ end
 Velocity at point `x` from segment `a→b` in a periodic domain using the SQG kernel.
 
 Uses singular subtraction: the regularized unbounded SQG velocity (exact arcsinh
-antiderivative with ``\\delta > 0``) handles the ``1/r`` singularity analytically, and the
+antiderivative with ``\\δ > 0``) handles the ``1/r`` singularity analytically, and the
 smooth periodic correction ``G_{\\text{per}} - G_\\infty`` is integrated with 5-point
 Gauss-Legendre quadrature.
 
 The periodic correction decomposes as:
-- Central-image real-space: ``-(1/(2\\pi))\\operatorname{erf}(\\alpha r)/r``
+- Central-image real-space: ``-(1/(2\\pi))\\operatorname{erf}(\\α r)/r``
 - Non-central real-space: the unregularized Ewald term plus
-  ``(1/(2\\pi))(1/r_\\delta-1/r)``, where
-  ``r_\\delta = \\sqrt{r^2+\\delta^2}``
+  ``(1/(2\\pi))(1/r_\\δ-1/r)``, where
+  ``r_\\δ = \\sqrt{r^2+\\δ^2}``
 - Fourier space: ``(1/(2\\pi)) \\sum c_k \\cos(\\mathbf{k}\\cdot\\mathbf{r})``
-  with ``c_k = (2\\pi/|k|) \\operatorname{erfc}(|k|/(2\\alpha))/A``
+  with ``c_k = (2\\pi/|k|) \\operatorname{erfc}(|k|/(2\\α))/A``
 
 This is the Ewald sum of the regularized kernel over every periodic image.  The
-central correction has the finite limit ``-2\\alpha/\\sqrt{\\pi}`` at ``r=0``.
+central correction has the finite limit ``-2\\α/\\sqrt{\\pi}`` at ``r=0``.
 """
 function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
@@ -184,10 +184,10 @@ end
 @inline function _periodic_euler_green_correction(::EulerKernel, domain::PeriodicDomain{T},
                                           cache::EwaldCache{T},
                                           x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
-    alpha = cache.alpha
+    α = cache.α
     Lx, Ly = domain.Lx, domain.Ly
     inv4pi = one(T) / (4 * T(π))
-    gamma_euler = T(Base.MathConstants.eulergamma)
+    γ_euler = T(Base.MathConstants.eulergamma)
     zero_mode = _periodic_euler_zero_mode(cache, domain)
 
     r_vec0 = x - s_pt
@@ -200,12 +200,12 @@ end
             r2 = r_vec[1]^2 + r_vec[2]^2
             if px == 0 && py == 0
                 if r2 > eps(T)
-                    G_corr += inv4pi * (_expint_e1(alpha^2 * r2) + log(r2))
+                    G_corr += inv4pi * (_expint_e1(α^2 * r2) + log(r2))
                 else
-                    G_corr += inv4pi * (-gamma_euler - 2 * log(alpha))
+                    G_corr += inv4pi * (-γ_euler - 2 * log(α))
                 end
             elseif r2 > eps(T)
-                G_corr += inv4pi * _expint_e1(alpha^2 * r2)
+                G_corr += inv4pi * _expint_e1(α^2 * r2)
             end
         end
     end
@@ -259,8 +259,8 @@ end
 @inline function _periodic_sqg_green_correction(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                         cache::EwaldCache{T},
                                         x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
-    alpha = cache.alpha
-    delta_sq = kernel.delta^2
+    α = cache.α
+    δ_sq = kernel.δ^2
     Lx, Ly = domain.Lx, domain.Ly
     inv2pi = one(T) / (2 * T(π))
 
@@ -273,14 +273,14 @@ end
             r_vec = r_vec0 - shift
             r2 = r_vec[1]^2 + r_vec[2]^2
             if px == 0 && py == 0
-                G_corr -= inv2pi * _sqg_erf_over_r(alpha, r2)
+                G_corr -= inv2pi * _sqg_erf_over_r(α, r2)
             elseif r2 > eps(T)
                 r = sqrt(r2)
-                r_reg = sqrt(r2 + delta_sq)
+                r_reg = sqrt(r2 + δ_sq)
                 # erfc(αr)/r + (1/rδ - 1/r), written so the softening
                 # adjustment does not lose precision when δ ≪ r.
-                softening = -delta_sq / (r * r_reg * (r + r_reg))
-                G_corr += inv2pi * (erfc(alpha * r) / r + softening)
+                softening = -δ_sq / (r * r_reg * (r + r_reg))
+                G_corr += inv2pi * (erfc(α * r) / r + softening)
             end
         end
     end
@@ -303,12 +303,12 @@ end
     return G_corr
 end
 
-@inline function _sqg_erf_over_r(alpha::T, r2::T) where {T}
+@inline function _sqg_erf_over_r(α::T, r2::T) where {T}
     if r2 > eps(T)^2
         r = sqrt(r2)
-        return erf(alpha * r) / r
+        return erf(α * r) / r
     end
-    return T(2) * alpha / sqrt(T(π))
+    return T(2) * α / sqrt(T(π))
 end
 
 function curved_segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},

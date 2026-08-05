@@ -57,7 +57,7 @@ end
 
 Base.@constprop :aggressive function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling,
                                                    layer_thicknesses,
-                                                   delta_sqg::Real, beta::Real) where {T}
+                                                   δ_sqg::Real, beta::Real) where {T}
     # Normalize all numeric inputs to the problem float type here. Downstream
     # kernel constructors deliberately enforce type consistency with contours.
     layer_thicknesses !== nothing && kernel !== :multilayer_qg && throw(ArgumentError(
@@ -72,8 +72,8 @@ Base.@constprop :aggressive function _build_kernel(::Type{T}, kernel::Symbol, Ld
         isnan(beta) && throw(ArgumentError("kernel=:beta_plane_qg requires `beta`."))
         return BetaPlaneQGKernel(T(beta), T(Ld), PVContour{T}[])
     elseif kernel === :sqg
-        isnan(delta_sqg) && throw(ArgumentError("kernel=:sqg requires `delta_sqg` (regularization length)."))
-        return SQGKernel(T(delta_sqg))
+        isnan(δ_sqg) && throw(ArgumentError("kernel=:sqg requires `δ_sqg` (regularization length)."))
+        return SQGKernel(T(δ_sqg))
     elseif kernel === :multilayer_qg
         Ld === nothing && throw(ArgumentError("kernel=:multilayer_qg requires `Ld` (deformation radii)."))
         coupling === nothing && throw(ArgumentError("kernel=:multilayer_qg requires `coupling` (layer coupling matrix)."))
@@ -167,7 +167,7 @@ Use `contours=Vector{PVContour}` for single-layer Euler/QG/SQG problems, or
 `layers=(layer1, layer2, ...)` with `kernel=:multilayer_qg` for multi-layer QG.
 Periodic domains require `domain=:periodic, Lx=..., Ly=...`. QG kernels require
 `Ld`; beta-plane QG also requires `beta` and spanning contours from
-[`beta_staircase`](@ref); SQG kernels require `delta_sqg`; multi-layer kernels
+[`beta_staircase`](@ref); SQG kernels require `δ_sqg`; multi-layer kernels
 require both `Ld` and `coupling`. For unequal-depth multi-layer QG, pass
 `layer_thicknesses`; a connected physical coupling matrix also allows their
 relative values to be inferred.
@@ -184,6 +184,7 @@ Base.@constprop :aggressive function Problem(;
     kernel::Symbol=:euler,
     Ld=nothing,
     beta::Real=NaN,
+    δ_sqg::Real=NaN,
     delta_sqg::Real=NaN,
     domain::Symbol=:unbounded,
     Lx::Real=NaN,
@@ -199,8 +200,11 @@ Base.@constprop :aggressive function Problem(;
     is_multilayer = _validate_problem_layout(kernel, contours, layers)
     typed_contours = is_multilayer ? nothing : _convert_contours_precision(T, contours)
     typed_layers = is_multilayer ? _convert_layers_precision(T, layers) : nothing
+    isnan(δ_sqg) || isnan(delta_sqg) || throw(ArgumentError(
+        "Specify only one of `δ_sqg` and the legacy `delta_sqg`."))
+    sqg_regularization = isnan(δ_sqg) ? delta_sqg : δ_sqg
     built_kernel = _build_kernel(T, kernel, Ld, coupling, layer_thicknesses,
-                                 delta_sqg, beta)
+                                 sqg_regularization, beta)
     built_domain = _build_domain(T, domain, Lx, Ly)
     device = _build_device(dev)
     contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain,

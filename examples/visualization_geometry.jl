@@ -72,7 +72,7 @@ function _point_like(reference, x, y)
     end
 end
 
-function _periodic_delta(prev, current, periodic_box)
+function _periodic_δ(prev, current, periodic_box)
     xmin, xmax, ymin, ymax = periodic_box
     width_x = xmax - xmin
     width_y = ymax - ymin
@@ -92,7 +92,7 @@ function _unwrap_periodic_points(points, periodic_box)
     out = Vector{typeof(first(points))}(undef, length(points))
     out[1] = first(points)
     for i in 2:length(points)
-        out[i] = out[i - 1] + _periodic_delta(points[i - 1], points[i], periodic_box)
+        out[i] = out[i - 1] + _periodic_δ(points[i - 1], points[i], periodic_box)
     end
     return out
 end

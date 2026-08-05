@@ -167,7 +167,7 @@ For straight segments, the regularized segment velocity remains exact:
 
 The tangent ``\hat{\mathbf{t}}`` and endpoint coordinates ``u_a,u_b`` have the
 same definitions as in the Euler formula above. In the Julia API this SQG
-regularization is `delta_sqg`; it is distinct from the surgery threshold also
+regularization is `δ_sqg`; it is distinct from the surgery threshold also
 written ``\delta`` on the surgery page.
 
 ## References and Further Reading

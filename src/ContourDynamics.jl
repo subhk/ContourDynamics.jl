@@ -215,7 +215,7 @@ export save_snapshot, load_snapshot, jld2_recorder, load_simulation, load_proble
 
         # SQG / Unbounded
         cS = circular_patch(0.5, N, 1.0)
-        probS = Problem(; contours=[cS], dt=0.005, kernel=:sqg, delta_sqg=0.02)
+        probS = Problem(; contours=[cS], dt=0.005, kernel=:sqg, δ_sqg=0.02)
         evolve!(probS; nsteps=2)
 
         # Multi-layer QG / Unbounded

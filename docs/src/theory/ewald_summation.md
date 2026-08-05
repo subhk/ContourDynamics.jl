@@ -152,7 +152,7 @@ the documented softened kernel ``1/r_\delta``, rather than making the answer
 depend on where the Ewald split is introduced.
 
 Here ``r=|\mathbf r|``, ``r_\delta`` is the regularized distance, and
-``\delta`` is `SQGKernel.delta` (the `delta_sqg` constructor keyword), not the
+``\delta`` is `SQGKernel.δ` (the `δ_sqg` constructor keyword), not the
 independent contour-surgery threshold.
 
 ## References and Further Reading

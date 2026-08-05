@@ -194,12 +194,12 @@ end
 @inline function _curved_sqg_contribution_scalar(xi::T, yi::T,
                                                  ax::T, ay::T, bx::T, by::T,
                                                  pv::T, κa::T, κb::T,
-                                                 delta::T, inv2pi::T) where {T}
+                                                 δ::T, inv2pi::T) where {T}
     dsx = bx - ax
     dsy = by - ay
     ds_len = sqrt(dsx^2 + dsy^2)
     ds_len < eps(T) && return zero(T), zero(T)
-    delta_sq = delta * delta
+    δ_sq = δ * δ
 
     if max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T))
         tx = dsx / ds_len
@@ -211,7 +211,7 @@ end
         u_a = r0x * tx + r0y * ty
         h = r0x * nx + r0y * ny
         u_b = u_a - ds_len
-        h_eff = sqrt(h * h + delta_sq)
+        h_eff = sqrt(h * h + δ_sq)
         F_diff = asinh(u_a / h_eff) - asinh(u_b / h_eff)
         contrib = inv2pi * pv * F_diff
         return contrib * tx, contrib * ty
@@ -225,7 +225,7 @@ end
         sx, sy, tx, ty = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p)
         rx = xi - sx
         ry = yi - sy
-        rreg = sqrt(rx * rx + ry * ry + delta_sq)
+        rreg = sqrt(rx * rx + ry * ry + δ_sq)
         coeff = inv2pi * pv * (g_weights[q] / T(2)) / rreg
         vx += coeff * tx
         vy += coeff * ty
@@ -246,17 +246,17 @@ end
     return ax + shiftx, ay + shifty, bx + shiftx, by + shifty
 end
 
-@inline function _periodic_euler_zero_mode_scalar(alpha::T, Lx::T, Ly::T) where {T}
+@inline function _periodic_euler_zero_mode_scalar(α::T, Lx::T, Ly::T) where {T}
     area = T(4) * Lx * Ly
-    return one(T) / (T(4) * alpha^2 * area)
+    return one(T) / (T(4) * α^2 * area)
 end
 
 @inline function _periodic_euler_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
-                                                         alpha::T, Lx::T, Ly::T,
+                                                         α::T, Lx::T, Ly::T,
                                                          n_images::Int,
                                                          kx, ky, fourier_coeffs,
                                                          inv4pi::T,
-                                                         gamma_euler::T) where {T}
+                                                         γ_euler::T) where {T}
     r0x = xi - sx
     r0y = yi - sy
     G_corr = zero(T)
@@ -271,12 +271,12 @@ end
 
             if px == 0 && py == 0
                 if r2 > eps(T)
-                    G_corr += inv4pi * (_expint_e1(alpha^2 * r2) + log(r2))
+                    G_corr += inv4pi * (_expint_e1(α^2 * r2) + log(r2))
                 else
-                    G_corr += inv4pi * (-gamma_euler - T(2) * log(alpha))
+                    G_corr += inv4pi * (-γ_euler - T(2) * log(α))
                 end
             elseif r2 > eps(T)
-                G_corr += inv4pi * _expint_e1(alpha^2 * r2)
+                G_corr += inv4pi * _expint_e1(α^2 * r2)
             end
         end
     end
@@ -295,7 +295,7 @@ end
         end
     end
 
-    return G_corr - _periodic_euler_zero_mode_scalar(alpha, Lx, Ly)
+    return G_corr - _periodic_euler_zero_mode_scalar(α, Lx, Ly)
 end
 
 @inline function _periodic_qg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
@@ -324,7 +324,7 @@ end
 end
 
 @inline function _periodic_sqg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
-                                                       alpha::T, delta_sq::T,
+                                                       α::T, δ_sq::T,
                                                        Lx::T, Ly::T, n_images::Int,
                                                        kx, ky, fourier_coeffs,
                                                        inv2pi::T) where {T}
@@ -341,12 +341,12 @@ end
             r2 = rx * rx + ry * ry
 
             if px == 0 && py == 0
-                G_corr -= inv2pi * _sqg_erf_over_r(alpha, r2)
+                G_corr -= inv2pi * _sqg_erf_over_r(α, r2)
             elseif r2 > eps(T)
                 r = sqrt(r2)
-                r_reg = sqrt(r2 + delta_sq)
-                softening = -delta_sq / (r * r_reg * (r + r_reg))
-                G_corr += inv2pi * (erfc(alpha * r) / r + softening)
+                r_reg = sqrt(r2 + δ_sq)
+                softening = -δ_sq / (r * r_reg * (r + r_reg))
+                G_corr += inv2pi * (erfc(α * r) / r + softening)
             end
         end
     end
@@ -398,7 +398,7 @@ end
                                               target_x, target_y,
                                               seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                               seg_ka, seg_kb,
-                                              alpha, Lx, Ly, n_images,
+                                              α, Lx, Ly, n_images,
                                               kx, ky, fourier_coeffs,
                                               n_seg)
     i = @index(Global)
@@ -408,7 +408,7 @@ end
     vx = zero(T)
     vy = zero(T)
     inv4pi = one(T) / (T(4) * T(pi))
-    gamma_euler = T(Base.MathConstants.eulergamma)
+    γ_euler = T(Base.MathConstants.eulergamma)
     g_nodes, g_weights = _gl5_nodes_weights(T)
 
     @inbounds for j in 1:n_seg
@@ -434,8 +434,8 @@ end
                     ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_euler_green_correction_scalar(
-                    xi, yi, sx, sy, alpha, Lx, Ly, n_images,
-                    kx, ky, fourier_coeffs, inv4pi, gamma_euler)
+                    xi, yi, sx, sy, α, Lx, Ly, n_images,
+                    kx, ky, fourier_coeffs, inv4pi, γ_euler)
                 coeff = seg_pv[j] * (g5_weights[q] / T(2)) * G_corr
                 vx += coeff * tx_curve
                 vy += coeff * ty_curve
@@ -472,12 +472,12 @@ end
 
                     if px == 0 && py == 0
                         if r2 > eps(T)
-                            G_corr += inv4pi * (_expint_e1(alpha^2 * r2) + log(r2))
+                            G_corr += inv4pi * (_expint_e1(α^2 * r2) + log(r2))
                         else
-                            G_corr += inv4pi * (-gamma_euler - T(2) * log(alpha))
+                            G_corr += inv4pi * (-γ_euler - T(2) * log(α))
                         end
                     elseif r2 > eps(T)
-                        G_corr += inv4pi * _expint_e1(alpha^2 * r2)
+                        G_corr += inv4pi * _expint_e1(α^2 * r2)
                     end
                 end
             end
@@ -498,7 +498,7 @@ end
                 end
             end
 
-            corr_integral += g_weights[q] * (G_corr - _periodic_euler_zero_mode_scalar(alpha, Lx, Ly))
+            corr_integral += g_weights[q] * (G_corr - _periodic_euler_zero_mode_scalar(α, Lx, Ly))
         end
 
         vx += seg_pv[j] * half_dsx * corr_integral
@@ -619,14 +619,14 @@ end
                                             target_x, target_y,
                                             seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                             seg_ka, seg_kb,
-                                            alpha, delta, Lx, Ly, n_images,
+                                            α, δ, Lx, Ly, n_images,
                                             kx, ky, fourier_coeffs,
                                             n_seg)
     i = @index(Global)
     T = eltype(vel_x)
     xi = target_x[i]
     yi = target_y[i]
-    delta_sq = delta * delta
+    δ_sq = δ * δ
     inv2pi = one(T) / (T(2) * T(pi))
     g_nodes, g_weights = _gl5_nodes_weights(T)
     vx = zero(T)
@@ -644,7 +644,7 @@ end
         if max(abs(seg_ka[j]), abs(seg_kb[j])) * ds_len > sqrt(eps(T))
             dvx, dvy = _curved_sqg_contribution_scalar(
                 xi, yi, ax, ay, bx, by,
-                seg_pv[j], seg_ka[j], seg_kb[j], delta, inv2pi)
+                seg_pv[j], seg_ka[j], seg_kb[j], δ, inv2pi)
             vx += dvx
             vy += dvy
 
@@ -655,7 +655,7 @@ end
                     ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_sqg_green_correction_scalar(
-                    xi, yi, sx, sy, alpha, delta_sq, Lx, Ly, n_images,
+                    xi, yi, sx, sy, α, δ_sq, Lx, Ly, n_images,
                     kx, ky, fourier_coeffs, inv2pi)
                 coeff = seg_pv[j] * (g5_weights[q] / T(2)) * G_corr
                 vx += coeff * tx_curve
@@ -675,7 +675,7 @@ end
         h = r0x * nx + r0y * ny
         u_b = u_a - ds_len
 
-        h_eff = sqrt(h * h + delta_sq)
+        h_eff = sqrt(h * h + δ_sq)
         F_diff = asinh(u_a / h_eff) - asinh(u_b / h_eff)
         contrib = inv2pi * seg_pv[j] * F_diff
         vx += contrib * tx
@@ -704,12 +704,12 @@ end
                     r2 = rx * rx + ry * ry
 
                     if px == 0 && py == 0
-                        G_corr -= inv2pi * _sqg_erf_over_r(alpha, r2)
+                        G_corr -= inv2pi * _sqg_erf_over_r(α, r2)
                     elseif r2 > eps(T)
                         r = sqrt(r2)
-                        r_reg = sqrt(r2 + delta_sq)
-                        softening = -delta_sq / (r * r_reg * (r + r_reg))
-                        G_corr += inv2pi * (erfc(alpha * r) / r + softening)
+                        r_reg = sqrt(r2 + δ_sq)
+                        softening = -δ_sq / (r * r_reg * (r + r_reg))
+                        G_corr += inv2pi * (erfc(α * r) / r + softening)
                     end
                 end
             end
@@ -745,7 +745,7 @@ end
                                    target_x, target_y,
                                    seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                    seg_ka, seg_kb,
-                                   delta, n_seg)
+                                   δ, n_seg)
     i = @index(Global)
     T = eltype(vel_x)
     xi = target_x[i]
@@ -757,7 +757,7 @@ end
     @inbounds for j in 1:n_seg
         dvx, dvy = _curved_sqg_contribution_scalar(
             xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j],
-            seg_pv[j], seg_ka[j], seg_kb[j], delta, inv2pi)
+            seg_pv[j], seg_ka[j], seg_kb[j], δ, inv2pi)
         vx += dvx
         vy += dvy
     end

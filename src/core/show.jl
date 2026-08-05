@@ -33,7 +33,7 @@ function Base.show(io::IO, k::BetaPlaneQGKernel{T}) where {T}
 end
 Base.show(io::IO, ::MIME"text/plain", k::BetaPlaneQGKernel) = show(io, k)
 
-Base.show(io::IO, k::SQGKernel{T}) where {T} = print(io, "SQGKernel{$T}: δ = ", k.delta)
+Base.show(io::IO, k::SQGKernel{T}) where {T} = print(io, "SQGKernel{$T}: δ = ", k.δ)
 Base.show(io::IO, ::MIME"text/plain", k::SQGKernel) = show(io, k)
 
 function Base.show(io::IO, k::MultiLayerQGKernel{N, M, T}) where {N, M, T}

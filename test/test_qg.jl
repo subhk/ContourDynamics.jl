@@ -20,8 +20,8 @@ end
 function _qg_periodic_fourier_energy(domain, contours, Ld, modes)
     area = 4 * domain.Lx * domain.Ly
     kappa2 = 1 / Ld^2
-    gamma = sum(c.pv * vortex_area(c) for c in contours)
-    result = gamma^2 / kappa2
+    γ = sum(c.pv * vortex_area(c) for c in contours)
+    result = γ^2 / kappa2
     for m in -modes:modes, n in -modes:modes
         (m == 0 && n == 0) && continue
         kx = π * m / domain.Lx

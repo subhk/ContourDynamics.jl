@@ -31,7 +31,7 @@
 #
 # Optional GPU:
 #   add `using CUDA` and pass `dev=GPU()`:
-#   prob = Problem(; contours=contours0, dt=dt, kernel=:sqg, delta_sqg=delta, dev=GPU())
+#   prob = Problem(; contours=contours0, dt=dt, kernel=:sqg, δ_sqg=δ, dev=GPU())
 
 using ContourDynamics
 using JLD2
@@ -72,7 +72,7 @@ function held_gaussian_contours(levels, nodes_per_outer_contour::Int,
 end
 
 # --- Parameters ---
-delta   = 0.01
+δ   = 0.01
 dt      = 0.05
 t_final = 26.0
 nsteps  = round(Int, t_final / dt)
@@ -99,7 +99,7 @@ prob = if periodic_domain
     Problem(; contours=contours0,
               dt=dt,
               kernel=:sqg,
-              delta_sqg=delta,
+              δ_sqg=δ,
               domain=:periodic,
               Lx=L,
               Ly=L,
@@ -108,7 +108,7 @@ else
     Problem(; contours=contours0,
               dt=dt,
               kernel=:sqg,
-              delta_sqg=delta,
+              δ_sqg=δ,
               surgery=surgery)
 end
 
@@ -123,9 +123,9 @@ mediabase = joinpath(OUTDIR, "sqg_elliptical_vortex")
 println("Writing outputs under $OUTDIR")
 println("Held-style SQG contour stack: levels=$(levels), aspect ratio=$aspect_ratio")
 if periodic_domain
-    println("Domain: [-$L, $L) × [-$L, $L); δ=$delta; initial contours=$(length(contours0)), nodes=$(total_nodes(prob))")
+    println("Domain: [-$L, $L) × [-$L, $L); δ=$δ; initial contours=$(length(contours0)), nodes=$(total_nodes(prob))")
 else
-    println("Domain: unbounded; δ=$delta; initial contours=$(length(contours0)), nodes=$(total_nodes(prob))")
+    println("Domain: unbounded; δ=$δ; initial contours=$(length(contours0)), nodes=$(total_nodes(prob))")
 end
 println("Contour surgery mode: $surgery_mode")
 println("Running $nsteps steps to t=$(nsteps * dt), saving every t=$save_dt...")

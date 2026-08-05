@@ -15,7 +15,7 @@ Returns `G_per(r)` = real-space Ewald sum + Fourier-space sum.
 """
 function _eval_ewald_greens(r_vec::SVector{2,T}, cache::EwaldCache{T},
                             domain::PeriodicDomain{T}) where {T}
-    alpha = cache.alpha
+    α = cache.α
     Lx, Ly = domain.Lx, domain.Ly
     inv4pi = one(T) / (4 * T(π))
     G_val = zero(T)
@@ -27,7 +27,7 @@ function _eval_ewald_greens(r_vec::SVector{2,T}, cache::EwaldCache{T},
             rv = r_vec - shift
             r2 = rv[1]^2 + rv[2]^2
             if r2 > eps(T)
-                G_val += inv4pi * _expint_e1(alpha^2 * r2)
+                G_val += inv4pi * _expint_e1(α^2 * r2)
             end
         end
     end
@@ -139,22 +139,22 @@ function _energy_contour_pair_qg_periodic(ci::PVContour{T}, cj::PVContour{T},
 end
 
 """
-Radial potential whose 2-D Laplacian is `erfc(alpha * r) / r`, up to an
+Radial potential whose 2-D Laplacian is `erfc(α * r) / r`, up to an
 irrelevant additive constant.  The constant is chosen so `phi(0) = 0`, which
 reduces cancellation in closed-contour double integrals.
 """
-@inline function _sqg_ewald_real_potential(r::T, alpha::T) where {T}
+@inline function _sqg_ewald_real_potential(r::T, α::T) where {T}
     r <= zero(T) && return zero(T)
 
-    # Near zero, log(r) + E1(alpha^2 r^2)/2 is finite but suffers cancellation.
+    # Near zero, log(r) + E1(α^2 r^2)/2 is finite but suffers cancellation.
     # Use the series form there and the direct expression elsewhere.
-    inv_alpha_sqrtpi = one(T) / (alpha * sqrt(T(π)))
-    ar = alpha * r
+    inv_α_sqrtpi = one(T) / (α * sqrt(T(π)))
+    ar = α * r
     z = ar * ar
-    gamma_euler = T(Base.MathConstants.eulergamma)
+    γ_euler = T(Base.MathConstants.eulergamma)
 
     log_plus_half_e1 = if z < T(0.25)
-        s = -log(alpha) - gamma_euler / 2
+        s = -log(α) - γ_euler / 2
         term = one(T)
         max_terms = max(60, ceil(Int, -2 * log(eps(T))))
         for n in 1:max_terms
@@ -168,15 +168,15 @@ reduces cancellation in closed-contour double integrals.
         log(r) + _expint_e1(z) / 2
     end
 
-    zero_limit = (-one(T) - gamma_euler / 2 - log(alpha)) * inv_alpha_sqrtpi
-    return r * erfc(ar) - exp(-z) * inv_alpha_sqrtpi +
-        log_plus_half_e1 * inv_alpha_sqrtpi - zero_limit
+    zero_limit = (-one(T) - γ_euler / 2 - log(α)) * inv_α_sqrtpi
+    return r * erfc(ar) - exp(-z) * inv_α_sqrtpi +
+        log_plus_half_e1 * inv_α_sqrtpi - zero_limit
 end
 
 function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
                                              cache::EwaldCache{T},
                                              domain::PeriodicDomain{T},
-                                             delta::T) where {T}
+                                             δ::T) where {T}
     # Apply the SQG softening to every periodic image.  For each image,
     #
     #   2Φ_real(r) + 2Φδ(r) - 2r
@@ -184,7 +184,7 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
     # has Laplacian twice the scalar Ewald kernel. This factor of two is required
     # by the shared -raw/(8π) contour-energy normalization; together with the
     # doubled Fourier part it gives the positive SQG Hamiltonian.
-    alpha = cache.alpha
+    α = cache.α
     Lx, Ly = domain.Lx, domain.Ly
     phi = zero(T)
 
@@ -194,8 +194,8 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
             rv = r_vec - shift
             r2 = rv[1]^2 + rv[2]^2
             r = sqrt(r2)
-            phi += T(2) * _sqg_ewald_real_potential(r, alpha) +
-                   _sqg_regularized_energy_potential_scalar(r2, delta) - T(2) * r
+            phi += T(2) * _sqg_ewald_real_potential(r, α) +
+                   _sqg_regularized_energy_potential_scalar(r2, δ) - T(2) * r
         end
     end
 
@@ -216,16 +216,16 @@ end
 function _energy_contour_pair_sqg_periodic(ci::PVContour{T}, cj::PVContour{T},
                                            cache::EwaldCache{T},
                                            domain::PeriodicDomain{T},
-                                           delta::T;
+                                           δ::T;
                                            _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
     # Periodic SQG pair energy has no special self-segment branch here because
-    # delta regularization keeps the potential finite at coincident quadrature
+    # δ regularization keeps the potential finite at coincident quadrature
     # points.
     Lx2, Ly2 = _period_lengths(domain.Lx, domain.Ly)
     Φ = rv -> begin
         r_vec = SVector{2,T}(rv[1] - round(rv[1] / Lx2) * Lx2,
                              rv[2] - round(rv[2] / Ly2) * Ly2)
-        _eval_sqg_periodic_energy_potential(r_vec, cache, domain, delta)
+        _eval_sqg_periodic_energy_potential(r_vec, cache, domain, δ)
     end
     return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end

@@ -177,13 +177,13 @@ end
         @test kernel(prob_qg).Ld == 1.0
 
         # SQG kernel
-        prob_sqg = Problem(; kernel=:sqg, delta_sqg=0.01, contours=[c], dt=0.01)
+        prob_sqg = Problem(; kernel=:sqg, δ_sqg=0.01, contours=[c], dt=0.01)
         @test kernel(prob_sqg) isa SQGKernel
 
         # Missing Ld for :qg
         @test_throws ArgumentError Problem(; kernel=:qg, contours=[c], dt=0.01)
 
-        # Missing delta_sqg for :sqg
+        # Missing δ_sqg for :sqg
         @test_throws ArgumentError Problem(; kernel=:sqg, contours=[c], dt=0.01)
 
         # Unknown kernel
@@ -261,8 +261,8 @@ end
             @test_throws ErrorException Problem(; contours=[c], dt=0.01, domain=:periodic, Lx=1.0, Ly=1.0, dev=GPU())
             @test_throws ErrorException Problem(; kernel=:qg, Ld=1.0, contours=[c], dt=0.01,
                                                 domain=:periodic, Lx=1.0, Ly=1.0, dev=GPU())
-            @test_throws ErrorException Problem(; kernel=:sqg, delta_sqg=0.01, contours=[c], dt=0.01, dev=GPU())
-            @test_throws ErrorException Problem(; kernel=:sqg, delta_sqg=0.01, contours=[c], dt=0.01,
+            @test_throws ErrorException Problem(; kernel=:sqg, δ_sqg=0.01, contours=[c], dt=0.01, dev=GPU())
+            @test_throws ErrorException Problem(; kernel=:sqg, δ_sqg=0.01, contours=[c], dt=0.01,
                                                 domain=:periodic, Lx=1.0, Ly=1.0, dev=GPU())
             @test_throws ErrorException Problem(; kernel=:multilayer_qg, Ld=SVector(1.0),
                                                 coupling=SMatrix{2,2}(-0.5, 0.5, 0.5, -0.5),

@@ -48,7 +48,7 @@ include("test_sqg.jl")
         @test sp.δ == 0.001
         @test sp.μ == 0.005
         @test sp.Δ_max == 0.1
-        @test sp.delta == sp.δ
+        @test sp.δ == sp.δ
         @test sp.mu == sp.μ
         @test sp.Delta_max == sp.Δ_max
         @test sp.n_surgery == 10

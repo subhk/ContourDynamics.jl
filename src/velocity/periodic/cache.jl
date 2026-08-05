@@ -6,7 +6,7 @@ splitting parameter, Fourier wavenumbers and coefficients, and the real-space
 image radius used by periodic velocity and energy evaluations.
 """
 struct EwaldCache{T<:AbstractFloat}
-    alpha::T
+    α::T
     kx::Vector{T}
     ky::Vector{T}
     fourier_coeffs::Matrix{T}
@@ -17,6 +17,15 @@ struct EwaldCache{T<:AbstractFloat}
     # (0×0) for the Euler and SQG caches, which do not use a correction series.
     corr_coeffs::Matrix{T}
 end
+
+# ASCII spelling retained for backwards compatibility.
+function Base.getproperty(cache::EwaldCache, name::Symbol)
+    name === :alpha && return getfield(cache, :α)
+    return getfield(cache, name)
+end
+
+Base.propertynames(::EwaldCache; private::Bool=false) =
+    (:α, :alpha, :kx, :ky, :fourier_coeffs, :n_images, :corr_coeffs)
 
 @inline function _validate_ewald_truncation(n_fourier::Int, n_images::Int)
     n_fourier >= 0 || throw(ArgumentError(
@@ -30,11 +39,11 @@ end
 # The three build_ewald_cache methods differ only in the coefficient formula.
 function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
     Lx, Ly = domain.Lx, domain.Ly
-    alpha = sqrt(T(π)) / sqrt(Lx * Ly)
+    α = sqrt(T(π)) / sqrt(Lx * Ly)
     kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
     ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
     area = 4 * Lx * Ly
-    return alpha, kx, ky, area
+    return α, kx, ky, area
 end
 
 """
@@ -45,18 +54,18 @@ Precompute Fourier-space coefficients for Ewald summation.
 function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
                            n_fourier::Int=8, n_images::Int=2) where {T}
     _validate_ewald_truncation(n_fourier, n_images)
-    alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
+    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
             if k2 > eps(T)
-                fourier_coeffs[mi, ni] = exp(-k2 / (4 * alpha^2)) / (k2 * area)
+                fourier_coeffs[mi, ni] = exp(-k2 / (4 * α^2)) / (k2 * area)
             end
         end
     end
-    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
+    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
 end
 
 """
@@ -71,7 +80,7 @@ fractional Laplacian's half-order (`1/|k|` vs Euler's `1/k²`).
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
     _validate_ewald_truncation(n_fourier, n_images)
-    alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
+    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
     for (mi, kxi) in enumerate(kx)
@@ -79,12 +88,12 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
             k2 = kxi^2 + kyi^2
             if k2 > eps(T)
                 k_mag = sqrt(k2)
-                fourier_coeffs[mi, ni] = 2 * T(π) * erfc(k_mag / (2 * alpha)) /
+                fourier_coeffs[mi, ni] = 2 * T(π) * erfc(k_mag / (2 * α)) /
                     (k_mag * area)
             end
         end
     end
-    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
+    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
 end
 
 """
@@ -103,7 +112,7 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
     _validate_ewald_truncation(n_fourier, n_images)
     kappa2 = one(T) / kernel.Ld^2
-    alpha, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
+    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
     corr_coeffs = zeros(T, nk, nk)
@@ -111,12 +120,12 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
             if k2 > eps(T)
-                fourier_coeffs[mi, ni] = exp(-k2 / (4 * alpha^2)) / (k2 * area)
+                fourier_coeffs[mi, ni] = exp(-k2 / (4 * α^2)) / (k2 * area)
                 corr_coeffs[mi, ni] = kappa2 / (k2 * (k2 + kappa2) * area)
             end
         end
     end
-    return EwaldCache(alpha, kx, ky, fourier_coeffs, n_images, corr_coeffs)
+    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, corr_coeffs)
 end
 
 # Cache storage — keyed by (Lx, Ly, kernel_type, Ld) tuples with snapped values.
@@ -160,7 +169,7 @@ function _cache_key(domain::PeriodicDomain{T}, k::QGKernel{T}) where {T}
     (_snap(domain.Lx), _snap(domain.Ly), QGKernel{T}, _snap(k.Ld))::_EwaldCacheKey{T}
 end
 function _cache_key(domain::PeriodicDomain{T}, k::SQGKernel{T}) where {T}
-    (_snap(domain.Lx), _snap(domain.Ly), SQGKernel{T}, _snap(k.delta))::_EwaldCacheKey{T}
+    (_snap(domain.Lx), _snap(domain.Ly), SQGKernel{T}, _snap(k.δ))::_EwaldCacheKey{T}
 end
 
 _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64

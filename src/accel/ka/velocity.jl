@@ -17,14 +17,14 @@ function _ka_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
 end
 
 """
-    _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData, delta, dev)
+    _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData, δ, dev)
 
 Launch the KA SQG velocity kernel on the given device.
 """
 function _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
-                           delta, dev::AbstractDevice)
+                           δ, dev::AbstractDevice)
     return _launch_ka_segment_kernel!(_sqg_velocity_ka!,
-                                      vel_x, vel_y, target_x, target_y, seg, dev, delta)
+                                      vel_x, vel_y, target_x, target_y, seg, dev, δ)
 end
 
 """
@@ -49,7 +49,7 @@ function _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::Seg
     dev_kx, dev_ky, dev_fourier = _periodic_ewald_data(ws, cache, dev)
     return _launch_ka_segment_kernel!(_periodic_euler_velocity_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
-                                      cache.alpha, domain.Lx, domain.Ly, cache.n_images,
+                                      cache.α, domain.Lx, domain.Ly, cache.n_images,
                                       dev_kx, dev_ky, dev_fourier)
 end
 
@@ -69,17 +69,17 @@ function _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg::Segm
 end
 
 """
-    _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, delta, dev)
+    _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, δ, dev)
 
 Launch the KA periodic SQG velocity kernel on the given device.
 """
 function _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                     domain::PeriodicDomain{T}, cache::EwaldCache{T},
-                                    delta::T, dev::AbstractDevice, ws=nothing) where {T}
+                                    δ::T, dev::AbstractDevice, ws=nothing) where {T}
     dev_kx, dev_ky, dev_fourier = _periodic_ewald_data(ws, cache, dev)
     return _launch_ka_segment_kernel!(_periodic_sqg_velocity_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
-                                      cache.alpha, delta, domain.Lx, domain.Ly, cache.n_images,
+                                      cache.α, δ, domain.Lx, domain.Ly, cache.n_images,
                                       dev_kx, dev_ky, dev_fourier)
 end
 
@@ -105,7 +105,7 @@ end
 @inline function _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                      kernel::SQGKernel{T}, ::UnboundedDomain,
                                      dev::AbstractDevice, ws=nothing) where {T}
-    _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, kernel.delta, dev)
+    _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, kernel.δ, dev)
 end
 
 @inline function _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
@@ -129,7 +129,7 @@ end
                                      dev::AbstractDevice, ws=nothing) where {T}
     cache = _ka_periodic_cache(domain, kernel)
     _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache,
-                               kernel.delta, dev, ws)
+                               kernel.δ, dev, ws)
 end
 
 """

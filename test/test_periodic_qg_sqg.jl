@@ -58,7 +58,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
                     else
                         # Fourier transform of 1/(2π√(r²+δ²)) in two
                         # dimensions is exp(-δ|k|)/|k|.
-                        exp(-kernel.delta * sqrt(k2)) / (area * sqrt(k2))
+                        exp(-kernel.δ * sqrt(k2)) / (area * sqrt(k2))
                     end
                     k_dot_ds = kx * ds[1] + ky * ds[2]
                     phase = kx * (x[1] - a[1]) + ky * (x[2] - a[2])
@@ -89,7 +89,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         return v
     end
 
-    function regularized_sqg_energy_reference(c, delta)
+    function regularized_sqg_energy_reference(c, δ)
         g_nodes, g_weights = ContourDynamics._gl5_nodes_weights(Float64)
         total = 0.0
         nc = length(c.nodes)
@@ -111,8 +111,8 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
                 pj_pt = midj + g_nodes[qj] * half_dsj
                 dx = pi_pt[1] - pj_pt[1]
                 dy = pi_pt[2] - pj_pt[2]
-                r_delta = sqrt(dx^2 + dy^2 + delta^2)
-                phi = r_delta - delta * log(delta + r_delta)
+                r_δ = sqrt(dx^2 + dy^2 + δ^2)
+                phi = r_δ - δ * log(δ + r_δ)
                 quad += g_weights[qi] * g_weights[qj] * phi
             end
             total += quad / 4 * dot_ds
@@ -221,10 +221,10 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
     @testset "SQG velocity: periodic ≈ unbounded" begin
         N = 32
-        delta = 0.01
+        δ = 0.01
         c = circular_patch(0.1, N, 1.0)
-        prob_u = ContourProblem(SQGKernel(delta), UnboundedDomain(), [c])
-        prob_p = ContourProblem(SQGKernel(delta), PeriodicDomain(10.0, 10.0), [c])
+        prob_u = ContourProblem(SQGKernel(δ), UnboundedDomain(), [c])
+        prob_p = ContourProblem(SQGKernel(δ), PeriodicDomain(10.0, 10.0), [c])
 
         vel_u = zeros(SVector{2, Float64}, N)
         vel_p = zeros(SVector{2, Float64}, N)
@@ -306,38 +306,38 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         origin = zero(r)
 
         phi(rv) = ContourDynamics._eval_sqg_periodic_energy_potential(
-            rv, cache, domain, kernel.delta)
+            rv, cache, domain, kernel.δ)
         h = 1e-3
         ex = SVector(h, 0.0)
         ey = SVector(0.0, h)
         laplacian_phi = (phi(r + ex) + phi(r - ex) + phi(r + ey) + phi(r - ey) -
                          4 * phi(r)) / h^2
 
-        G = inv(2π * sqrt(sum(abs2, r) + kernel.delta^2)) +
+        G = inv(2π * sqrt(sum(abs2, r) + kernel.δ^2)) +
             ContourDynamics._periodic_sqg_green_correction(
                 kernel, domain, cache, r, origin)
         @test laplacian_phi ≈ 4π * G rtol=2e-6
     end
 
     @testset "SQG unbounded energy uses regularized potential" begin
-        delta = 0.35
+        δ = 0.35
         c = straight_contour([
             SVector(-0.7, -0.4),
             SVector(0.8, -0.3),
             SVector(0.6, 0.5),
             SVector(-0.6, 0.7),
         ], 1.0)
-        prob = ContourProblem(SQGKernel(delta), UnboundedDomain(), [c])
+        prob = ContourProblem(SQGKernel(δ), UnboundedDomain(), [c])
 
-        @test energy(prob) ≈ regularized_sqg_energy_reference(c, delta) rtol=5e-4
+        @test energy(prob) ≈ regularized_sqg_energy_reference(c, δ) rtol=5e-4
     end
 
     @testset "SQG periodic energy" begin
         N = 32
-        delta = 0.01
+        δ = 0.01
         c = circular_patch(0.1, N, 1.0)
-        prob_u = ContourProblem(SQGKernel(delta), UnboundedDomain(), [c])
-        prob_p = ContourProblem(SQGKernel(delta), PeriodicDomain(10.0, 10.0), [c])
+        prob_u = ContourProblem(SQGKernel(δ), UnboundedDomain(), [c])
+        prob_p = ContourProblem(SQGKernel(δ), PeriodicDomain(10.0, 10.0), [c])
 
         E_u = energy(prob_u)
         E_p = energy(prob_p)

@@ -32,7 +32,7 @@ function _save_metadata!(g, kernel::BetaPlaneQGKernel{T}, domain) where {T}
 end
 function _save_metadata!(g, kernel::SQGKernel{T}, domain) where {T}
     g["kernel_type"] = "SQGKernel"
-    g["kernel_delta"] = kernel.delta
+    g["kernel_delta"] = kernel.δ
     _save_domain!(g, domain)
 end
 function _save_metadata!(g, kernel::MultiLayerQGKernel{N,M,T}, domain) where {N,M,T}

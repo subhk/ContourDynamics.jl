@@ -42,15 +42,15 @@ end
     abs(λ) <= _qg_modal_eigenvalue_tolerance(kernel.eigenvalues)
 
 """
-    SQGKernel{T}(delta)
+    SQGKernel{T}(δ)
 
 Kernel for surface quasi-geostrophic (SQG) dynamics using the contour kernel
 `G_C(r) = 1/(2πr)`.
 
 The SQG velocity at a contour boundary is singular (the tangential component
-diverges logarithmically), so a **regularization length** `delta > 0` is
+diverges logarithmically), so a **regularization length** `δ > 0` is
 required.  The kernel `1/r` is replaced by `1/√(r² + δ²)`.  A typical choice
-is `delta ≈ μ`, the minimum segment length used for surgery.
+is `δ ≈ μ`, the minimum segment length used for surgery.
 
 # Sign convention
 
@@ -61,12 +61,20 @@ function is `-1/(2πr)` and integration by parts gives the positive contour
 kernel above.
 """
 struct SQGKernel{T<:AbstractFloat} <: AbstractKernel
-    delta::T
-    function SQGKernel(delta::T) where {T<:AbstractFloat}
-        delta > zero(T) || throw(ArgumentError("Regularization δ must be positive, got $delta"))
-        new{T}(delta)
+    δ::T
+    function SQGKernel(δ::T) where {T<:AbstractFloat}
+        δ > zero(T) || throw(ArgumentError("Regularization δ must be positive, got $δ"))
+        new{T}(δ)
     end
 end
+
+# ASCII spelling retained for backwards compatibility.
+function Base.getproperty(k::SQGKernel, name::Symbol)
+    name === :delta && return getfield(k, :δ)
+    return getfield(k, name)
+end
+
+Base.propertynames(::SQGKernel; private::Bool=false) = (:δ, :delta)
 
 """
     MultiLayerQGKernel{N,M,T}(Ld, coupling[, H])

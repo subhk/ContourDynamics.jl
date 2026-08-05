@@ -43,7 +43,7 @@ L = 5π
 paper_t_final = 28.0
 casl_grid_nh = 512
 casl_grid_mg = 2
-casl_surgery_delta = 1e-3
+casl_surgery_δ = 1e-3
 
 n_beta = paper_preset ? 50 : 16
 nodes_per_beta_contour = paper_preset ? 64 : 16
@@ -54,7 +54,7 @@ t_final = paper_preset ? paper_t_final : 1.0
 nsteps = round(Int, t_final / dt)
 save_dt = paper_preset ? 0.25 : 0.1
 
-surgery_delta = casl_surgery_delta
+surgery_δ = casl_surgery_δ
 surgery_mu = 0.01
 max_segment = 0.3
 surgery_every = nsteps + 1
@@ -73,7 +73,7 @@ staircase = beta_staircase(beta, domain, n_beta;
 vortex = circular_patch(R, vortex_nodes, omega0)
 all_contours = vcat(staircase, [vortex])
 
-surgery = SurgeryParams(surgery_delta, surgery_mu, max_segment, 1e-6, surgery_every)
+surgery = SurgeryParams(surgery_δ, surgery_mu, max_segment, 1e-6, surgery_every)
 
 prob = Problem(; contours=all_contours,
                  dt=dt,
@@ -89,7 +89,7 @@ println("Output directory: $OUTDIR")
 println("Preset: $preset")
 println("Method: contour beta-plane QG with analytic beta*y correction")
 println("Lam & Dritschel case D metadata: beta=$beta, Rd=$Ld, l=$L, R=$R, omega0=$omega0")
-println("Lam & Dritschel Table 1 CASL metadata: nbar_h=$casl_grid_nh, mg=$casl_grid_mg, delta=$casl_surgery_delta")
+println("Lam & Dritschel Table 1 CASL metadata: nbar_h=$casl_grid_nh, mg=$casl_grid_mg, δ=$casl_surgery_δ")
 println("Contour resolution: beta contours=$(length(staircase)), beta nodes/contour=$nodes_per_beta_contour, vortex nodes=$vortex_nodes")
 println("Total nodes: $(total_nodes(prob)); dt=$dt, nsteps=$nsteps, save_dt=$save_dt")
 if surgery_every > nsteps

@@ -38,7 +38,7 @@ of inverse time, so velocities have units of length per time.
 | ``\kappa=L_d^{-1}`` | Inverse deformation radius | Derived internally |
 | ``K_0`` | Modified Bessel function of the second kind, order zero | Used by `QGKernel` |
 | ``\theta`` | Active surface buoyancy in SQG | PV jump stored in `PVContour.pv` |
-| ``\delta_{\mathrm{SQG}}`` | SQG kernel regularization length | `delta_sqg` or `SQGKernel.delta` |
+| ``\delta_{\mathrm{SQG}}`` | SQG kernel regularization length | `δ_sqg` or `SQGKernel.δ` |
 | ``\gamma_E`` | Euler--Mascheroni constant | Limit of the regularized QG remainder |
 
 The SQG regularization ``\delta_{\mathrm{SQG}}`` and the surgery proximity
@@ -128,7 +128,7 @@ The principal [`Problem`](@ref) keywords map to the notation as follows:
 | `kernel` | `:euler`, `:qg`, `:beta_plane_qg`, `:sqg`, or `:multilayer_qg` |
 | `Ld` | One deformation radius for QG/beta-plane QG, or ``N-1`` modal radii for multi-layer QG |
 | `beta` | Beta-plane gradient ``\beta``; required by `:beta_plane_qg` |
-| `delta_sqg` | SQG regularization ``\delta_{\mathrm{SQG}}``; required by `:sqg` |
+| `δ_sqg` | SQG regularization ``\delta_{\mathrm{SQG}}``; required by `:sqg` |
 | `coupling` | Physical ``N\times N`` stretching matrix; required by `:multilayer_qg` |
 | `layer_thicknesses` | Positive ``H_i`` values used to symmetrize unequal-depth multi-layer coupling |
 | `domain` | `:unbounded` or `:periodic` |

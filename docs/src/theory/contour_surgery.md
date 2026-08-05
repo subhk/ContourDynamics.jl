@@ -287,7 +287,7 @@ zero. QG uses the same curved Euler singular part plus quadrature of the smooth
 Here ``\mathbf x`` is the target position, ``\mathbf X'(p)=d\mathbf X/dp`` is
 the tangent derivative, ``r=|\mathbf x-\mathbf X(p)|``, ``L_d`` is QG
 deformation radius, ``K_0`` is the modified Bessel function, and ``\epsilon``
-is the SQG regularization length (`delta_sqg`). The integration variable ``p``
+is the SQG regularization length (`δ_sqg`). The integration variable ``p``
 runs once along the source arc.
 
 On periodic domains, the same curved unbounded singular contribution is
@@ -346,7 +346,7 @@ resolution of the contour description.
 
 | Parameter | Symbol | Description |
 |-----------|--------|-------------|
-| `delta` | ``\delta`` | Proximity threshold for detecting close segments |
+| `δ` | ``\delta`` | Proximity threshold for detecting close segments |
 | `mu` | ``\mu`` | Minimum segment length after remeshing |
 | `Delta_max` | ``\Delta_{\max}`` | Maximum segment length after remeshing |
 | `area_min` | ``A_{\min}`` | Minimum contour area; smaller contours are removed |

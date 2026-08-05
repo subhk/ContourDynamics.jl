@@ -171,7 +171,7 @@ function curved_segment_velocity(kernel::SQGKernel{T}, domain::UnboundedDomain,
 
     g_nodes, g_weights = _gl5_nodes_weights(T)
     integral = zero(SVector{2,T})
-    δ2 = kernel.delta^2
+    δ2 = kernel.δ^2
 
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
@@ -219,8 +219,8 @@ end
         S += term * Hk
         abs(term * Hk) < eps(T) && break
     end
-    log_z2_gamma = log(z / 2) + T(Base.MathConstants.eulergamma)
-    return -log_z2_gamma * I0_minus_1 + S
+    log_z2_γ = log(z / 2) + T(Base.MathConstants.eulergamma)
+    return -log_z2_γ * I0_minus_1 + S
 end
 
 @inline function _i0_approx_scalar(x::T) where {T}
@@ -418,7 +418,7 @@ function segment_velocity(kernel::SQGKernel{T}, ::UnboundedDomain,
     h   = r0[1] * n_hat[1] + r0[2] * n_hat[2]    # normal component
     u_b = u_a - ds_len
 
-    h_eff_sq = h * h + kernel.delta^2
+    h_eff_sq = h * h + kernel.δ^2
     h_eff = sqrt(h_eff_sq)
 
     # Antiderivative F(u) = arcsinh(u / h_eff)

@@ -7,7 +7,7 @@ filamentation.
 What to look for:
 
 - stronger small-scale structure than in the Euler examples
-- the role of the regularization parameter `delta`
+- the role of the regularization parameter `δ`
 - circulation staying nearly constant
 
 SQG dynamics and their role in atmospheric front formation are described in [Held et al. (1995)](https://doi.org/10.1017/S0022112095000012) and [Constantin, Majda & Tabak (1994)](https://doi.org/10.1088/0951-7715/7/6/001). Filament cascades in contour SQG are studied by [Scott & Dritschel (2014)](https://doi.org/10.1103/PhysRevLett.112.144505).
@@ -29,7 +29,7 @@ using ContourDynamics
 N = 48
 aspect_ratio = 4.0
 levels = collect(0.2:0.2:0.8)
-delta = 0.01         # contour-kernel regularization length
+δ = 0.01             # contour-kernel regularization length
 
 function held_gaussian_contours(levels, nodes_per_outer_contour, aspect_ratio)
     outer_radius = sqrt(-log(first(levels)))
@@ -47,7 +47,7 @@ end
 
 contours0 = held_gaussian_contours(levels, N, aspect_ratio)
 remesh_only = SurgeryParams(1e-5, 0.01, 0.12, 1e-10, 5)
-prob = Problem(; contours=contours0, dt=0.002, kernel=:sqg, delta_sqg=delta,
+prob = Problem(; contours=contours0, dt=0.002, kernel=:sqg, δ_sqg=δ,
                surgery=remesh_only)
 
 circulation0 = circulation(prob)

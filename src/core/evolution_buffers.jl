@@ -28,9 +28,9 @@ end
     dest[i] = src[offset + i]
 end
 
-@kernel function _scatter_shifted_slice_ka!(dest, base, delta, offset, scale)
+@kernel function _scatter_shifted_slice_ka!(dest, base, δ, offset, scale)
     i = @index(Global)
-    dest[i] = base[offset + i] + scale * delta[offset + i]
+    dest[i] = base[offset + i] + scale * δ[offset + i]
 end
 
 @kernel function _rk4_update_ka!(nodes, k1, k2, k3, k4, dt)
@@ -70,9 +70,9 @@ end
     y[i] = node[2]
 end
 
-@kernel function _state_scatter_shifted_ka!(x, y, base, delta, scale)
+@kernel function _state_scatter_shifted_ka!(x, y, base, δ, scale)
     i = @index(Global)
-    node = base[i] + scale * delta[i]
+    node = base[i] + scale * δ[i]
     x[i] = node[1]
     y[i] = node[2]
 end
@@ -311,9 +311,9 @@ end
     return dest
 end
 
-@inline function _cpu_scatter_shifted!(dest, base, delta, offset::Int, scale)
+@inline function _cpu_scatter_shifted!(dest, base, δ, offset::Int, scale)
     @inbounds for i in eachindex(dest)
-        dest[i] = base[offset + i] + scale * delta[offset + i]
+        dest[i] = base[offset + i] + scale * δ[offset + i]
     end
     return dest
 end
@@ -355,9 +355,9 @@ function _ka_copy_flat_to_nodes!(dest, src, offset::Int)
     return dest
 end
 
-function _ka_scatter_shifted_slice!(dest, base, delta, offset::Int, scale)
+function _ka_scatter_shifted_slice!(dest, base, δ, offset::Int, scale)
     isempty(dest) && return dest
-    _cpu_scatter_shifted!(dest, base, delta, offset, scale)
+    _cpu_scatter_shifted!(dest, base, δ, offset, scale)
     return dest
 end
 
@@ -389,15 +389,15 @@ end
 
 function _scatter_state_shifted!(state::DeviceContourState{T},
                                  base::AbstractVector{SVector{2,T}},
-                                 delta::AbstractVector{SVector{2,T}},
+                                 δ::AbstractVector{SVector{2,T}},
                                  scale::T,
                                  dev::AbstractDevice) where {T}
     N = _device_state_nnodes(state)
     _check_flat_buffer_length("base", length(base), N)
-    _check_flat_buffer_length("delta", length(delta), N)
+    _check_flat_buffer_length("δ", length(δ), N)
     N == 0 && return state
     _ka_stepper_update!(dev, _state_scatter_shifted_ka!, N,
-                        state.x, state.y, base, delta, scale)
+                        state.x, state.y, base, δ, scale)
     return state
 end
 
@@ -632,18 +632,18 @@ function _scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}},
 end
 
 """
-    _scatter_shifted!(prob, base, delta, scale[, ranges])
+    _scatter_shifted!(prob, base, δ, scale[, ranges])
 
-Write `base[i] + scale * delta[i]` into contour nodes without allocating.
+Write `base[i] + scale * δ[i]` into contour nodes without allocating.
 """
 function _scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
-                           delta::Vector{SVector{2,T}}, scale::T,
+                           δ::Vector{SVector{2,T}}, scale::T,
                            ranges::_NodeRanges) where {T}
     N = total_nodes(prob)
     _check_flat_buffer_length("base", length(base), N)
-    _check_flat_buffer_length("delta", length(delta), N)
+    _check_flat_buffer_length("δ", length(δ), N)
     _for_each_contour_range!(prob, ranges) do c, r
-        _ka_scatter_shifted_slice!(c.nodes, base, delta, first(r) - 1, scale)
+        _ka_scatter_shifted_slice!(c.nodes, base, δ, first(r) - 1, scale)
     end
 end
 
@@ -654,8 +654,8 @@ _scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}}) where {T} =
     _scatter_nodes!(prob, all_nodes, _default_ranges(prob))
 
 _scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
-                  delta::Vector{SVector{2,T}}, scale::T) where {T} =
-    _scatter_shifted!(prob, base, delta, scale, _default_ranges(prob))
+                  δ::Vector{SVector{2,T}}, scale::T) where {T} =
+    _scatter_shifted!(prob, base, δ, scale, _default_ranges(prob))
 
 @inline function _rk4_stage!(k, prob::ContourProblem, nodes_orig, increment, scale, ranges)
     _scatter_shifted!(prob, nodes_orig, increment, scale, ranges)

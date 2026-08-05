@@ -28,8 +28,8 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
         mode_cache = is_euler_mode ? euler_cache :
                      _get_ewald_cache(domain, QGKernel(one(T) / sqrt(abs(lam))))
         if !is_euler_mode
-            gamma_mode = sum(P_inv[mode, li] * layer_circulation[li] for li in 1:N)
-            E_zero += gamma_mode^2 / (T(2) * area * abs(lam))
+            γ_mode = sum(P_inv[mode, li] * layer_circulation[li] for li in 1:N)
+            E_zero += γ_mode^2 / (T(2) * area * abs(lam))
         end
         # The inverse eigenvector weights convert physical-layer PV jumps into
         # modal PV jumps before the contour-pair Green's-function integral.

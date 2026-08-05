@@ -6,6 +6,6 @@ using Test
     @test occursin("polvani_upper_layer_merger_problem", example)
     @test occursin("initial_distance", example)
     @test occursin("depth_ratio = 0.2", example)
-    @test occursin("gamma = 5.0", example)
+    @test occursin("γ = 5.0", example)
     @test !occursin("layers=([c_upper], PVContour{Float64}[])", example)
 end

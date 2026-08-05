@@ -113,7 +113,7 @@ end
 
 # Contour potential for the QG Hamiltonian. Distributionally,
 # Δ[K₀(r/Ld) + log(r)] = K₀(r/Ld)/Ld²: the logarithm cancels the
-# delta singularity in K₀, leaving a smooth function at the origin. The
+# δ singularity in K₀, leaving a smooth function at the origin. The
 # factor two matches the shared -raw/(8π) energy normalization.
 @inline function _qg_energy_potential_scalar(r2::T, Ld::T) where {T}
     limit = log(T(2) * Ld) - T(Base.MathConstants.eulergamma)

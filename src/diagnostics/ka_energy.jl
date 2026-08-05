@@ -311,7 +311,7 @@ end
     return dsx, dsy, midx, midy, half_dsx, half_dsy
 end
 
-@inline function _energy_ewald_greens_scalar(rx::T, ry::T, alpha::T, Lx::T, Ly::T,
+@inline function _energy_ewald_greens_scalar(rx::T, ry::T, α::T, Lx::T, Ly::T,
                                              n_images::Int, kx, ky, fourier_coeffs) where {T}
     inv4pi = one(T) / (T(4) * T(pi))
     G_val = zero(T)
@@ -323,7 +323,7 @@ end
             sx = rx - shiftx
             sy = ry - shifty
             r2 = sx * sx + sy * sy
-            r2 > eps(T) && (G_val += inv4pi * _expint_e1(alpha * alpha * r2))
+            r2 > eps(T) && (G_val += inv4pi * _expint_e1(α * α * r2))
         end
     end
 
@@ -344,16 +344,16 @@ end
     return G_val
 end
 
-@inline function _sqg_ewald_real_potential_scalar(r::T, alpha::T) where {T}
+@inline function _sqg_ewald_real_potential_scalar(r::T, α::T) where {T}
     r <= zero(T) && return zero(T)
 
-    inv_alpha_sqrtpi = one(T) / (alpha * sqrt(T(pi)))
-    ar = alpha * r
+    inv_α_sqrtpi = one(T) / (α * sqrt(T(pi)))
+    ar = α * r
     z = ar * ar
-    gamma_euler = T(Base.MathConstants.eulergamma)
+    γ_euler = T(Base.MathConstants.eulergamma)
 
     log_plus_half_e1 = if z < T(0.25)
-        s = -log(alpha) - gamma_euler / T(2)
+        s = -log(α) - γ_euler / T(2)
         term = one(T)
         for n in 1:80
             term *= -z / T(n)
@@ -366,21 +366,21 @@ end
         log(r) + _expint_e1(z) / T(2)
     end
 
-    zero_limit = (-one(T) - gamma_euler / T(2) - log(alpha)) * inv_alpha_sqrtpi
-    return r * erfc(ar) - exp(-z) * inv_alpha_sqrtpi +
-        log_plus_half_e1 * inv_alpha_sqrtpi - zero_limit
+    zero_limit = (-one(T) - γ_euler / T(2) - log(α)) * inv_α_sqrtpi
+    return r * erfc(ar) - exp(-z) * inv_α_sqrtpi +
+        log_plus_half_e1 * inv_α_sqrtpi - zero_limit
 end
 
-@inline function _sqg_regularized_energy_potential_scalar(r2::T, delta::T) where {T}
-    r_delta = sqrt(r2 + delta * delta)
-    # If phi_delta = r_delta - delta*log(delta + r_delta), then
-    # Delta phi_delta = 1/r_delta. The shared energy normalization is
-    # -raw/(8pi), so SQG uses 2phi_delta to recover the physical Hamiltonian.
-    return T(2) * (r_delta - delta * log(delta + r_delta))
+@inline function _sqg_regularized_energy_potential_scalar(r2::T, δ::T) where {T}
+    r_δ = sqrt(r2 + δ * δ)
+    # If phi_δ = r_δ - δ*log(δ + r_δ), then
+    # Delta phi_δ = 1/r_δ. The shared energy normalization is
+    # -raw/(8pi), so SQG uses 2phi_δ to recover the physical Hamiltonian.
+    return T(2) * (r_δ - δ * log(δ + r_δ))
 end
 
-@inline function _sqg_periodic_energy_potential_scalar(rx::T, ry::T, alpha::T,
-                                                       Lx::T, Ly::T, delta::T,
+@inline function _sqg_periodic_energy_potential_scalar(rx::T, ry::T, α::T,
+                                                       Lx::T, Ly::T, δ::T,
                                                        n_images::Int, kx, ky,
                                                        fourier_coeffs) where {T}
     phi = zero(T)
@@ -395,8 +395,8 @@ end
             r = sqrt(r2)
             # The regularized potential is already doubled for the shared
             # energy normalization; scale every other Ewald piece likewise.
-            phi += T(2) * _sqg_ewald_real_potential_scalar(r, alpha) +
-                   _sqg_regularized_energy_potential_scalar(r2, delta) - T(2) * r
+            phi += T(2) * _sqg_ewald_real_potential_scalar(r, α) +
+                   _sqg_regularized_energy_potential_scalar(r2, δ) - T(2) * r
         end
     end
 
@@ -494,12 +494,12 @@ end
 end
 
 @kernel function _sqg_energy_ka!(partial, ax, ay, bx, by, pv, contour_id, local_index,
-                                 delta, n_seg)
+                                 δ, n_seg)
     i = @index(Global)
     T = eltype(partial)
     dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
         _energy_segment_geometry(ax, ay, bx, by, i, T)
-    delta_sq = delta * delta
+    δ_sq = δ * δ
     g_nodes, g_weights = _gl3_nodes_weights(T)
     local_s = zero(T)
 
@@ -518,7 +518,7 @@ end
                 dx = pix - pjx
                 dy = piy - pjy
                 quad += g_weights[qi] * g_weights[qj] *
-                    _sqg_regularized_energy_potential_scalar(dx * dx + dy * dy, delta)
+                    _sqg_regularized_energy_potential_scalar(dx * dx + dy * dy, δ)
             end
         end
         local_s += pv[j] * quad * dot_ds / T(4)
@@ -562,7 +562,7 @@ end
 
 @kernel function _periodic_green_energy_ka!(partial, ax, ay, bx, by, pv,
                                              contour_id, local_index,
-                                             alpha, Lx, Ly, n_images, kx, ky,
+                                             α, Lx, Ly, n_images, kx, ky,
                                              fourier_coeffs, corr_at_zero, n_seg)
     # Periodic Euler keeps the same singular split as the CPU path: the
     # self-segment logarithmic term is analytical, and the smooth Ewald
@@ -596,7 +596,7 @@ end
                     ry = piy - pjy
                     r2 = rx * rx + ry * ry
                     if r2 > eps(T)
-                        G_per = _energy_ewald_greens_scalar(rx, ry, alpha, Lx, Ly, n_images,
+                        G_per = _energy_ewald_greens_scalar(rx, ry, α, Lx, Ly, n_images,
                                                             kx, ky, fourier_coeffs)
                         quad_corr += g_weights[qi] * g_weights[qj] *
                             (-T(2) * T(pi) * G_per - log(r2) / T(2))
@@ -617,7 +617,7 @@ end
                     ry_raw = piy - pjy
                     rx = rx_raw - round(rx_raw / Lx2) * Lx2
                     ry = ry_raw - round(ry_raw / Ly2) * Ly2
-                    G_per = _energy_ewald_greens_scalar(rx, ry, alpha, Lx, Ly, n_images,
+                    G_per = _energy_ewald_greens_scalar(rx, ry, α, Lx, Ly, n_images,
                                                         kx, ky, fourier_coeffs)
                     quad += g_weights[qi] * g_weights[qj] * (-T(2) * T(pi) * G_per)
                 end
@@ -631,7 +631,7 @@ end
 
 @kernel function _periodic_euler_energy_ka!(partial, ax, ay, bx, by, pv,
                                             contour_id, local_index,
-                                            alpha, Lx, Ly, n_images, kx, ky,
+                                            α, Lx, Ly, n_images, kx, ky,
                                             fourier_coeffs, corr_at_zero, n_seg)
     # Periodic Euler Hamiltonian in contour form.  For G_k=1/(A|k|²), the
     # smooth contour potential required by the shared normalization is
@@ -731,7 +731,7 @@ end
 
 @kernel function _periodic_sqg_energy_ka!(partial, ax, ay, bx, by, pv,
                                           contour_id, local_index,
-                                          alpha, delta, Lx, Ly, n_images,
+                                          α, δ, Lx, Ly, n_images,
                                           kx, ky, fourier_coeffs, n_seg)
     i = @index(Global)
     T = eltype(partial)
@@ -757,7 +757,7 @@ end
                 ry_raw = piy - pjy
                 rx = rx_raw - round(rx_raw / Lx2) * Lx2
                 ry = ry_raw - round(ry_raw / Ly2) * Ly2
-                phi = _sqg_periodic_energy_potential_scalar(rx, ry, alpha, Lx, Ly, delta,
+                phi = _sqg_periodic_energy_potential_scalar(rx, ry, α, Lx, Ly, δ,
                                                             n_images, kx, ky, fourier_coeffs)
                 quad += g_weights[qi] * g_weights[qj] * phi
             end
@@ -800,14 +800,14 @@ function _ka_energy_raw(kernel!, contours, dev::AbstractDevice, ::Type{T}, args.
 end
 
 function _periodic_euler_corr_at_zero(cache::EwaldCache{T}, domain::PeriodicDomain{T}) where {T}
-    alpha = cache.alpha
+    α = cache.α
     Lx, Ly = domain.Lx, domain.Ly
-    corr = (T(Base.MathConstants.eulergamma) + T(2) * log(alpha)) / T(2)
+    corr = (T(Base.MathConstants.eulergamma) + T(2) * log(α)) / T(2)
     for px in -cache.n_images:cache.n_images
         for py in -cache.n_images:cache.n_images
             (px == 0 && py == 0) && continue
             shift_r2 = (T(2) * Lx * T(px))^2 + (T(2) * Ly * T(py))^2
-            corr -= _expint_e1(alpha^2 * shift_r2) / T(2)
+            corr -= _expint_e1(α^2 * shift_r2) / T(2)
         end
     end
     for (mi, kxi) in enumerate(cache.kx)
@@ -831,23 +831,23 @@ CPU-device path (`prob.contours`) and the GPU path (`prob.device_state`).
 const _EnergySource{T} = Union{DeviceContourState{T}, Vector{PVContour{T}}}
 
 @inline function _energy_contour_circulation(contours::Vector{PVContour{T}}) where {T}
-    gamma = zero(T)
+    γ = zero(T)
     for c in contours
         _valid_energy_contour(c) || continue
-        gamma += c.pv * vortex_area(c)
+        γ += c.pv * vortex_area(c)
     end
-    return gamma
+    return γ
 end
 
 # The 2-D Ewald split of the softened SQG kernel retains a spatially constant
 # coefficient even though the fractional-Laplacian inverse is defined only for
 # nonzero Fourier modes. The unregularized real-space term contributes
-# 1/(A*alpha*sqrt(pi)); softening contributes -delta/A.
+# 1/(A*α*sqrt(pi)); softening contributes -δ/A.
 @inline function _sqg_periodic_ewald_zero_mode(cache::EwaldCache{T},
                                                 domain::PeriodicDomain{T},
-                                                delta::T) where {T}
+                                                δ::T) where {T}
     area = T(4) * domain.Lx * domain.Ly
-    return (inv(cache.alpha * sqrt(T(pi))) - delta) / area
+    return (inv(cache.α * sqrt(T(pi))) - δ) / area
 end
 
 # Upload the Ewald tables once per call — every periodic energy kernel takes
@@ -871,7 +871,7 @@ end
 
 function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
-    return _normalize_energy(_ka_energy_raw(_sqg_energy_ka!, src, dev, T, kernel.delta))
+    return _normalize_energy(_ka_energy_raw(_sqg_energy_ka!, src, dev, T, kernel.δ))
 end
 
 function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
@@ -888,7 +888,7 @@ function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::EulerKernel,
     kx, ky, fourier = _device_ewald_tables(cache, dev)
     corr0 = _periodic_euler_corr_at_zero(cache, domain)
     raw = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                        cache.alpha, domain.Lx, domain.Ly,
+                                        cache.α, domain.Lx, domain.Ly,
                                         cache.n_images, kx, ky, fourier, corr0)
     return _normalize_energy(raw)
 end
@@ -904,8 +904,8 @@ function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
     area = T(4) * domain.Lx * domain.Ly
     raw = _ka_energy_raw_with_segments!(
         _periodic_qg_energy_ka!, data, dev, T, kappa2, area, kx, ky)
-    gamma = _energy_contour_circulation(src)
-    return _normalize_energy(raw) + gamma * gamma / (T(2) * area * kappa2)
+    γ = _energy_contour_circulation(src)
+    return _normalize_energy(raw) + γ * γ / (T(2) * area * kappa2)
 end
 
 function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
@@ -916,12 +916,12 @@ function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
     length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
     kx, ky, fourier = _device_ewald_tables(cache, dev)
     raw = _ka_energy_raw_with_segments!(_periodic_sqg_energy_ka!, data, dev, T,
-                                        cache.alpha, kernel.delta,
+                                        cache.α, kernel.δ,
                                         domain.Lx, domain.Ly,
                                         cache.n_images, kx, ky, fourier)
-    gamma = _energy_contour_circulation(src)
-    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.delta)
-    return _normalize_energy(raw) - zero_mode * gamma * gamma / T(2)
+    γ = _energy_contour_circulation(src)
+    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.δ)
+    return _normalize_energy(raw) - zero_mode * γ * γ / T(2)
 end
 
 function _ka_energy_from_state(state::DeviceContourState{T}, kernel,
@@ -944,7 +944,7 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKerne
                                   ws::_EnergyWorkspace{T}) where {T}
     n = _pack_energy_workspace!(ws, state, dev)
     return _normalize_energy(
-        _ka_energy_raw_with_workspace!(_sqg_energy_ka!, ws, n, dev, kernel.delta))
+        _ka_energy_raw_with_workspace!(_sqg_energy_ka!, ws, n, dev, kernel.δ))
 end
 
 function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel{T},
@@ -964,7 +964,7 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::EulerKer
     kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
     corr0 = _periodic_euler_corr_at_zero(cache, domain)
     raw = _ka_energy_raw_with_workspace!(
-        _periodic_euler_energy_ka!, ws, n, dev, cache.alpha,
+        _periodic_euler_energy_ka!, ws, n, dev, cache.α,
         domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier, corr0)
     return _normalize_energy(raw)
 end
@@ -980,8 +980,8 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel
     area = T(4) * domain.Lx * domain.Ly
     raw = _ka_energy_raw_with_workspace!(
         _periodic_qg_energy_ka!, ws, n, dev, kappa2, area, kx, ky)
-    gamma = _state_circulation(state, dev)
-    return _normalize_energy(raw) + gamma * gamma / (T(2) * area * kappa2)
+    γ = _state_circulation(state, dev)
+    return _normalize_energy(raw) + γ * γ / (T(2) * area * kappa2)
 end
 
 function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKernel{T},
@@ -992,11 +992,11 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKerne
     n == 0 && return _normalize_energy(zero(T))
     kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
     raw = _ka_energy_raw_with_workspace!(
-        _periodic_sqg_energy_ka!, ws, n, dev, cache.alpha, kernel.delta,
+        _periodic_sqg_energy_ka!, ws, n, dev, cache.α, kernel.δ,
         domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier)
-    gamma = _state_circulation(state, dev)
-    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.delta)
-    return _normalize_energy(raw) - zero_mode * gamma * gamma / T(2)
+    γ = _state_circulation(state, dev)
+    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.δ)
+    return _normalize_energy(raw) - zero_mode * γ * γ / T(2)
 end
 
 # ── Multi-layer modal energy ─────────────────────────────────────────────
@@ -1167,11 +1167,11 @@ function _ka_multilayer_energy_with_ws(
         raw_mode = if is_euler_mode
             _ka_energy_raw_with_workspace!(
                 _periodic_euler_energy_ka!, energy_ws, total, dev,
-                cache.alpha, domain.Lx, domain.Ly,
+                cache.α, domain.Lx, domain.Ly,
                 cache.n_images, kx, ky, fourier, corr0)
         else
-            gamma_mode = sum(P_inv[mode, ℓ] * layer_circulation[ℓ] for ℓ in 1:N)
-            E_zero += gamma_mode * gamma_mode / (T(2) * area * abs(lam))
+            γ_mode = sum(P_inv[mode, ℓ] * layer_circulation[ℓ] for ℓ in 1:N)
+            E_zero += γ_mode * γ_mode / (T(2) * area * abs(lam))
             _ka_energy_raw_with_workspace!(
                 _periodic_qg_energy_ka!, energy_ws, total, dev,
                 T(abs(lam)), area, kx, ky)
