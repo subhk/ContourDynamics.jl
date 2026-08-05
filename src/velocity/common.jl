@@ -116,18 +116,15 @@ function _max_layer_node_count(prob::MultiLayerContourProblem{N}) where {N}
     return max_nodes
 end
 
-function _prepare_modal_matrices!(scratch::_VelocityScratch{T},
-                                  kernel::MultiLayerQGKernel{N,M,T}) where {N, M, T}
-    # The kernel's physical/modal transforms are fixed at construction, so the dense
-    # scratch copies only need to be materialized once — when the buffer is first
-    # sized for this problem. The previous version re-copied both N×N matrices on
-    # every call, allocating ~128 B per multilayer velocity! (512 B per RK4 step)
-    # for no benefit, since the kernel transforms never change.
-    if size(scratch.modal_matrix) != (N, N)
-        scratch.modal_matrix = Matrix{T}(kernel.modal_to_physical)
-        scratch.modal_matrix_inv = Matrix{T}(kernel.physical_to_modal)
+function _prepare_modal_transforms!(scratch::_VelocityScratch{T},
+                                    kernel::MultiLayerQGKernel{N,M,T}) where {N, M, T}
+    # The transforms are fixed at construction; materialize their dense scratch
+    # copies only when this problem is first sized.
+    if size(scratch.to_physical) != (N, N)
+        scratch.to_physical = Matrix{T}(kernel.modal_to_physical)
+        scratch.to_modal = Matrix{T}(kernel.physical_to_modal)
     end
-    return scratch.modal_matrix, scratch.modal_matrix_inv
+    return scratch.to_physical, scratch.to_modal
 end
 
 @inline function _segment_velocity_with_geometry(kernel::AbstractKernel,
@@ -361,7 +358,7 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
     xT = SVector{2,T}(x)
     evals = kernel.eigenvalues
     scratch = prob.velocity_scratch
-    P, P_inv = _prepare_modal_matrices!(scratch, kernel)
+    to_physical, to_modal = _prepare_modal_transforms!(scratch, kernel)
     source_curvatures = _prepare_layer_curvature_buffers!(
         scratch.layer_curvatures, prob.layers)
 
@@ -374,19 +371,13 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
         # segment_velocity is fully specialised (no Union-typed dynamic
         # dispatch per segment). Each mode fetches its own cache: QG modes need
         # their Ld-specific correction coefficients, the Euler mode does not.
-        v_mode = if _is_barotropic_mode(kernel, lam)
-            _accumulate_mode_node_velocity(EulerKernel(), domain, prob.layers,
-                source_curvatures, _prefetch_ewald(domain, EulerKernel()), P_inv, mode, xT)
-        else
-            mode_kernel = QGKernel(one(T) / sqrt(abs(lam)))
-            _accumulate_mode_node_velocity(mode_kernel, domain, prob.layers,
-                source_curvatures, _prefetch_ewald(domain, mode_kernel), P_inv, mode, xT)
-        end
+        v_mode = _dispatch_qg_mode(
+            _accumulate_mode_node_velocity, kernel, lam, domain, prob.layers,
+            source_curvatures, to_modal, mode, xT)
 
-        # Project the completed modal velocity back onto each physical target
-        # layer with the forward eigenvector matrix.
+        # Project the completed modal velocity back onto each physical layer.
         for target_layer in 1:N
-            projection_weight = P[target_layer, mode]
+            projection_weight = to_physical[target_layer, mode]
             abs(projection_weight) < eps(T) && continue
             vel[target_layer] = vel[target_layer] + projection_weight * v_mode
         end
@@ -402,17 +393,26 @@ function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
 end
 
 # Sum the modal velocity at one target point `x` from every source layer/segment,
-# weighted by the inverse modal projection. Shared by the threaded and serial
+# weighted by the physical-to-modal transform. Shared by the threaded and serial
 # branches of _multilayer_mode_velocity!. Concrete mode_kernel type K keeps
 # segment_velocity fully specialized inside the loop.
-@inline function _accumulate_mode_node_velocity(mode_kernel::K, domain,
-                                                layers::NTuple{N, Vector{PVContour{T}}},
-                                                source_curvatures, ewald,
-                                                P_inv::Matrix{T}, mode::Int,
-                                                x::SVector{2,T}) where {N, T, K}
+@inline function _accumulate_mode_node_velocity(
+        mode_kernel::K, domain, layers::NTuple{N, Vector{PVContour{T}}},
+        source_curvatures, to_modal::Matrix{T}, mode::Int,
+        x::SVector{2,T}) where {N,T,K}
+    ewald = _prefetch_ewald(domain, mode_kernel)
+    return _accumulate_mode_node_velocity_cached(
+        mode_kernel, domain, layers, source_curvatures, ewald,
+        to_modal, mode, x)
+end
+
+@inline function _accumulate_mode_node_velocity_cached(
+        mode_kernel::K, domain, layers::NTuple{N, Vector{PVContour{T}}},
+        source_curvatures, ewald, to_modal::Matrix{T}, mode::Int,
+        x::SVector{2,T}) where {N,T,K}
     v_mode = zero(SVector{2,T})
     for source_layer in 1:N
-        source_weight = P_inv[mode, source_layer]
+        source_weight = to_modal[mode, source_layer]
         abs(source_weight) < eps(T) && continue
         for (sci, sc) in pairs(layers[source_layer])
             nsc = nnodes(sc)
@@ -433,20 +433,21 @@ end
 
 # Function barrier: the concrete kernel type is resolved here so that
 # segment_velocity is fully specialised inside the @threads loop.
-function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
+function _multilayer_mode_velocity!(mode_kernel::K,
+                                    vel::NTuple{N, Vector{SVector{2,T}}},
                                     prob::MultiLayerContourProblem{N},
-                                    mode::Int, mode_kernel::K,
+                                    mode::Int,
                                     target_nodes::Vector{SVector{2,T}},
                                     mode_vel::Vector{SVector{2,T}},
                                     source_curvatures,
-                                    ewald,
-                                    P::Matrix{T},
-                                    P_inv::Matrix{T}) where {N, T, K}
+                                    to_physical::Matrix{T},
+                                    to_modal::Matrix{T}) where {N, T, K}
     domain = prob.domain
+    ewald = _prefetch_ewald(domain, mode_kernel)
 
     for target_layer in 1:N
         target_contours = prob.layers[target_layer]
-        projection_weight = P[target_layer, mode]
+        projection_weight = to_physical[target_layer, mode]
         abs(projection_weight) < eps(T) && continue
 
         n_target = sum(nnodes(tc) for tc in target_contours; init=0)
@@ -464,15 +465,15 @@ function _multilayer_mode_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
 
         if _should_thread_velocity(n_target)
             @inbounds Threads.@threads for ti in 1:n_target
-                mode_vel[ti] = _accumulate_mode_node_velocity(
+                mode_vel[ti] = _accumulate_mode_node_velocity_cached(
                     mode_kernel, domain, prob.layers, source_curvatures, ewald,
-                    P_inv, mode, target_nodes[ti])
+                    to_modal, mode, target_nodes[ti])
             end
         else
             @inbounds for ti in 1:n_target
-                mode_vel[ti] = _accumulate_mode_node_velocity(
+                mode_vel[ti] = _accumulate_mode_node_velocity_cached(
                     mode_kernel, domain, prob.layers, source_curvatures, ewald,
-                    P_inv, mode, target_nodes[ti])
+                    to_modal, mode, target_nodes[ti])
             end
         end
 
@@ -492,7 +493,6 @@ Direct O(N^2) velocity computation at every contour node across all layers of
 function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                            prob::MultiLayerContourProblem{N}) where {N, T}
     kernel = prob.kernel
-    domain = prob.domain
 
     for i in 1:N
         n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
@@ -503,7 +503,7 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     evals = kernel.eigenvalues
 
     scratch = prob.velocity_scratch
-    P, P_inv = _prepare_modal_matrices!(scratch, kernel)
+    to_physical, to_modal = _prepare_modal_transforms!(scratch, kernel)
     max_nodes = _max_layer_node_count(prob)
     target_nodes = resize!(scratch.target_nodes, max_nodes)
     mode_vel = resize!(scratch.mode_vel, max_nodes)
@@ -513,20 +513,9 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     for mode in 1:N
         lam = evals[mode]
 
-        # Zero eigenvalues represent barotropic Euler modes; nonzero
-        # eigenvalues become QG modes with deformation radius 1/sqrt(abs(lambda)).
-        # Each mode fetches its own cache so the QG modes read their Ld-specific
-        # correction coefficients (the Euler cache has none).
-        if _is_barotropic_mode(kernel, lam)
-            _multilayer_mode_velocity!(vel, prob, mode, EulerKernel(),
-                                       target_nodes, mode_vel, source_curvatures,
-                                       _prefetch_ewald(domain, EulerKernel()), P, P_inv)
-        else
-            mode_kernel = QGKernel(one(T) / sqrt(abs(lam)))
-            _multilayer_mode_velocity!(vel, prob, mode, mode_kernel,
-                                       target_nodes, mode_vel, source_curvatures,
-                                       _prefetch_ewald(domain, mode_kernel), P, P_inv)
-        end
+        _dispatch_qg_mode(
+            _multilayer_mode_velocity!, kernel, lam, vel, prob, mode,
+            target_nodes, mode_vel, source_curvatures, to_physical, to_modal)
     end
 
     return vel

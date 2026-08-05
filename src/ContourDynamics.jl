@@ -13,7 +13,6 @@ module ContourDynamics
 using StaticArrays
 using LinearAlgebra
 using SpecialFunctions
-using PrecompileTools: @setup_workload, @compile_workload
 
 # Core object model and user-facing problem construction.
 include("core/device.jl")
@@ -42,8 +41,9 @@ include("accel/ka/surgery/driver.jl")
 include("diagnostics/geometry.jl")
 include("diagnostics/ka_energy.jl")
 include("diagnostics/unbounded/single_layer.jl")
-include("diagnostics/unbounded/multilayer_qg.jl")
 include("diagnostics/periodic/common.jl")
+include("diagnostics/multilayer_qg.jl")
+include("diagnostics/unbounded/multilayer_qg.jl")
 include("diagnostics/periodic/single_layer.jl")
 include("diagnostics/periodic/multilayer_qg.jl")
 
@@ -167,66 +167,6 @@ export flatten_nodes, unflatten_nodes!, to_ode_problem, record_evolution
 export recorded_diagnostics
 export save_snapshot, load_snapshot, jld2_recorder, load_simulation, load_problem
 
-# ── Precompile workload ─────────────────────────────────────────────────
-# Drives the hot paths — velocity, timestep, surgery, diagnostics — for
-# the kernel/domain/stepper combinations used in tutorials, examples, and
-# tests. Running once here caches the JIT for first-call sites elsewhere.
-@setup_workload begin
-    N = 16
-    @compile_workload begin
-        # Single-layer: Euler / Unbounded, RK4 + Leapfrog
-        cE = circular_patch(0.5, N, 2π)
-        probE = Problem(; contours=[cE], dt=0.01)
-        evolve!(probE; nsteps=2)
-        energy(probE); circulation(probE); enstrophy(probE)
-        centroid(cE); ellipse_moments(cE)
-
-        cE2 = circular_patch(0.5, N, 2π)
-        probE_lf = Problem(; contours=[cE2], dt=0.01, stepper=:leapfrog)
-        evolve!(probE_lf; nsteps=2)
-
-        # QG / Unbounded
-        cQ = circular_patch(0.5, N, 2π)
-        probQ = Problem(; contours=[cQ], dt=0.01, kernel=:qg, Ld=1.0)
-        evolve!(probQ; nsteps=2)
-        energy(probQ); circulation(probQ)
-
-        # QG / Periodic — warm Ewald cache for (Lx, Ly) combos used in docs.
-        cQP = circular_patch(0.3, N, 2π)
-        probQP = Problem(; contours=[cQP], dt=0.005, kernel=:qg, Ld=1.0,
-                         domain=:periodic, Lx=3.0, Ly=3.0)
-        evolve!(probQP; nsteps=2)
-        circulation(probQP)
-
-        cQP2 = circular_patch(0.3, N, 1.0)
-        probQP2 = Problem(; contours=[cQP2], dt=0.05, kernel=:qg, Ld=2.0,
-                          domain=:periodic, Lx=Float64(π), Ly=Float64(π))
-        evolve!(probQP2; nsteps=2)
-
-        # beta_staircase + closed vortex on a contour beta-plane QG domain.
-        # Keep small: this only has to specialize the methods; runtime cost
-        # during precompilation scales with contour count × nsteps.
-        sc = beta_staircase(1.0, PeriodicDomain(3.0), 2; nodes_per_contour=N)
-        cV = circular_patch(0.3, N, 2π)
-        probBP = Problem(; contours=vcat(sc, [cV]), dt=0.005,
-                         kernel=:beta_plane_qg, beta=1.0, Ld=1.0,
-                         domain=:periodic, Lx=3.0, Ly=3.0)
-        evolve!(probBP; nsteps=2)
-
-        # SQG / Unbounded
-        cS = circular_patch(0.5, N, 1.0)
-        probS = Problem(; contours=[cS], dt=0.005, kernel=:sqg, δ_sqg=0.02)
-        evolve!(probS; nsteps=2)
-
-        # Multi-layer QG / Unbounded
-        cM = circular_patch(0.5, N, 2π)
-        F = 0.5
-        probM = Problem(; layers=([cM], PVContour{Float64}[]),
-                        dt=0.01, kernel=:multilayer_qg,
-                        Ld=[1.0], coupling=[-F F; F -F])
-        evolve!(probM; nsteps=2)
-        energy(probM); circulation(probM)
-    end
-end
-
+# Precompile common execution paths after all methods are defined.
+include("precompile.jl")
 end # module

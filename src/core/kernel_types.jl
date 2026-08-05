@@ -116,6 +116,27 @@ struct MultiLayerQGKernel{N, M, T<:AbstractFloat} <: AbstractKernel
     modal_to_physical::SMatrix{N, N, T}
 end
 
+"""Return the deformation radius associated with a nonbarotropic eigenvalue."""
+@inline _modal_deformation_radius(λ::T) where {T<:AbstractFloat} =
+    one(T) / sqrt(abs(λ))
+
+"""
+    _dispatch_qg_mode(f, kernel, λ, args...)
+
+Call `f(mode_kernel, args...)` with a concrete [`EulerKernel`](@ref) for the
+barotropic mode or a concrete [`QGKernel`](@ref) for a baroclinic mode. Keeping
+the branch here prevents each velocity and energy implementation from
+repeating the eigenvalue classification while preserving specialization in
+their inner loops.
+"""
+@inline function _dispatch_qg_mode(f::F, kernel::MultiLayerQGKernel,
+                                   λ::T, args...) where {F,T<:AbstractFloat}
+    if _is_barotropic_mode(kernel, λ)
+        return f(EulerKernel(), args...)
+    end
+    return f(QGKernel(_modal_deformation_radius(λ)), args...)
+end
+
 @inline function _qg_coupling_symmetry_tolerance(coupling::AbstractMatrix{T}) where {T}
     scale = maximum(abs, coupling)
     return scale * sqrt(eps(T)) * T(100)

@@ -7,8 +7,8 @@ mutable struct _VelocityScratch{T<:AbstractFloat}
     offsets::Vector{Int}
     target_nodes::Vector{SVector{2,T}}
     mode_vel::Vector{SVector{2,T}}
-    modal_matrix::Matrix{T}
-    modal_matrix_inv::Matrix{T}
+    to_physical::Matrix{T}
+    to_modal::Matrix{T}
     energy_partial::Vector{T}
 end
 

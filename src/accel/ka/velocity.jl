@@ -390,6 +390,33 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
     return _multilayer_velocity_with_ws!(vel, ws, states, kernel, domain, dev, ranges, total)
 end
 
+function _pack_multilayer_mode_segments!(
+        ws::_MultilayerWorkspace{T}, states::NTuple{N,<:DeviceContourState},
+        ranges, to_modal, mode::Int, dev::AbstractDevice) where {N,T}
+    for layer in 1:N
+        range = ranges[layer]
+        isempty(range) && continue
+        state = states[layer]
+        n_layer = length(range)
+        @_ka_launch dev n_layer _state_segment_data_kernel!(
+            view(ws.ax, range), view(ws.ay, range),
+            view(ws.bx, range), view(ws.by, range), view(ws.pv, range),
+            view(ws.ka, range), view(ws.kb, range),
+            state.x, state.y, state.pv, state.wrapx, state.wrapy,
+            state.offsets, state.lengths, state.corners,
+            state.contour_of_node, state.local_index,
+            T(to_modal[mode, layer]), n_layer)
+    end
+    return SegmentData(ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb)
+end
+
+@inline function _ka_apply_modal_velocity!(
+        mode_kernel, out_vx, out_vy, target_x, target_y, segments,
+        domain, dev, ws)
+    return _ka_apply_velocity!(out_vx, out_vy, target_x, target_y, segments,
+                               mode_kernel, domain, dev, ws)
+end
+
 """
     _ka_multilayer_velocity_to_host!(vel, states, kernel, domain, dev) -> vel
 
@@ -444,11 +471,9 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
                                        domain::AbstractDomain, dev::AbstractDevice,
                                        ranges, total::Int) where {N, T}
     evals = kernel.eigenvalues
-    P = kernel.modal_to_physical
-    P_inv = kernel.physical_to_modal
+    to_physical = kernel.modal_to_physical
+    to_modal = kernel.physical_to_modal
 
-    ax, ay, bx, by = ws.ax, ws.ay, ws.bx, ws.by
-    pv, ka, kb = ws.pv, ws.ka, ws.kb
     tx, ty = ws.tx, ws.ty
     mode_vx, mode_vy = ws.mode_vx, ws.mode_vy
     vel_x, vel_y = ws.vel_x, ws.vel_y
@@ -467,33 +492,14 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
 
     for m in 1:N
         lam = evals[m]
-        # Repack segments with this mode's per-layer PV weights. Geometry
-        # (a, b, curvatures) is identical across modes; only seg_pv changes.
-        for ℓ in 1:N
-            r = ranges[ℓ]
-            isempty(r) && continue
-            n_l = length(r)
-            s = states[ℓ]
-            @_ka_launch dev n_l _state_segment_data_kernel!(
-                view(ax, r), view(ay, r), view(bx, r), view(by, r), view(pv, r),
-                view(ka, r), view(kb, r),
-                s.x, s.y, s.pv, s.wrapx, s.wrapy,
-                s.offsets, s.lengths, s.corners,
-                s.contour_of_node, s.local_index, T(P_inv[m, ℓ]), n_l)
-        end
-        seg = SegmentData(ax, ay, bx, by, pv, ka, kb)
-        # Velocity kernels overwrite mode_vx/mode_vy, so they are reused across modes.
-        # Branch to a concrete kernel type so the launch is statically dispatched
-        # (no Union-typed `mode_kernel` per mode).
-        if _is_barotropic_mode(kernel, lam)
-            _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg, EulerKernel(), domain, dev, ws)
-        else
-            _ka_apply_velocity!(mode_vx, mode_vy, tx, ty, seg,
-                                QGKernel(one(T) / sqrt(abs(lam))), domain, dev, ws)
-        end
+        segments = _pack_multilayer_mode_segments!(
+            ws, states, ranges, to_modal, m, dev)
+        _dispatch_qg_mode(
+            _ka_apply_modal_velocity!, kernel, lam,
+            mode_vx, mode_vy, tx, ty, segments, domain, dev, ws)
 
         for ℓ in 1:N
-            w = P[ℓ, m]
+            w = to_physical[ℓ, m]
             abs(w) < eps(T) && continue
             r = ranges[ℓ]
             isempty(r) && continue
@@ -508,14 +514,14 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
 end
 
 @kernel function _project_point_modes_ka!(out_x, out_y, mode_x, mode_y,
-                                          eigenvectors, nlayers)
+                                          to_physical, nlayers)
     layer = @index(Global)
     if layer <= nlayers
         T = eltype(out_x)
         vx = zero(T)
         vy = zero(T)
         @inbounds for mode in 1:nlayers
-            weight = eigenvectors[layer, mode]
+            weight = to_physical[layer, mode]
             vx += weight * mode_x[mode]
             vy += weight * mode_y[mode]
         end
@@ -537,30 +543,15 @@ function _ka_multilayer_velocity_at_states(
     point_y = device_zeros(dev, T, 1)
     mode_x = device_zeros(dev, T, N)
     mode_y = device_zeros(dev, T, N)
+    to_modal = kernel.physical_to_modal
 
     for mode in 1:N
-        for layer in 1:N
-            r = ranges[layer]
-            isempty(r) && continue
-            state = states[layer]
-            n_layer = length(r)
-            @_ka_launch dev n_layer _state_segment_data_kernel!(
-                view(ws.ax, r), view(ws.ay, r), view(ws.bx, r), view(ws.by, r),
-                view(ws.pv, r), view(ws.ka, r), view(ws.kb, r),
-                state.x, state.y, state.pv, state.wrapx, state.wrapy,
-                state.offsets, state.lengths, state.corners,
-                state.contour_of_node, state.local_index,
-                T(kernel.physical_to_modal[mode, layer]), n_layer)
-        end
-        seg = SegmentData(ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb)
+        segments = _pack_multilayer_mode_segments!(
+            ws, states, ranges, to_modal, mode, dev)
         lam = kernel.eigenvalues[mode]
-        if _is_barotropic_mode(kernel, lam)
-            _ka_apply_velocity!(point_x, point_y, target_x, target_y, seg,
-                                EulerKernel(), domain, dev, ws)
-        else
-            _ka_apply_velocity!(point_x, point_y, target_x, target_y, seg,
-                                QGKernel(one(T) / sqrt(abs(lam))), domain, dev, ws)
-        end
+        _dispatch_qg_mode(
+            _ka_apply_modal_velocity!, kernel, lam,
+            point_x, point_y, target_x, target_y, segments, domain, dev, ws)
         copyto!(view(mode_x, mode:mode), point_x)
         copyto!(view(mode_y, mode:mode), point_y)
     end

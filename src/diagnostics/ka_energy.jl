@@ -1107,28 +1107,34 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
     return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
 end
 
+@inline function _ka_unbounded_modal_energy(
+        ::EulerKernel, energy_ws, total, dev)
+    return _ka_energy_raw_with_workspace!(
+        _euler_energy_ka!, energy_ws, total, dev)
+end
+
+@inline function _ka_unbounded_modal_energy(
+        mode_kernel::QGKernel, energy_ws, total, dev)
+    return _ka_energy_raw_with_workspace!(
+        _qg_energy_ka!, energy_ws, total, dev, mode_kernel.Ld)
+end
+
 function _ka_multilayer_energy_with_ws(
         states::NTuple{N, <:DeviceContourState{T}},
         kernel::MultiLayerQGKernel{N}, ::UnboundedDomain,
         dev::AbstractDevice,
         ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
-    P_inv = kernel.physical_to_modal
+    to_modal = kernel.physical_to_modal
     layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
     total == 0 && return zero(T)
     raw = zero(T)
     for mode in 1:N
-        weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
+        weights = ntuple(layer -> T(to_modal[mode, layer]), Val(N))
         energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
         lam = evals[mode]
-        raw += if _is_barotropic_mode(kernel, lam)
-            _ka_energy_raw_with_workspace!(
-                _euler_energy_ka!, energy_ws, total, dev)
-        else
-            _ka_energy_raw_with_workspace!(
-                _qg_energy_ka!, energy_ws, total, dev,
-                one(T) / sqrt(abs(lam)))
-        end
+        raw += _dispatch_qg_mode(
+            _ka_unbounded_modal_energy, kernel, lam, energy_ws, total, dev)
     end
     return _normalize_energy(raw)
 end
@@ -1141,13 +1147,36 @@ function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourStat
     return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
 end
 
+@inline function _ka_periodic_modal_energy(
+        ::EulerKernel, energy_ws, total, dev, cache, domain,
+        kx, ky, fourier, corr0, to_modal, mode, layer_circulation, area)
+    raw = _ka_energy_raw_with_workspace!(
+        _periodic_euler_energy_ka!, energy_ws, total, dev,
+        cache.α, domain.Lx, domain.Ly,
+        cache.n_images, kx, ky, fourier, corr0)
+    return raw, zero(area)
+end
+
+@inline function _ka_periodic_modal_energy(
+        mode_kernel::QGKernel{T}, energy_ws, total, dev, cache, domain,
+        kx, ky, fourier, corr0, to_modal, mode,
+        layer_circulation, area) where {T}
+    kappa2 = inv(mode_kernel.Ld * mode_kernel.Ld)
+    raw = _ka_energy_raw_with_workspace!(
+        _periodic_qg_energy_ka!, energy_ws, total, dev,
+        kappa2, area, kx, ky)
+    zero_energy = _periodic_modal_zero_energy(
+        mode_kernel, to_modal, mode, layer_circulation, area)
+    return raw, zero_energy
+end
+
 function _ka_multilayer_energy_with_ws(
         states::NTuple{N, <:DeviceContourState{T}},
         kernel::MultiLayerQGKernel{N}, domain::PeriodicDomain{T},
         dev::AbstractDevice,
         ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
-    P_inv = kernel.physical_to_modal
+    to_modal = kernel.physical_to_modal
     # Every mode uses the same Fourier grid; its kernel differs only through
     # the modal eigenvalue in the denominator.
     cache = _get_ewald_cache(domain, EulerKernel())
@@ -1157,26 +1186,19 @@ function _ka_multilayer_energy_with_ws(
     layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
     total == 0 && return zero(T)
     raw = zero(T)
-    E_zero = zero(T)
-    layer_circulation = ntuple(ℓ -> _state_circulation(states[ℓ], dev), Val(N))
+    zero_energy = zero(T)
+    layer_circulation = ntuple(
+        layer -> _state_circulation(states[layer], dev), Val(N))
     for mode in 1:N
-        weights = ntuple(ℓ -> T(P_inv[mode, ℓ]), Val(N))
+        weights = ntuple(layer -> T(to_modal[mode, layer]), Val(N))
         energy_ws = _apply_multilayer_modal_pv!(ws, layer_lengths, weights, dev)
         lam = evals[mode]
-        is_euler_mode = _is_barotropic_mode(kernel, lam)
-        raw_mode = if is_euler_mode
-            _ka_energy_raw_with_workspace!(
-                _periodic_euler_energy_ka!, energy_ws, total, dev,
-                cache.α, domain.Lx, domain.Ly,
-                cache.n_images, kx, ky, fourier, corr0)
-        else
-            γ_mode = sum(P_inv[mode, ℓ] * layer_circulation[ℓ] for ℓ in 1:N)
-            E_zero += γ_mode * γ_mode / (T(2) * area * abs(lam))
-            _ka_energy_raw_with_workspace!(
-                _periodic_qg_energy_ka!, energy_ws, total, dev,
-                T(abs(lam)), area, kx, ky)
-        end
+        raw_mode, mode_zero = _dispatch_qg_mode(
+            _ka_periodic_modal_energy, kernel, lam, energy_ws, total, dev,
+            cache, domain, kx, ky, fourier, corr0, to_modal, mode,
+            layer_circulation, area)
         raw += raw_mode
+        zero_energy += mode_zero
     end
-    return _normalize_energy(raw) + E_zero
+    return _normalize_energy(raw) + zero_energy
 end
