@@ -1,8 +1,8 @@
 # ContourDynamics.jl
 
+[![CI](https://github.com/subhk/ContourDynamics.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/subhk/ContourDynamics.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://subhk.github.io/ContourDynamics.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://subhk.github.io/ContourDynamics.jl/dev/)
-[![CI](https://github.com/subhk/ContourDynamics.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/subhk/ContourDynamics.jl/actions/workflows/CI.yml?query=branch%3Amain)
 
 ContourDynamics.jl simulates vortex patches by tracking their boundaries. It
 supports 2D Euler, surface quasi-geostrophic (SQG), single-layer QG, and
