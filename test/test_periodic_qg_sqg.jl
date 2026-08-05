@@ -117,7 +117,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             end
             total += quad / 4 * dot_ds
         end
-        return -(c.pv^2 / (4π)) * total / 2
+        return -(c.pv^2 / (4π)) * total
     end
 
     @testset "QG velocity: periodic ≈ unbounded" begin
@@ -316,7 +316,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         G = inv(2π * sqrt(sum(abs2, r) + kernel.delta^2)) +
             ContourDynamics._periodic_sqg_green_correction(
                 kernel, domain, cache, r, origin)
-        @test laplacian_phi ≈ 2π * G rtol=2e-6
+        @test laplacian_phi ≈ 4π * G rtol=2e-6
     end
 
     @testset "SQG unbounded energy uses regularized potential" begin

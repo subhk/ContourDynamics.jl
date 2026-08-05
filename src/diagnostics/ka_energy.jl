@@ -373,7 +373,10 @@ end
 
 @inline function _sqg_regularized_energy_potential_scalar(r2::T, delta::T) where {T}
     r_delta = sqrt(r2 + delta * delta)
-    return r_delta - delta * log(delta + r_delta)
+    # If phi_delta = r_delta - delta*log(delta + r_delta), then
+    # Delta phi_delta = 1/r_delta. The shared energy normalization is
+    # -raw/(8pi), so SQG uses 2phi_delta to recover the physical Hamiltonian.
+    return T(2) * (r_delta - delta * log(delta + r_delta))
 end
 
 @inline function _sqg_periodic_energy_potential_scalar(rx::T, ry::T, alpha::T,
@@ -390,8 +393,10 @@ end
             sy = ry - shifty
             r2 = sx * sx + sy * sy
             r = sqrt(r2)
-            phi += _sqg_ewald_real_potential_scalar(r, alpha) +
-                   _sqg_regularized_energy_potential_scalar(r2, delta) - r
+            # The regularized potential is already doubled for the shared
+            # energy normalization; scale every other Ewald piece likewise.
+            phi += T(2) * _sqg_ewald_real_potential_scalar(r, alpha) +
+                   _sqg_regularized_energy_potential_scalar(r2, delta) - T(2) * r
         end
     end
 
@@ -407,7 +412,8 @@ end
             k2 < eps(T) && continue
             coeff = fourier_coeffs[mi, ni]
             abs(coeff) < eps(T) && continue
-            phi -= coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry)) / k2
+            phi -= T(2) * coeff *
+                   (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry)) / k2
         end
     end
 
@@ -833,6 +839,17 @@ const _EnergySource{T} = Union{DeviceContourState{T}, Vector{PVContour{T}}}
     return gamma
 end
 
+# The 2-D Ewald split of the softened SQG kernel retains a spatially constant
+# coefficient even though the fractional-Laplacian inverse is defined only for
+# nonzero Fourier modes. The unregularized real-space term contributes
+# 1/(A*alpha*sqrt(pi)); softening contributes -delta/A.
+@inline function _sqg_periodic_ewald_zero_mode(cache::EwaldCache{T},
+                                                domain::PeriodicDomain{T},
+                                                delta::T) where {T}
+    area = T(4) * domain.Lx * domain.Ly
+    return (inv(cache.alpha * sqrt(T(pi))) - delta) / area
+end
+
 # Upload the Ewald tables once per call — every periodic energy kernel takes
 # the same (kx, ky, fourier_coeffs) triple.
 @inline function _device_ewald_tables(cache::EwaldCache, dev::AbstractDevice)
@@ -902,7 +919,9 @@ function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
                                         cache.alpha, kernel.delta,
                                         domain.Lx, domain.Ly,
                                         cache.n_images, kx, ky, fourier)
-    return _normalize_energy(raw)
+    gamma = _energy_contour_circulation(src)
+    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.delta)
+    return _normalize_energy(raw) - zero_mode * gamma * gamma / T(2)
 end
 
 function _ka_energy_from_state(state::DeviceContourState{T}, kernel,
@@ -975,7 +994,9 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKerne
     raw = _ka_energy_raw_with_workspace!(
         _periodic_sqg_energy_ka!, ws, n, dev, cache.alpha, kernel.delta,
         domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier)
-    return _normalize_energy(raw)
+    gamma = _state_circulation(state, dev)
+    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.delta)
+    return _normalize_energy(raw) - zero_mode * gamma * gamma / T(2)
 end
 
 # ── Multi-layer modal energy ─────────────────────────────────────────────

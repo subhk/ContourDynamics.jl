@@ -62,5 +62,8 @@ function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where 
         E += ci.pv * cj.pv *
              _energy_contour_pair_sqg_periodic(ci, cj, cache, prob.domain, delta; _partial=partial)
     end
-    return _normalize_energy(E)
+    # Remove the constant Ewald coefficient: periodic SQG inversion acts on the
+    # mean-free scalar, so k=0 is not part of the Hamiltonian.
+    zero_mode = _sqg_periodic_ewald_zero_mode(cache, prob.domain, delta)
+    return _normalize_energy(E) - zero_mode * circulation(prob)^2 / T(2)
 end

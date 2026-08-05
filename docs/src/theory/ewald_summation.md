@@ -113,7 +113,20 @@ wavevector ``\mathbf k``, splitting parameter ``\alpha``, and area ``A`` are
 defined above. The complementary error function is
 ``\operatorname{erfc}(z)=1-\operatorname{erf}(z)``. Both sums omit terms only
 through the configured finite `n_images` and `n_fourier` truncations; the
-displayed equation is the infinite-sum identity.
+displayed equation is the infinite-truncation form.
+
+The two-dimensional lattice sum of ``1/r`` and the ``k=0`` inverse of the
+fractional Laplacian are defined only up to a spatial constant. Accordingly,
+the displayed identity is understood modulo that constant. Closed-contour
+velocity is insensitive to it. For the softened kernel used by the package,
+the Ewald representative carries the constant coefficient
+
+```math
+C_0=\frac{1}{A}\left(\frac{1}{\alpha\sqrt{\pi}}-\delta\right).
+```
+
+The periodic energy diagnostic subtracts ``C_0\Gamma^2/2`` so that its
+Hamiltonian corresponds to the mean-free, nonzero-``k`` inversion.
 
 The Fourier coefficients contain an ``\operatorname{erfc}(|\mathbf{k}|/(2\alpha))`` damping factor and a leading ``1/|\mathbf{k}|`` behavior (compared to ``1/k^2`` for Euler), reflecting the fractional Laplacian's half-order nature. In practical terms, this means SQG is less smooth than Euler in Fourier space and therefore needs a bit more care numerically.
 

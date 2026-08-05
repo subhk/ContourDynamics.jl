@@ -42,8 +42,8 @@ end
 """
     SQGKernel{T}(delta)
 
-Kernel for surface quasi-geostrophic (SQG) dynamics using the fractional
-Laplacian Green's function `G(r) = 1/(2πr)`.
+Kernel for surface quasi-geostrophic (SQG) dynamics using the contour kernel
+`G_C(r) = 1/(2πr)`.
 
 The SQG velocity at a contour boundary is singular (the tangential component
 diverges logarithmically), so a **regularization length** `delta > 0` is
@@ -53,7 +53,10 @@ is `delta ≈ μ`, the minimum segment length used for surgery.
 # Sign convention
 
 Positive PV (surface buoyancy) induces counter-clockwise circulation, matching
-the `EulerKernel` convention.
+the `EulerKernel` convention. With `u = (-ψ_y, ψ_x)`, this is the lower-boundary
+convention `θ = -(-Δ)^(1/2)ψ`; the corresponding streamfunction Green's
+function is `-1/(2πr)` and integration by parts gives the positive contour
+kernel above.
 """
 struct SQGKernel{T<:AbstractFloat} <: AbstractKernel
     delta::T

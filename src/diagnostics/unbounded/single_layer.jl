@@ -37,14 +37,15 @@ function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_sqg(ci, cj, delta; _partial=partial)
     end
-    # Φδ(r) = sqrt(r²+δ²) - δ log(δ + sqrt(r²+δ²)) satisfies ΔΦδ = 1/sqrt(r²+δ²),
-    # matching the regularized SQG kernel.
+    # φδ(r) = sqrt(r²+δ²) - δ log(δ + sqrt(r²+δ²)) satisfies
+    # Δφδ = 1/sqrt(r²+δ²). The pair integrand is 2φδ so the shared
+    # normalization returns the positive SQG Hamiltonian.
     return _normalize_energy(E)
 end
 
 function _energy_contour_pair_sqg(ci::PVContour{T}, cj::PVContour{T}, delta::T;
                                    _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
-    # No self branch: Φδ(r) is smooth everywhere thanks to the delta regularization.
+    # No self branch: φδ(r) is smooth everywhere thanks to the delta regularization.
     Φ = rv -> _sqg_regularized_energy_potential_scalar(rv[1]^2 + rv[2]^2, delta)
     return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end

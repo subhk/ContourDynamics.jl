@@ -179,11 +179,11 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
                                              delta::T) where {T}
     # Apply the SQG softening to every periodic image.  For each image,
     #
-    #   Φ_real(r) + Φδ(r) - r
+    #   2Φ_real(r) + 2Φδ(r) - 2r
     #
-    # has Laplacian erfc(αr)/r + 1/sqrt(r²+δ²) - 1/r.  Together with the
-    # unregularized Fourier part this is exactly the Ewald decomposition used by
-    # the periodic velocity kernel.
+    # has Laplacian twice the scalar Ewald kernel. This factor of two is required
+    # by the shared -raw/(8π) contour-energy normalization; together with the
+    # doubled Fourier part it gives the positive SQG Hamiltonian.
     alpha = cache.alpha
     Lx, Ly = domain.Lx, domain.Ly
     phi = zero(T)
@@ -194,8 +194,8 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
             rv = r_vec - shift
             r2 = rv[1]^2 + rv[2]^2
             r = sqrt(r2)
-            phi += _sqg_ewald_real_potential(r, alpha) +
-                   _sqg_regularized_energy_potential_scalar(r2, delta) - r
+            phi += T(2) * _sqg_ewald_real_potential(r, alpha) +
+                   _sqg_regularized_energy_potential_scalar(r2, delta) - T(2) * r
         end
     end
 
@@ -206,7 +206,7 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
             coeff = cache.fourier_coeffs[mi, ni]
             abs(coeff) < eps(T) && continue
             phase = kxi * r_vec[1] + kyi * r_vec[2]
-            phi -= coeff * cos(phase) / k2
+            phi -= T(2) * coeff * cos(phase) / k2
         end
     end
 

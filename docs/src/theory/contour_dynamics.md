@@ -123,10 +123,12 @@ remainder suitable for standard quadrature.
 Surface quasi-geostrophic (SQG) dynamics replaces the Laplacian PV inversion with a **fractional Laplacian**:
 
 ```math
-(-\nabla^2)^{1/2}\psi = \theta
+-(-\nabla^2)^{1/2}\psi = \theta
 ```
 
-where ``\theta`` is the surface buoyancy. The Green's function is ``G(r) = 1/(2\pi r)``, and the contour integral becomes:
+where ``\theta`` is the surface buoyancy in the package's lower-boundary
+convention. The streamfunction Green's function is
+``G_\psi(r)=-1/(2\pi r)``, and integration by parts gives the contour integral:
 
 ```math
 \mathbf{u}(\mathbf{x}) = \frac{1}{2\pi}\oint_C \frac{d\mathbf{x}'}{|\mathbf{x}-\mathbf{x}'|}
@@ -137,6 +139,11 @@ Here ``(-\nabla^2)^{1/2}`` is the half-order fractional Laplacian,
 ``C`` is its patch boundary, and ``d\mathbf{x}'`` is the oriented tangent line
 element. The kernel is more singular than in Euler, so SQG tends to generate
 sharper fronts and stronger filamentation.
+
+This sign convention corresponds to a lower boundary with fluid above it and
+keeps positive stored jumps counter-clockwise, consistently with the Euler and
+QG kernels. Reversing the physical boundary orientation reverses the meaning
+of the stored buoyancy sign.
 
 The segment integral has a closed-form antiderivative:
 

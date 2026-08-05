@@ -40,6 +40,21 @@ Helmholtz mode ``\Gamma^2/(2A\kappa^2)``. Multi-layer QG energy applies the
 same formula independently to each orthonormal vertical mode, omitting only
 the non-invertible constant barotropic Euler mode.
 
+For SQG, the package uses the lower-boundary convention
+``\theta=-(-\nabla^2)^{1/2}\psi`` and the softened contour kernel
+``1/\sqrt{r^2+\delta^2}``. The reported positive Hamiltonian is
+
+```math
+H=-\frac12\int \theta\psi\,dA
+ =\frac{1}{4\pi}\iint
+ \frac{\theta(\mathbf{x})\theta(\mathbf{x}')}
+ {\sqrt{|\mathbf{x}-\mathbf{x}'|^2+\delta^2}}\,dA\,dA'.
+```
+
+On a periodic domain the spatially constant fractional-Laplacian mode is
+excluded; equivalently, the inversion acts on the mean-free part of
+``\theta``.
+
 ```@docs
 vortex_area
 centroid
