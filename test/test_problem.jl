@@ -285,6 +285,25 @@ end
         @test prob.contour_problem isa MultiLayerContourProblem
         @test nlayers(prob.contour_problem) == 2
 
+        H = SVector(1.0, 3.0)
+        unequal_coupling = SMatrix{2,2}(-0.6, 0.2, 0.6, -0.2)
+        unequal = Problem(; kernel=:multilayer_qg,
+                            Ld=SVector(1 / sqrt(0.8)),
+                            coupling=unequal_coupling,
+                            layer_thicknesses=H,
+                            layers=([c1], PVContour{Float64}[]), dt=0.01)
+        @test unequal.contour_problem.kernel.layer_thicknesses == H
+        @test unequal.contour_problem.kernel.coupling == unequal_coupling
+
+        inferred = Problem(; kernel=:multilayer_qg,
+                             Ld=SVector(1 / sqrt(0.8)),
+                             coupling=unequal_coupling,
+                             layers=([c1], PVContour{Float64}[]), dt=0.01)
+        @test inferred.contour_problem.kernel.layer_thicknesses ≈ SVector(0.5, 1.5)
+
+        @test_throws ArgumentError Problem(; contours=[c1], dt=0.01,
+                                             layer_thicknesses=H)
+
         # contours and layers mutually exclusive
         @test_throws ArgumentError Problem(; kernel=:multilayer_qg, Ld=Ld, coupling=coupling,
                                              contours=[c1], layers=([c1],), dt=0.01)

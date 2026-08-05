@@ -7,7 +7,7 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
     kernel = prob.kernel
     domain = prob.domain
     evals = kernel.eigenvalues
-    P_inv = kernel.eigenvectors_inv
+    P_inv = kernel.physical_to_modal
     E = zero(T)
     E_zero = zero(T)
     area = T(4) * domain.Lx * domain.Ly

@@ -45,7 +45,8 @@ constructing the contour problem and time-stepper.
 | `Ld` | Positive deformation radius for QG/beta-plane QG, or `N-1` modal radii for an `N`-layer problem |
 | `beta` | Planetary-PV gradient; required for beta-plane QG |
 | `delta_sqg` | Positive SQG regularization length; required for SQG and independent of the surgery `delta` |
-| `coupling` | Symmetric layer-stretching matrix; required for multi-layer QG and checked against `Ld` |
+| `coupling` | Physical layer-stretching matrix; required for multi-layer QG, thickness-symmetrized when needed, and checked against `Ld` |
+| `layer_thicknesses` | Positive layer depths/weights for multi-layer QG; optional when `coupling` is symmetric or uniquely determines their ratios |
 | `domain` | `:unbounded` (default) or `:periodic` |
 | `Lx`, `Ly` | Positive periodic-domain half-widths; required for `domain=:periodic` |
 | `stepper` | `:RK4` (default) or `:leapfrog` |

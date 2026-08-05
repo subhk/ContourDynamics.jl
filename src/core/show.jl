@@ -43,6 +43,7 @@ end
 function Base.show(io::IO, ::MIME"text/plain", k::MultiLayerQGKernel{N, M, T}) where {N, M, T}
     println(io, "MultiLayerQGKernel{$N, $T}")
     println(io, "├── Ld: ", k.Ld)
+    println(io, "├── layer thicknesses: ", k.layer_thicknesses)
     println(io, "├── coupling: $(N)×$(N) SMatrix{$T}")
     print(io,   "└── eigenvalues: ", k.eigenvalues)
 end
@@ -168,6 +169,7 @@ end
 
 function _show_kernel_details(io::IO, k::MultiLayerQGKernel{N, M, T}, pad::String) where {N, M, T}
     println(io, pad, "├── Ld: ", k.Ld)
+    println(io, pad, "├── layer thicknesses: ", k.layer_thicknesses)
     println(io, pad, "├── coupling: $(N)×$(N) SMatrix{$T}")
     println(io, pad, "└── eigenvalues: ", k.eigenvalues)
 end

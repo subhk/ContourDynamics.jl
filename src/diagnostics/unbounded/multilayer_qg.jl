@@ -6,7 +6,7 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
     # modal deformation radius 1/sqrt(abs(lambda)).
     kernel = prob.kernel
     evals = kernel.eigenvalues
-    P_inv = kernel.eigenvectors_inv
+    P_inv = kernel.physical_to_modal
     E = zero(T)
 
     max_n = maximum(nnodes(c) for layer in prob.layers for c in layer if nnodes(c) >= 3 && !is_spanning(c); init=0)
@@ -14,7 +14,8 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
 
     for mode in 1:N
         lam = evals[mode]
-        # P_inv projects physical-layer PV jumps into modal amplitudes. The
+        # The weighted physical-to-modal map projects layer PV jumps into modal
+        # amplitudes. The
         # pair loops remain over physical contours so existing single-layer
         # pair-integral helpers can be reused.
         for li in 1:N

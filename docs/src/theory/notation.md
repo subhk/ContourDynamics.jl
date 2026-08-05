@@ -102,7 +102,8 @@ but the package does not identify them.
 |---|---|---|
 | ``N`` | Number of physical QG layers | `nlayers(kernel_or_problem)` |
 | ``i,j\in\{1,\ldots,N\}`` | Physical-layer indices | Tuple positions in `layers` |
-| ``\mathbf{C}=[C_{ij}]`` | Symmetric layer-stretching operator | `coupling` |
+| ``\mathbf{C}=[C_{ij}]`` | Physical layer-stretching operator; may be nonsymmetric for unequal depths | `coupling` |
+| ``\mathbf{W}=\operatorname{diag}(H_i)`` | Layer-thickness weight matrix satisfying ``\mathbf W\mathbf C=\mathbf C^{\mathsf T}\mathbf W`` | `layer_thicknesses` |
 | ``\mathbf{P}`` | Matrix whose columns are vertical eigenmodes | `MultiLayerQGKernel.eigenvectors` |
 | ``\mathbf{\Lambda}=\operatorname{diag}(\lambda_m)`` | Diagonal matrix of modal eigenvalues | `MultiLayerQGKernel.eigenvalues` |
 | ``m`` | Vertical-mode index | Index into modal eigenvalues |
@@ -128,7 +129,8 @@ The principal [`Problem`](@ref) keywords map to the notation as follows:
 | `Ld` | One deformation radius for QG/beta-plane QG, or ``N-1`` modal radii for multi-layer QG |
 | `beta` | Beta-plane gradient ``\beta``; required by `:beta_plane_qg` |
 | `delta_sqg` | SQG regularization ``\delta_{\mathrm{SQG}}``; required by `:sqg` |
-| `coupling` | Symmetric ``N\times N`` stretching matrix; required by `:multilayer_qg` |
+| `coupling` | Physical ``N\times N`` stretching matrix; required by `:multilayer_qg` |
+| `layer_thicknesses` | Positive ``H_i`` values used to symmetrize unequal-depth multi-layer coupling |
 | `domain` | `:unbounded` or `:periodic` |
 | `Lx`, `Ly` | Positive half-widths of a periodic domain |
 | `stepper` | `:RK4` or `:leapfrog` |
@@ -136,4 +138,3 @@ The principal [`Problem`](@ref) keywords map to the notation as follows:
 | `surgery` | A preset, `:none`, or an explicit `SurgeryParams` |
 | `dev` | `CPU()` or `GPU()` storage/execution target |
 | `T` | Floating-point type used consistently by geometry, kernels, and buffers |
-

@@ -223,6 +223,22 @@ The constructor automatically eigen-decomposes the coupling matrix. Each eigenmo
 The package handles the eigen-decomposition and the projection back to physical
 layers internally.
 
+For unequal depths, pass the raw physical coupling matrix together with the
+layer thicknesses. For example, ``H=(1,3)`` and interface coefficients
+``F_1=0.6``, ``F_2=0.2`` obey ``H_1F_1=H_2F_2``:
+
+```@repl tutorial_qg_multilayer
+H_unequal = SVector(1.0, 3.0)
+coupling_unequal = @SMatrix [-0.6 0.6; 0.2 -0.2]
+Ld_unequal = SVector(1 / sqrt(0.6 + 0.2))
+unequal_kernel = MultiLayerQGKernel(Ld_unequal, coupling_unequal, H_unequal)
+unequal_kernel.symmetric_coupling
+```
+
+The two-argument constructor can infer normalized thickness ratios from a
+connected nonsymmetric matrix, but supplying them explicitly preserves the
+physical Hamiltonian scale.
+
 ### Creating a Multi-Layer Problem
 
 ```@repl tutorial_qg_multilayer
@@ -245,6 +261,8 @@ println("Layers: $(nlayers(prob))");
 
 This is the multi-layer analogue of the earlier single-layer `Problem` call:
 the only extra pieces are the `layers` tuple, `Ld`, and the coupling matrix.
+For unequal-depth input, add `layer_thicknesses=H_unequal` (and use its matching
+`Ld_unequal` and `coupling_unequal`).
 
 ### Evolving the Multi-Layer System
 

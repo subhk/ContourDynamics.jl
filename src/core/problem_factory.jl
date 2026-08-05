@@ -56,9 +56,12 @@ function _validate_problem_layout(kernel::Symbol, contours, layers)
 end
 
 Base.@constprop :aggressive function _build_kernel(::Type{T}, kernel::Symbol, Ld, coupling,
+                                                   layer_thicknesses,
                                                    delta_sqg::Real, beta::Real) where {T}
     # Normalize all numeric inputs to the problem float type here. Downstream
     # kernel constructors deliberately enforce type consistency with contours.
+    layer_thicknesses !== nothing && kernel !== :multilayer_qg && throw(ArgumentError(
+        "`layer_thicknesses` is only valid with kernel=:multilayer_qg."))
     if kernel === :euler
         return EulerKernel()
     elseif kernel === :qg
@@ -81,7 +84,15 @@ Base.@constprop :aggressive function _build_kernel(::Type{T}, kernel::Symbol, Ld
         # make modal decomposition type-stable in the velocity path.
         Ld_s = Ld isa SVector ? convert(SVector{M, T}, Ld) : SVector{M, T}(T.(collect(Ld)))
         coupling_s = coupling isa SMatrix ? convert(SMatrix{Nlay, Nlay, T}, coupling) : SMatrix{Nlay, Nlay, T}(T.(coupling))
-        return MultiLayerQGKernel(Ld_s, coupling_s)
+        if layer_thicknesses === nothing
+            return MultiLayerQGKernel(Ld_s, coupling_s)
+        end
+        length(layer_thicknesses) == Nlay || throw(ArgumentError(
+            "Expected $Nlay layer thicknesses, got $(length(layer_thicknesses))"))
+        H_s = layer_thicknesses isa SVector ?
+              convert(SVector{Nlay,T}, layer_thicknesses) :
+              SVector{Nlay,T}(T.(collect(layer_thicknesses)))
+        return MultiLayerQGKernel(Ld_s, coupling_s, H_s)
     end
     throw(ArgumentError("Unknown kernel :$kernel. Use :euler, :qg, :beta_plane_qg, :sqg, or :multilayer_qg."))
 end
@@ -157,7 +168,9 @@ Use `contours=Vector{PVContour}` for single-layer Euler/QG/SQG problems, or
 Periodic domains require `domain=:periodic, Lx=..., Ly=...`. QG kernels require
 `Ld`; beta-plane QG also requires `beta` and spanning contours from
 [`beta_staircase`](@ref); SQG kernels require `delta_sqg`; multi-layer kernels
-require both `Ld` and `coupling`.
+require both `Ld` and `coupling`. For unequal-depth multi-layer QG, pass
+`layer_thicknesses`; a connected physical coupling matrix also allows their
+relative values to be inferred.
 
 `surgery` may be a [`SurgeryParams`](@ref), one of `:standard`,
 `:conservative`, `:aggressive`, or `:none`.
@@ -167,6 +180,7 @@ Base.@constprop :aggressive function Problem(;
     dt::Real,
     layers=nothing,
     coupling=nothing,
+    layer_thicknesses=nothing,
     kernel::Symbol=:euler,
     Ld=nothing,
     beta::Real=NaN,
@@ -185,7 +199,8 @@ Base.@constprop :aggressive function Problem(;
     is_multilayer = _validate_problem_layout(kernel, contours, layers)
     typed_contours = is_multilayer ? nothing : _convert_contours_precision(T, contours)
     typed_layers = is_multilayer ? _convert_layers_precision(T, layers) : nothing
-    built_kernel = _build_kernel(T, kernel, Ld, coupling, delta_sqg, beta)
+    built_kernel = _build_kernel(T, kernel, Ld, coupling, layer_thicknesses,
+                                 delta_sqg, beta)
     built_domain = _build_domain(T, domain, Lx, Ly)
     device = _build_device(dev)
     contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain,

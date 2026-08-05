@@ -28,6 +28,7 @@ using StaticArrays
         s_rich = repr("text/plain", mk)
         @test occursin("MultiLayerQGKernel{2, Float64}", s_rich)
         @test occursin("├── Ld:", s_rich)
+        @test occursin("├── layer thicknesses: [1.0, 1.0]", s_rich)
         @test occursin("├── coupling: 2×2 SMatrix{Float64}", s_rich)
         @test occursin("└── eigenvalues:", s_rich)
     end
@@ -108,6 +109,7 @@ using StaticArrays
         @test occursin("MultiLayerContourProblem", s)
         @test occursin("kernel: MultiLayerQGKernel{2, Float64}", s)
         @test occursin("│   ├── Ld:", s)
+        @test occursin("│   ├── layer thicknesses:", s)
         @test occursin("│   └── eigenvalues:", s)
         @test occursin("domain: UnboundedDomain", s)
         @test occursin("device: CPU()", s)

@@ -32,24 +32,23 @@ function _qg_periodic_fourier_energy(domain, contours, Ld, modes)
     return result / (2 * area)
 end
 
-function _multilayer_periodic_fourier_energy(domain, layers, kernel, modes)
+function _multilayer_periodic_fourier_energy(domain, layers, coupling, H, modes)
     area = 4 * domain.Lx * domain.Ly
     result = 0.0
     for m in -modes:modes, n in -modes:modes
         iszero_mode = m == 0 && n == 0
+        # The fixtures using this reference have zero circulation separately in
+        # every layer, so the singular barotropic zero mode contributes nothing.
+        iszero_mode && continue
         kx = π * m / domain.Lx
         ky = π * n / domain.Ly
         k2 = kx * kx + ky * ky
         qhat = SVector{length(layers),ComplexF64}(ntuple(layer ->
-            iszero_mode ? ComplexF64(sum(c.pv * vortex_area(c) for c in layers[layer])) :
             sum(_qg_polygon_fourier_coefficient(c, kx, ky) for c in layers[layer]),
             length(layers)))
-        modal_q = kernel.eigenvectors_inv * qhat
-        for mode in 1:length(layers)
-            lam = kernel.eigenvalues[mode]
-            iszero_mode && ContourDynamics._is_barotropic_mode(kernel, lam) && continue
-            result += abs2(modal_q[mode]) / (k2 - lam)
-        end
+        physical_inverse = k2 * Matrix{Float64}(I, length(layers), length(layers)) -
+                           Matrix(coupling)
+        result += real(dot(qhat, Diagonal(Vector(H)) * (physical_inverse \ qhat)))
     end
     return result / (2 * area)
 end
@@ -147,10 +146,28 @@ end
         clear_ewald_cache!()
     end
 
-    @testset "multilayer modal inversion matches the physical-layer matrix" begin
-        F = 0.5
-        coupling = SMatrix{2,2,Float64}(-F, F, F, -F)
-        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), coupling)
+    @testset "unequal-depth modal inversion matches the physical-layer matrix" begin
+        H = SVector(1.0, 3.0)
+        F1, F2 = 0.6, 0.2
+        coupling = SMatrix{2,2,Float64}(-F1, F2, F1, -F2)
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(F1 + F2)), coupling, H)
+        keyword_kernel = MultiLayerQGKernel(
+            SVector(1 / sqrt(F1 + F2)), coupling; layer_thicknesses=H)
+        inferred_kernel = MultiLayerQGKernel(SVector(1 / sqrt(F1 + F2)), coupling)
+
+        @test kernel.layer_thicknesses == H
+        @test keyword_kernel.layer_thicknesses == H
+        @test inferred_kernel.layer_thicknesses ≈ H / (sum(H) / length(H))
+        @test kernel.symmetric_coupling ≈ kernel.symmetric_coupling'
+        @test kernel.modal_to_physical * Diagonal(kernel.eigenvalues) *
+              kernel.physical_to_modal ≈ coupling
+        @test kernel.physical_to_modal * kernel.modal_to_physical ≈ I
+
+        @test_throws ArgumentError MultiLayerQGKernel(
+            kernel.Ld, coupling, SVector(1.0, 1.0))
+        one_way = SMatrix{2,2,Float64}(-F1, 0.0, F1, 0.0)
+        @test_throws ArgumentError MultiLayerQGKernel(kernel.Ld, one_way)
+
         domain = PeriodicDomain(2.3, 1.7)
         straight(nodes, pv) = PVContour(
             nodes, pv, zero(SVector{2,Float64}), trues(length(nodes)))
@@ -178,23 +195,66 @@ end
                   norm(expected_velocity[layer]) < 2e-5
         end
 
-        # Use finer straight polygons for the energy comparison so the
+        velocity_states = ntuple(i -> DeviceContourState(deepcopy(layers[i]),
+                                                         ContourDynamics.CPU()), 2)
+        device_velocity = ContourDynamics._ka_multilayer_velocity_at_states(
+            velocity_states, kernel, domain, x, ContourDynamics.CPU())
+        for layer in 1:2
+            @test device_velocity[layer] ≈ actual_velocity[layer] rtol=2e-13 atol=2e-13
+        end
+
+        inferred_prob = MultiLayerContourProblem(inferred_kernel, domain, deepcopy(layers))
+        for layer in 1:2
+            @test velocity(inferred_prob, x)[layer] ≈ actual_velocity[layer] rtol=2e-13
+        end
+
+        # Use circulation-neutral pairs of finer straight polygons for the
+        # energy comparison. This removes the singular physical barotropic
+        # zero mode and lets the reference invert the raw nonsymmetric matrix
+        # directly, without using any implementation modal transforms. The
         # independent exact segment Fourier integral is not dominated by the
         # diagnostic's fixed three-point panel quadrature at the highest mode.
         energy_layers = (
-            [straight(circular_patch(0.24, 24, 0.9; cx=-0.18, cy=0.07).nodes, 0.9)],
-            [straight(circular_patch(0.18, 20, -0.55; cx=0.42, cy=-0.16).nodes, -0.55)],
+            [straight(circular_patch(0.18, 24, 0.9; cx=-0.42, cy=0.12).nodes, 0.9),
+             straight(circular_patch(0.18, 24, -0.9; cx=0.08, cy=-0.31).nodes, -0.9)],
+            [straight(circular_patch(0.15, 20, 0.55; cx=0.47, cy=0.28).nodes, 0.55),
+             straight(circular_patch(0.15, 20, -0.55; cx=0.14, cy=0.04).nodes, -0.55)],
         )
+        @test all(abs(sum(c.pv * vortex_area(c) for c in layer)) < 2e-16
+                  for layer in energy_layers)
         energy_prob = MultiLayerContourProblem(kernel, domain, deepcopy(energy_layers))
         reference_energy = _multilayer_periodic_fourier_energy(
-            domain, energy_layers, kernel, modes)
-        @test energy(energy_prob) ≈ reference_energy rtol=2e-7
+            domain, energy_layers, coupling, H, modes)
+        @test energy(energy_prob) ≈ reference_energy rtol=5e-7
 
         states = ntuple(i -> DeviceContourState(deepcopy(energy_layers[i]),
                                                 ContourDynamics.CPU()), 2)
         @test ContourDynamics._ka_multilayer_energy_from_states(
             states, kernel, domain, ContourDynamics.CPU()) ≈
-            reference_energy rtol=5e-8
+            reference_energy rtol=5e-7
+
+        inferred_energy_prob = MultiLayerContourProblem(
+            inferred_kernel, domain, deepcopy(energy_layers))
+        @test energy(inferred_energy_prob) ≈
+              reference_energy / (sum(H) / length(H)) rtol=5e-7
+
+        # A pure weighted eigenmode must have exactly the corresponding
+        # single-layer QG Hamiltonian in an unbounded domain.
+        mode = findfirst(lam -> !ContourDynamics._is_barotropic_mode(kernel, lam),
+                         kernel.eigenvalues)
+        base = circular_patch(0.45, 48, 1.0)
+        mode_layers = ntuple(layer -> [PVContour(copy(base.nodes),
+            kernel.modal_to_physical[layer, mode])], 2)
+        mode_prob = MultiLayerContourProblem(kernel, UnboundedDomain(), mode_layers)
+        single_mode = ContourProblem(
+            QGKernel(1 / sqrt(abs(kernel.eigenvalues[mode]))),
+            UnboundedDomain(), [base])
+        @test energy(mode_prob) ≈ energy(single_mode) rtol=2e-12
+        mode_states = ntuple(i -> DeviceContourState(deepcopy(mode_layers[i]),
+                                                     ContourDynamics.CPU()), 2)
+        @test ContourDynamics._ka_multilayer_energy_from_states(
+            mode_states, kernel, UnboundedDomain(), ContourDynamics.CPU()) ≈
+            energy(single_mode) rtol=2e-12
         clear_ewald_cache!()
     end
 

@@ -1113,7 +1113,7 @@ function _ka_multilayer_energy_with_ws(
         dev::AbstractDevice,
         ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
-    P_inv = kernel.eigenvectors_inv
+    P_inv = kernel.physical_to_modal
     layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
     total == 0 && return zero(T)
     raw = zero(T)
@@ -1147,7 +1147,7 @@ function _ka_multilayer_energy_with_ws(
         dev::AbstractDevice,
         ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
-    P_inv = kernel.eigenvectors_inv
+    P_inv = kernel.physical_to_modal
     # Every mode uses the same Fourier grid; its kernel differs only through
     # the modal eigenvalue in the denominator.
     cache = _get_ewald_cache(domain, EulerKernel())

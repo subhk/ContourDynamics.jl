@@ -118,14 +118,14 @@ end
 
 function _prepare_modal_matrices!(scratch::_VelocityScratch{T},
                                   kernel::MultiLayerQGKernel{N,M,T}) where {N, M, T}
-    # The kernel's eigenvector matrices are fixed at construction, so the dense
+    # The kernel's physical/modal transforms are fixed at construction, so the dense
     # scratch copies only need to be materialized once — when the buffer is first
     # sized for this problem. The previous version re-copied both N×N matrices on
     # every call, allocating ~128 B per multilayer velocity! (512 B per RK4 step)
-    # for no benefit, since `kernel.eigenvectors` never changes.
+    # for no benefit, since the kernel transforms never change.
     if size(scratch.modal_matrix) != (N, N)
-        scratch.modal_matrix = Matrix{T}(kernel.eigenvectors)
-        scratch.modal_matrix_inv = Matrix{T}(kernel.eigenvectors_inv)
+        scratch.modal_matrix = Matrix{T}(kernel.modal_to_physical)
+        scratch.modal_matrix_inv = Matrix{T}(kernel.physical_to_modal)
     end
     return scratch.modal_matrix, scratch.modal_matrix_inv
 end

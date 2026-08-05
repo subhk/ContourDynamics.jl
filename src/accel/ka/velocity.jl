@@ -368,9 +368,9 @@ end
     _ka_multilayer_velocity_from_states!(vel, states, kernel, domain, dev) -> vel
 
 Device-resident modal velocity for multi-layer problems. For each vertical mode,
-packs every layer's segments with PV scaled by `eigenvectors_inv[mode, layer]`,
+packs every layer's segments with PV scaled by `physical_to_modal[mode, layer]`,
 evaluates the single-layer KA velocity kernels over the concatenated segments and
-targets, and accumulates `eigenvectors[layer, mode]` times the modal result into
+targets, and accumulates `modal_to_physical[layer, mode]` times the modal result into
 the flat per-layer output. The flat layout follows [`_layer_state_ranges`](@ref).
 """
 function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
@@ -444,8 +444,8 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
                                        domain::AbstractDomain, dev::AbstractDevice,
                                        ranges, total::Int) where {N, T}
     evals = kernel.eigenvalues
-    P = kernel.eigenvectors
-    P_inv = kernel.eigenvectors_inv
+    P = kernel.modal_to_physical
+    P_inv = kernel.physical_to_modal
 
     ax, ay, bx, by = ws.ax, ws.ay, ws.bx, ws.by
     pv, ka, kb = ws.pv, ws.ka, ws.kb
@@ -550,7 +550,7 @@ function _ka_multilayer_velocity_at_states(
                 state.x, state.y, state.pv, state.wrapx, state.wrapy,
                 state.offsets, state.lengths, state.corners,
                 state.contour_of_node, state.local_index,
-                T(kernel.eigenvectors_inv[mode, layer]), n_layer)
+                T(kernel.physical_to_modal[mode, layer]), n_layer)
         end
         seg = SegmentData(ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb)
         lam = kernel.eigenvalues[mode]
@@ -568,7 +568,7 @@ function _ka_multilayer_velocity_at_states(
     out_x = device_zeros(dev, T, N)
     out_y = device_zeros(dev, T, N)
     @_ka_launch dev N _project_point_modes_ka!(
-        out_x, out_y, mode_x, mode_y, kernel.eigenvectors, N)
+        out_x, out_y, mode_x, mode_y, kernel.modal_to_physical, N)
     host_x = to_cpu(out_x)
     host_y = to_cpu(out_y)
     return ntuple(layer -> SVector{2,T}(host_x[layer], host_y[layer]), Val(N))
