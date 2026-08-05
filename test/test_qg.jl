@@ -275,6 +275,14 @@ end
         positive = SMatrix{2,2,Float64}(F, -F, -F, F)
         @test_throws ArgumentError MultiLayerQGKernel(SVector(1 / sqrt(2F)), positive)
 
+        # Negative semidefiniteness and one zero eigenvalue are insufficient:
+        # the physical stretching operator must leave a depth-uniform
+        # streamfunction unchanged. This matrix has eigenvalues (-5, 0), but
+        # its null vector is (-2, 1), not the barotropic vector (1, 1).
+        rotated_null = SMatrix{2,2,Float64}(-1.0, -2.0, -2.0, -4.0)
+        @test_throws ArgumentError MultiLayerQGKernel(
+            SVector(1 / sqrt(5.0)), rotated_null)
+
         tiny_F = 1e-20
         tiny = MultiLayerQGKernel(
             SVector(1 / sqrt(2tiny_F)),

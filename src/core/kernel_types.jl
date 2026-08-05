@@ -20,13 +20,15 @@ struct EulerKernel <: AbstractKernel end
 """
     QGKernel{T}(Ld)
 
-Kernel for single-layer quasi-geostrophic dynamics with deformation radius `Ld`.
-Uses the modified Bessel function Green's function `K₀(r/Ld)/(2π)`.
+Kernel for single-layer quasi-geostrophic dynamics with finite, positive
+deformation radius `Ld`. Uses the modified Bessel function Green's function
+`K₀(r/Ld)/(2π)`. Use [`EulerKernel`](@ref) for the infinite-radius limit.
 """
 struct QGKernel{T<:AbstractFloat} <: AbstractKernel
     Ld::T
     function QGKernel(Ld::T) where {T<:AbstractFloat}
-        Ld > zero(T) || throw(ArgumentError("Deformation radius Ld must be positive, got $Ld"))
+        isfinite(Ld) && Ld > zero(T) || throw(ArgumentError(
+            "Deformation radius Ld must be finite and positive, got $Ld"))
         new{T}(Ld)
     end
 end
@@ -81,6 +83,8 @@ diagonalizes the symmetric similarity transform
 matrices retain the historical unit weights; for a connected nonsymmetric matrix,
 the relative thicknesses are inferred and normalized to have mean one. Pass `H`
 explicitly when disconnected blocks leave their relative weights undetermined.
+The physical stretching matrix must also annihilate a uniform streamfunction,
+`coupling * ones(N) ≈ 0`, so its single null mode is the barotropic mode.
 
 `physical_to_modal` maps layer PV to the weighted modal representation, while
 `modal_to_physical` reconstructs layer streamfunction and velocity. The energy is
@@ -176,6 +180,12 @@ function _build_multilayer_qg_kernel(
         "Layer thicknesses H must all be finite and positive"))
 
     cmat = Matrix(coupling)
+    uniform_residual = norm(cmat * ones(T, N), Inf)
+    uniform_tolerance = _qg_coupling_symmetry_tolerance(cmat) * T(N)
+    uniform_residual <= uniform_tolerance || throw(ArgumentError(
+        "Coupling matrix must annihilate a uniform streamfunction (C * 1 = 0); " *
+        "got ‖C * 1‖∞ = $uniform_residual."))
+
     hmat = Diagonal(Vector(H))
     weighted = hmat * cmat
     weighted_asymmetry = norm(weighted - weighted', Inf)

@@ -27,10 +27,17 @@ physical matrix ``\mathbf C`` is generally **not symmetric**. Let
 thicknesses. A physical stretching matrix obeys
 
 ```math
+\mathbf C\mathbf 1=\mathbf 0,
+\qquad
 \mathbf W\mathbf C=\mathbf C^{\mathsf T}\mathbf W,
 \qquad\text{or equivalently}\qquad
 H_i C_{ij}=H_j C_{ji}.
 ```
+
+The first identity says that adding the same streamfunction to every layer
+causes no vortex stretching; its null vector is the depth-uniform barotropic
+mode. The second identity makes the operator self-adjoint in the
+thickness-weighted inner product.
 
 The implementation first forms the symmetric similarity transform
 
@@ -71,10 +78,11 @@ constructor verifies that they equal ``1/\sqrt{|\lambda_m|}`` for the nonzero
 eigenvalues of `coupling`; the approximately zero eigenvalue is the barotropic
 Euler mode.
 
-The constructor rejects positive coupling eigenvalues: the screened ``K_0``
-inversion used by nonbarotropic modes requires a negative-semidefinite
-stretching operator. Mode classification uses the same scale-aware eigenvalue
-tolerance during construction, velocity evaluation, and diagnostics.
+The constructor rejects matrices that do not annihilate the uniform mode and
+rejects positive coupling eigenvalues: the screened ``K_0`` inversion used by
+nonbarotropic modes requires a negative-semidefinite stretching operator. Mode
+classification uses the same scale-aware eigenvalue tolerance during
+construction, velocity evaluation, and diagnostics.
 
 The velocity in physical layers is recovered by projecting back through the
 weighted reconstruction matrix. In practical terms, the code solves a set of

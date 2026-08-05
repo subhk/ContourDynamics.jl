@@ -28,6 +28,8 @@ using Test, ContourDynamics, StaticArrays
     @testset "Invalid kernel parameters" begin
         @test_throws ArgumentError QGKernel(0.0)
         @test_throws ArgumentError QGKernel(-1.0)
+        @test_throws ArgumentError QGKernel(Inf)
+        @test_throws ArgumentError QGKernel(NaN)
         @test_throws ArgumentError SQGKernel(-0.1)
     end
 

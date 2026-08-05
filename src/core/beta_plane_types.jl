@@ -20,7 +20,8 @@ end
 """
     BetaPlaneQGKernel(beta, Ld, reference_contours)
 
-Contour-dynamics beta-plane QG kernel with deformation radius `Ld`.
+Contour-dynamics beta-plane QG kernel with finite, positive deformation radius
+`Ld`.
 
 The live contours represent full PV. `reference_contours` is the undeformed
 straight beta staircase. The velocity comes from `current full PV - reference
@@ -34,7 +35,8 @@ struct BetaPlaneQGKernel{T<:AbstractFloat} <: AbstractKernel
     function BetaPlaneQGKernel(beta::T, Ld::T,
                                reference_contours::Vector{PVContour{T}}) where {T<:AbstractFloat}
         isfinite(beta) || throw(ArgumentError("Planetary PV gradient beta must be finite, got $beta"))
-        Ld > zero(T) || throw(ArgumentError("Deformation radius Ld must be positive, got $Ld"))
+        isfinite(Ld) && Ld > zero(T) || throw(ArgumentError(
+            "Deformation radius Ld must be finite and positive, got $Ld"))
         all(is_spanning, reference_contours) || throw(ArgumentError(
             "BetaPlaneQGKernel reference_contours must all be spanning beta-staircase contours."))
         new{T}(beta, Ld, _copy_pv_contours(reference_contours))
@@ -115,7 +117,7 @@ radius exceeds the step spacing. For `κ·dy < 0.05` we therefore use the Taylor
 expansion in `z` (whose leading term is the barotropic jet `β(ξ²/2 − dy²/24)`),
 and the closed form above only where it is well conditioned. Both branches are
 accurate to a relative `~1e-11` at the crossover, and the expansion has no `κ`
-in a denominator, so `Ld → ∞` stays exact.
+in a denominator, so the large-finite-`Ld` limit remains accurate.
 """
 
 # Crossover in `z = κ·dy/2` between the Taylor branch and the closed form. The

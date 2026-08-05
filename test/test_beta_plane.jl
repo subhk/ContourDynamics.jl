@@ -60,6 +60,8 @@ end
     kernel = BetaPlaneQGKernel(beta, Ld, staircase)
     @test_throws ArgumentError BetaPlaneQGKernel(NaN, Ld, staircase)
     @test_throws ArgumentError BetaPlaneQGKernel(Inf, Ld, staircase)
+    @test_throws ArgumentError BetaPlaneQGKernel(beta, Inf, staircase)
+    @test_throws ArgumentError BetaPlaneQGKernel(beta, NaN, staircase)
     @test kernel.beta == beta
     @test kernel.Ld == Ld
     @test length(kernel.reference_contours) == n_beta
