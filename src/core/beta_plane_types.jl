@@ -141,5 +141,23 @@ in a denominator, so the large-finite-`Ld` limit remains accurate.
             + z2 * (s2 * s2 / 24 - s2 / 12 + T(7) / 360)
             + z2 * z2 * (s2 * s2 * s2 / 720 - s2 * s2 / 144 + 7 * s2 / 720 - T(31) / 15120))
     end
-    return -beta / κ^2 + beta * dy * cosh(κ * ξ) / (2 * κ * sinh(z))
+    # `cosh(κξ) / sinh(z)` is finite for |κξ| ≤ z, but evaluating the
+    # numerator and denominator separately overflows for a small deformation
+    # radius. Scale both by exp(z) so the exponentials are non-positive:
+    #
+    #   cosh(a) / sinh(z)
+    #     = exp(|a|-z) * (1 + exp(-2|a|)) / (1 - exp(-2z)).
+    #
+    # The small-z branch above keeps the denominator here away from
+    # cancellation, while this form remains finite as z becomes arbitrarily
+    # large (including at a staircase riser, where |a| = z).
+    absξ = abs(ξ)
+    a = κ * absξ
+    # Form |a|-z from the unscaled coordinates. This remains exactly zero at
+    # a riser and avoids an Inf-Inf subtraction if the individual products
+    # overflow while their non-positive difference is still representable.
+    a_minus_z = κ * (absξ - dy / 2)
+    ratio = exp(a_minus_z) * (one(T) + exp(-2 * a)) /
+            (one(T) - exp(-2 * z))
+    return -beta / κ^2 + beta * dy * ratio / (2 * κ)
 end

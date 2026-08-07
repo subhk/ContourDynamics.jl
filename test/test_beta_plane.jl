@@ -211,7 +211,8 @@ end
     tread_y = -Ly + dy          # midway between two risers: ξ = 0
     riser_y = staircase[1].nodes[1][2]
 
-    for κdy in (1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 0.05, 0.1, 0.5, 1.0, 3.0)
+    for κdy in (1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2,
+                 0.05, 0.1, 0.5, 1.0, 3.0, 100.0, 2_000.0)
         Ld = dy / κdy
         kernel = BetaPlaneQGKernel(beta, Ld, staircase)
         for y in (tread_y, riser_y)
@@ -257,7 +258,8 @@ end
     tread_y = -Ly + dy
     riser_y = staircase[1].nodes[1][2]
 
-    for κdy in (1f-6, 1f-4, 1f-2, 5f-2, 1f-1, 2f-1, 5f-1, 1f0, 3f0)
+    for κdy in (1f-6, 1f-4, 1f-2, 5f-2, 1f-1, 2f-1, 5f-1, 1f0, 3f0,
+                 20f0, 200f0)
         kernel = BetaPlaneQGKernel(beta, dy / κdy, staircase)
         for y in (tread_y, riser_y)
             got = ContourDynamics._beta_plane_sawtooth_velocity(
