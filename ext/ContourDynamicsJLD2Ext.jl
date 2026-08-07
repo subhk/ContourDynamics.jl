@@ -12,6 +12,28 @@ using StaticArrays
 _snapshot_contours(prob::ContourProblem) = materialize_contours(prob)
 _snapshot_layers(prob::MultiLayerContourProblem) = materialize_contours(prob)
 
+function _save_contour!(g, c::PVContour, ci::Int)
+    cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))
+    # Store coordinates as plain arrays for portability and easy inspection
+    # from non-Julia tooling.
+    cg["x"] = [c.nodes[i][1] for i in 1:nnodes(c)]
+    cg["y"] = [c.nodes[i][2] for i in 1:nnodes(c)]
+    cg["pv"] = c.pv
+    cg["nnodes"] = nnodes(c)
+    cg["wrap_x"] = c.wrap[1]
+    cg["wrap_y"] = c.wrap[2]
+    cg["corners"] = collect(c.corners)
+    return nothing
+end
+
+function _save_contours!(g, contours::Vector{<:PVContour})
+    g["ncontours"] = length(contours)
+    for (ci, c) in enumerate(contours)
+        _save_contour!(g, c, ci)
+    end
+    return nothing
+end
+
 # Save kernel/domain metadata so snapshots can be restored without external
 # information from the original script.
 function _save_metadata!(g, kernel::EulerKernel, domain)
@@ -28,6 +50,11 @@ function _save_metadata!(g, kernel::BetaPlaneQGKernel{T}, domain) where {T}
     g["kernel_beta"] = kernel.beta
     g["kernel_Ld"] = kernel.Ld
     g["kernel_reference_contours"] = length(kernel.reference_contours)
+    # The reference staircase is frozen kernel state, not live contour state.
+    # Persist its complete portable geometry so load_problem can reproduce the
+    # original inversion after the live staircase has evolved or been remeshed.
+    rg = JLD2.Group(g, "kernel_reference_geometry")
+    _save_contours!(rg, kernel.reference_contours)
     _save_domain!(g, domain)
 end
 function _save_metadata!(g, kernel::SQGKernel{T}, domain) where {T}
@@ -78,28 +105,13 @@ function ContourDynamics.save_snapshot(filename::String,
         if dt !== nothing
             g["time"] = step * dt
         end
-        g["ncontours"] = length(snapshot_contours)
-
         # Save kernel/domain metadata before contour data so readers can rebuild
         # the right problem type even if loading stops early.
         mg = JLD2.Group(g, "metadata")
         _save_metadata!(mg, prob.kernel, prob.domain)
         mg["coordinate_zero"] = zero(T)
 
-        for (ci, c) in enumerate(snapshot_contours)
-            cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))
-            # Store coordinates as plain arrays for portability and easy
-            # inspection from non-Julia tooling.
-            nodes_x = [c.nodes[i][1] for i in 1:nnodes(c)]
-            nodes_y = [c.nodes[i][2] for i in 1:nnodes(c)]
-            cg["x"] = nodes_x
-            cg["y"] = nodes_y
-            cg["pv"] = c.pv
-            cg["nnodes"] = nnodes(c)
-            cg["wrap_x"] = c.wrap[1]
-            cg["wrap_y"] = c.wrap[2]
-            cg["corners"] = collect(c.corners)
-        end
+        _save_contours!(g, snapshot_contours)
 
         if diagnostics
             dg = JLD2.Group(g, "diagnostics")
@@ -151,17 +163,7 @@ function ContourDynamics.save_snapshot(filename::String,
 
         for (li, layer) in enumerate(snapshot_layers)
             lg = JLD2.Group(g, "layer_" * lpad(li, 2, '0'))
-            lg["ncontours"] = length(layer)
-            for (ci, c) in enumerate(layer)
-                cg = JLD2.Group(lg, "contour_" * lpad(ci, 4, '0'))
-                cg["x"] = [c.nodes[i][1] for i in 1:nnodes(c)]
-                cg["y"] = [c.nodes[i][2] for i in 1:nnodes(c)]
-                cg["pv"] = c.pv
-                cg["nnodes"] = nnodes(c)
-                cg["wrap_x"] = c.wrap[1]
-                cg["wrap_y"] = c.wrap[2]
-                cg["corners"] = collect(c.corners)
-            end
+            _save_contours!(lg, layer)
         end
 
         if diagnostics
@@ -334,10 +336,25 @@ function _load_single_layer_kernel(mg)
     elseif ktype == "SQGKernel"
         return SQGKernel(mg["kernel_delta"])
     elseif ktype == "BetaPlaneQGKernel"
-        throw(ArgumentError(
-            "load_problem cannot rebuild a BetaPlaneQGKernel: its reference contours " *
-            "are not persisted (only their count). Use load_snapshot to read the state " *
-            "and reconstruct the kernel/problem manually."))
+        reference_key = "kernel_reference_geometry"
+        haskey(mg, reference_key) || throw(ArgumentError(
+            "load_problem cannot rebuild this BetaPlaneQGKernel because the snapshot " *
+            "does not contain its frozen reference-contour geometry. This file was " *
+            "written by an older ContourDynamics version; load_snapshot can still " *
+            "read its live state, but the original reference geometry must be supplied " *
+            "manually."))
+        rg = mg[reference_key]
+        haskey(rg, "ncontours") || error(
+            "Corrupted snapshot: beta-plane reference geometry has no ncontours field")
+        nr = rg["ncontours"]::Int
+        if haskey(mg, "kernel_reference_contours")
+            expected_nr = mg["kernel_reference_contours"]::Int
+            nr == expected_nr || error(
+                "Corrupted snapshot: beta-plane reference contour count is $nr, " *
+                "but metadata records $expected_nr")
+        end
+        reference = _load_contours(rg, nr; fallback_T=_metadata_float_type(mg))
+        return BetaPlaneQGKernel(mg["kernel_beta"], mg["kernel_Ld"], reference)
     elseif ktype == "MultiLayerQGKernel"
         throw(ArgumentError(
             "load_problem rebuilds single-layer problems only. This snapshot is multi-layer; " *
@@ -353,11 +370,14 @@ end
 Reconstruct a runnable single-layer [`ContourProblem`](@ref) from the snapshot at
 `step`, using the kernel/domain metadata written by [`save_snapshot`](@ref).
 
-Supported kernels: `EulerKernel`, `QGKernel`, `SQGKernel`. `BetaPlaneQGKernel`
-(reference contours not persisted) and `MultiLayerQGKernel` (multi-layer) throw
-an informative `ArgumentError` — read those with [`load_snapshot`](@ref) and
-rebuild the problem manually. Stepper and surgery state are not persisted, so the
-caller recreates the time stepper and [`SurgeryParams`](@ref) to continue a run.
+Supported kernels: `EulerKernel`, `QGKernel`, `SQGKernel`, and
+`BetaPlaneQGKernel`. Beta-plane snapshots include the frozen reference-contour
+geometry needed to reproduce their inversion. Legacy beta-plane files that
+predate that geometry remain readable through [`load_snapshot`](@ref), but
+cannot be reconstructed automatically. `MultiLayerQGKernel` snapshots remain
+state-only and must be rebuilt manually. Stepper and surgery state are not
+persisted, so the caller recreates the time stepper and [`SurgeryParams`](@ref)
+to continue a run.
 """
 function ContourDynamics.load_problem(filename::String, step::Int; dev=ContourDynamics.CPU())
     group = "step_" * lpad(step, 6, '0')

@@ -50,9 +50,17 @@ and an `evolve!` callback.
 `save_snapshot(filename, prob, step; dt=nothing, diagnostics=true)` writes a
 single simulation snapshot to a JLD2 file. For `GPU()` problems, this is an
 explicit output boundary: contour geometry is copied back with
-`materialize_contours(prob)` immediately before writing.
+`materialize_contours(prob)` immediately before writing. Beta-plane snapshots
+also store the complete frozen reference staircase separately from the live
+contours, so the inversion can be reproduced after the live staircase evolves.
 
 `load_snapshot(filename, step)` loads one stored snapshot as a named tuple.
+
+`load_problem(filename, step; dev=CPU())` reconstructs a runnable single-layer
+Euler, QG, SQG, or beta-plane QG problem. Passing `dev=GPU()` restores directly
+to the CUDA-backed device state after `using CUDA`. Legacy beta-plane snapshots
+written without frozen reference geometry remain readable with `load_snapshot`,
+but cannot be reconstructed automatically.
 
 `jld2_recorder(filename; save_every=nothing, save_dt=nothing, dt=nothing, diagnostics=true)`
 creates an `evolve!` callback that periodically writes JLD2 snapshots.

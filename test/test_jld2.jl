@@ -1,5 +1,10 @@
 using Test, ContourDynamics, StaticArrays, JLD2
 
+function _jld2_contour_equal(a::PVContour, b::PVContour)
+    return a.nodes == b.nodes && a.pv == b.pv && a.wrap == b.wrap &&
+           a.corners == b.corners
+end
+
 @testset "JLD2 Extension" begin
     @testset "Snapshot helpers use materialized output boundary" begin
         ext = Base.get_extension(ContourDynamics, :ContourDynamicsJLD2Ext)
@@ -84,6 +89,90 @@ using Test, ContourDynamics, StaticArrays, JLD2
                 @test loaded.wrap ≈ orig.wrap
                 @test is_spanning(loaded) == is_spanning(orig)
             end
+        finally
+            rm(fname; force=true)
+        end
+    end
+
+    @testset "Beta-Plane Problem Restart" begin
+        for T in (Float32, Float64)
+            beta = T(0.4)
+            domain = PeriodicDomain(T(2.5), T(1.5))
+            reference = beta_staircase(beta, domain, 4; nodes_per_contour=8)
+            kernel = BetaPlaneQGKernel(beta, T(0.9), reference)
+            live = deepcopy(reference)
+            # Make the live staircase distinguishable from the frozen kernel
+            # reference. A restart must not infer the latter from this state.
+            live[1].nodes[2] += SVector{2,T}(zero(T), T(0.025))
+            vortex = circular_patch(T(0.2), 12, T(0.7); cx=T(0.3), cy=T(0.4), T=T)
+            prob = ContourProblem(kernel, domain, vcat(live, [vortex]))
+
+            fname = tempname() * ".jld2"
+            try
+                save_snapshot(fname, prob, 7; dt=T(0.01), diagnostics=false)
+                restarted = load_problem(fname, 7)
+
+                @test restarted isa ContourProblem
+                @test restarted.kernel isa BetaPlaneQGKernel{T}
+                @test restarted.domain isa PeriodicDomain{T}
+                @test restarted.kernel.beta === beta
+                @test restarted.kernel.Ld === T(0.9)
+                @test length(restarted.kernel.reference_contours) == length(reference)
+                @test all(_jld2_contour_equal.(restarted.kernel.reference_contours,
+                                                prob.kernel.reference_contours))
+                @test all(_jld2_contour_equal.(restarted.contours, prob.contours))
+                @test restarted.kernel.reference_contours[1].nodes !=
+                      restarted.contours[1].nodes
+
+                point = SVector{2,T}(T(0.13), T(-0.17))
+                tol = T === Float32 ? 2e-5 : 2e-12
+                @test velocity(restarted, point) ≈ velocity(prob, point) rtol=tol atol=tol
+
+                original_stepper = RK4Stepper(T(0.0005), total_nodes(prob))
+                restart_stepper = RK4Stepper(T(0.0005), total_nodes(restarted))
+                timestep!(prob, original_stepper)
+                timestep!(restarted, restart_stepper)
+                @test all(zip(restarted.contours, prob.contours)) do (actual, expected)
+                    all(isapprox.(actual.nodes, expected.nodes; rtol=tol, atol=tol))
+                end
+
+                jldopen(fname, "r") do f
+                    mg = f["step_000007/metadata"]
+                    @test mg["kernel_reference_contours"] == length(reference)
+                    rg = mg["kernel_reference_geometry"]
+                    @test rg["ncontours"] == length(reference)
+                end
+            finally
+                rm(fname; force=true)
+            end
+        end
+    end
+
+    @testset "Legacy Beta-Plane Snapshot Remains State-Readable" begin
+        domain = PeriodicDomain(2.0, 1.5)
+        reference = beta_staircase(0.4, domain, 4; nodes_per_contour=8)
+        prob = ContourProblem(BetaPlaneQGKernel(0.4, 1.0, reference),
+                              domain, deepcopy(reference))
+        fname = tempname() * ".jld2"
+        try
+            save_snapshot(fname, prob, 0; diagnostics=false)
+            # Simulate the schema written before frozen reference geometry was
+            # persisted. load_snapshot remains backward-compatible, while a
+            # runnable problem cannot be recovered without that missing state.
+            jldopen(fname, "r+") do f
+                delete!(f["step_000000/metadata"], "kernel_reference_geometry")
+            end
+
+            data = load_snapshot(fname, 0)
+            @test all(_jld2_contour_equal.(data.contours, prob.contours))
+            err = try
+                load_problem(fname, 0)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("older ContourDynamics version", sprint(showerror, err))
         finally
             rm(fname; force=true)
         end

@@ -156,10 +156,11 @@ function load_simulation end
 
 Reconstruct a runnable [`ContourProblem`](@ref) from a JLD2 snapshot, using the
 kernel/domain metadata saved by [`save_snapshot`](@ref). Supported for
-single-layer `EulerKernel`, `QGKernel`, and `SQGKernel`. Stepper and surgery
-state are not persisted, so the returned object is a `ContourProblem` (not a
-[`Problem`](@ref)); recreate the stepper/`SurgeryParams` to continue a run.
-Implemented by the JLD2 extension.
+single-layer `EulerKernel`, `QGKernel`, `SQGKernel`, and `BetaPlaneQGKernel`.
+Beta-plane snapshots persist their frozen reference-contour geometry. Stepper
+and surgery state are not persisted, so the returned object is a
+`ContourProblem` (not a [`Problem`](@ref)); recreate the
+stepper/`SurgeryParams` to continue a run. Implemented by the JLD2 extension.
 """
 function load_problem end
 

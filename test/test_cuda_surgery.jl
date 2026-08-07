@@ -268,6 +268,26 @@ end
             @test all(zip(materialize_contours(gpu_prob), cpu_prob.contours)) do (a, b)
                 all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-8))
             end
+
+            fname = tempname() * ".jld2"
+            try
+                save_snapshot(fname, gpu_prob, 1; diagnostics=false)
+                restarted = load_problem(fname, 1; dev=GPU())
+                @test restarted.kernel isa BetaPlaneQGKernel
+                @test all(zip(restarted.kernel.reference_contours,
+                              gpu_prob.kernel.reference_contours)) do (a, b)
+                    a.nodes == b.nodes && a.pv == b.pv &&
+                        a.wrap == b.wrap && a.corners == b.corners
+                end
+                @test all(zip(materialize_contours(restarted),
+                              materialize_contours(gpu_prob))) do (a, b)
+                    a.nodes == b.nodes && a.pv == b.pv &&
+                        a.wrap == b.wrap && a.corners == b.corners
+                end
+                @test velocity(restarted, point) ≈ velocity(gpu_prob, point) rtol=1e-8 atol=1e-8
+            finally
+                rm(fname; force=true)
+            end
         end
 
         δ = 0.02
