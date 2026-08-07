@@ -1,10 +1,16 @@
 # Contour-dynamics beta-plane QG velocity.
 #
-# Live contours encode full PV. The frozen straight beta staircase stored in
-# `BetaPlaneQGKernel.reference_contours` is subtracted from the contour sum.
-# An analytic zonal correction then adds the velocity induced by
-# `reference staircase - beta*y`, matching the decomposed beta-plane inversion
-# `(del^2 - Ld^-2) psi_r = q_r - beta*y` without introducing a grid solve.
+# Live contours encode the full PV `q = q_s + q_r` in the notation of Lam &
+# Dritschel (2001). The frozen straight beta staircase `q_ref = q_r(t=0)` stored
+# in `BetaPlaneQGKernel.reference_contours` is subtracted from the contour sum,
+# then an analytic zonal correction adds the velocity induced by
+# `q_ref - beta*y`. By linearity the resulting inversion source is
+#
+#     (q - q_ref) + (q_ref - beta*y) = q - beta*y
+#
+# and hence the computed velocity is the total flow from `psi_s + psi_r`, not
+# the regular component alone. This realizes the paper's decomposed inversion
+# without introducing a grid solve.
 
 @inline _qg_kernel(kernel::BetaPlaneQGKernel{T}) where {T} = QGKernel(kernel.Ld)
 

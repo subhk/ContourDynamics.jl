@@ -23,10 +23,10 @@ end
 Contour-dynamics beta-plane QG kernel with finite, positive deformation radius
 `Ld`.
 
-The live contours represent full PV. `reference_contours` is the undeformed
-straight beta staircase. The velocity comes from `current full PV - reference
-beta staircase` plus the analytic zonal correction for
-`reference beta staircase - beta*y`.
+The live contours represent full PV `q = q_s + q_r`. `reference_contours` is
+the undeformed straight staircase `q_ref = q_r(t=0)`. The velocity comes from
+`q - q_ref` plus the analytic zonal correction for `q_ref - beta*y`, so the
+total inversion source is exactly `q - beta*y`.
 """
 struct BetaPlaneQGKernel{T<:AbstractFloat} <: AbstractKernel
     beta::T
