@@ -1,4 +1,4 @@
-# Precompile the kernel/domain/stepper combinations exercised by tutorials,
+# Precompile the kernel/domain combinations exercised by tutorials,
 # examples, and common simulations.
 
 using PrecompileTools: @setup_workload, @compile_workload
@@ -11,10 +11,6 @@ using PrecompileTools: @setup_workload, @compile_workload
         evolve!(probE; nsteps=2)
         energy(probE); circulation(probE); enstrophy(probE)
         centroid(cE); ellipse_moments(cE)
-
-        cE2 = circular_patch(0.5, N, 2π)
-        probE_lf = Problem(; contours=[cE2], dt=0.01, stepper=:leapfrog)
-        evolve!(probE_lf; nsteps=2)
 
         cQ = circular_patch(0.5, N, 2π)
         probQ = Problem(; contours=[cQ], dt=0.01, kernel=:qg, Ld=1.0)

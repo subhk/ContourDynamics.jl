@@ -26,7 +26,7 @@ on both unbounded and periodic domains; exactly straight segments still use the
 analytic straight-segment formulas.
 
 Multi-layer `GPU()` problems keep their authoritative state on the device.
-Modal velocity, RK4/leapfrog timestepping, periodic wrapping, and diagnostics
+Modal velocity, RK4 timestepping, periodic wrapping, and diagnostics
 read the per-layer `DeviceContourState` directly. Unbounded surgery also runs on
 that state. Periodic surgery uses the same device pipeline with minimum-image
 pair detection and cross-seam topology translations.

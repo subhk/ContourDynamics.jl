@@ -148,8 +148,8 @@ The surgery interval is determined by:
     concurrently.  Create a separate `to_ode_problem` call per thread instead.
 """
 function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
-                                         surgery_params=nothing,
-                                         surgery_dt=nothing)
+                                         surgery_params::Union{Nothing,SurgeryParams}=nothing,
+                                         surgery_dt::Union{Nothing,Real}=nothing)
     u0 = ContourDynamics.flatten_nodes(prob)
     rhs! = _make_rhs(prob)
 
@@ -159,6 +159,11 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         return ODEProblem(rhs!, u0, tspan, prob; callback=_adaptive_guard_callback())
     end
 
+    t_start, t_stop = tspan[1], tspan[2]
+    (isfinite(t_start) && isfinite(t_stop) && t_stop > t_start) ||
+        throw(ArgumentError(
+            "surgery callbacks require a finite, forward tspan; got $tspan"))
+
     # Determine surgery time interval
     dt_surgery = if surgery_dt !== nothing
         surgery_dt
@@ -166,9 +171,14 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         # Fallback: estimate from tspan
         (tspan[2] - tspan[1]) / 1000 * surgery_params.n_surgery
     end
+    (isfinite(dt_surgery) && dt_surgery > zero(dt_surgery)) ||
+        throw(ArgumentError(
+            "surgery_dt must be finite and positive; got $dt_surgery"))
+    t_start + dt_surgery > t_start || throw(ArgumentError(
+        "surgery_dt=$dt_surgery is too small to advance time from t=$(t_start)"))
 
     # Time-based surgery condition (works with both fixed and adaptive solvers)
-    next_surgery_time = Ref(tspan[1] + dt_surgery)
+    next_surgery_time = Ref(t_start + dt_surgery)
     function condition(u, t, integrator)
         # Small tolerance avoids missing the target time due to floating-point
         # rounding in fixed-step integrators.
@@ -185,8 +195,15 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
         copyto!(integrator.u, new_u)  # overwrites all elements; no zero-fill needed
         # Advance past the current time so that large adaptive steps
         # that skip multiple intervals don't leave the threshold behind.
-        while next_surgery_time[] <= integrator.t
-            next_surgery_time[] += dt_surgery
+        # The tolerance in `condition` can trigger just before the nominal
+        # threshold, so always consume at least the interval that fired.
+        while true
+            previous = next_surgery_time[]
+            next_surgery_time[] = previous + dt_surgery
+            next_surgery_time[] > previous || error(
+                "surgery_dt=$dt_surgery can no longer advance the callback time " *
+                "near t=$(integrator.t)")
+            next_surgery_time[] > integrator.t && break
         end
     end
     # Guard adaptivity at initialization (fires regardless of whether/when the

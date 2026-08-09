@@ -9,6 +9,19 @@ module ContourDynamicsRecordedArraysExt
 using ContourDynamics
 using RecordedArrays
 
+function _recording_schedule(::Type{T}, dt::Real, nsteps::Int,
+                             record_every::Int) where {T<:AbstractFloat}
+    ContourDynamics._require_positive("dt", dt)
+    nsteps >= 0 || throw(ArgumentError("nsteps must be non-negative, got $nsteps"))
+    ContourDynamics._require_positive("record_every", record_every)
+    dt_T = T(dt)
+    ContourDynamics._require_positive("dt converted to $T", dt_T)
+    tmax = dt_T * T(nsteps)
+    isfinite(tmax) || throw(ArgumentError(
+        "dt * nsteps must be finite after conversion to $T; got $tmax"))
+    return dt_T, tmax
+end
+
 """
     recorded_diagnostics(prob; dt, nsteps, record_every=1)
 
@@ -35,9 +48,7 @@ function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
                                               dt::Real,
                                               nsteps::Int,
                                               record_every::Int=1) where {K,D,T}
-    ContourDynamics._require_positive("record_every", record_every)
-    dt_T = T(dt)
-    tmax = dt_T * T(nsteps)
+    dt_T, tmax = _recording_schedule(T, dt, nsteps, record_every)
     clock = ContinuousClock(tmax)
 
     energy_rec = recorded(StaticEntry, clock, T[])
@@ -89,9 +100,7 @@ function ContourDynamics.recorded_diagnostics(prob::MultiLayerContourProblem{N,K
                                               dt::Real,
                                               nsteps::Int,
                                               record_every::Int=1) where {N,K,D,T}
-    ContourDynamics._require_positive("record_every", record_every)
-    dt_T = T(dt)
-    tmax = dt_T * T(nsteps)
+    dt_T, tmax = _recording_schedule(T, dt, nsteps, record_every)
     clock = ContinuousClock(tmax)
 
     energy_rec = recorded(StaticEntry, clock, T[])

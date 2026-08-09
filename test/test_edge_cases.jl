@@ -21,6 +21,10 @@ using Test, ContourDynamics, StaticArrays
         @test_throws ArgumentError SurgeryParams(-0.01, 0.05, 0.1, 1e-6, 10)
         @test_throws ArgumentError SurgeryParams(0.01, -0.05, 0.1, 1e-6, 10)
         @test_throws ArgumentError SurgeryParams(0.01, 0.05, 0.1, -1e-6, 10)
+        @test_throws ArgumentError SurgeryParams(Inf, 0.05, 0.1, 1e-6, 10)
+        @test_throws ArgumentError SurgeryParams(0.01, Inf, Inf, 1e-6, 10)
+        @test_throws ArgumentError SurgeryParams(0.01, 0.05, Inf, 1e-6, 10)
+        @test_throws ArgumentError SurgeryParams(0.01, 0.05, 0.1, Inf, 10)
         # n_surgery < 1
         @test_throws ArgumentError SurgeryParams(0.01, 0.05, 0.1, 1e-6, 0)
     end
@@ -31,12 +35,20 @@ using Test, ContourDynamics, StaticArrays
         @test_throws ArgumentError QGKernel(Inf)
         @test_throws ArgumentError QGKernel(NaN)
         @test_throws ArgumentError SQGKernel(-0.1)
+        @test_throws ArgumentError SQGKernel(Inf)
+        @test_throws ArgumentError SQGKernel(NaN)
     end
 
     @testset "Invalid domain parameters" begin
         @test_throws ArgumentError PeriodicDomain(0.0, 1.0)
         @test_throws ArgumentError PeriodicDomain(1.0, 0.0)
         @test_throws ArgumentError PeriodicDomain(-1.0, 1.0)
+        @test_throws ArgumentError PeriodicDomain(Inf, 1.0)
+        @test_throws ArgumentError PeriodicDomain(1.0, Inf)
+        @test_throws ArgumentError PeriodicDomain(NaN, 1.0)
+
+        @test_throws ArgumentError RK4Stepper(Inf, 1)
+        @test_throws ArgumentError RK4Stepper(0.01, -1)
 
         c32 = circular_patch(0.5, 8, 1.0f0; T=Float32)
         domain64 = PeriodicDomain(1.0, 1.0)

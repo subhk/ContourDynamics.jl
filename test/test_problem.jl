@@ -49,6 +49,9 @@ end
         # Nothing surgery
         prob_nosurg = Problem(cp, st, nothing)
         @test prob_nosurg.surgery_params === nothing
+
+        st32 = RK4Stepper(0.01f0, total_nodes(cp))
+        @test_throws ArgumentError Problem(cp, st32, nothing)
     end
 
     @testset "GPU accessors dispatch to device-state methods" begin
@@ -121,6 +124,10 @@ end
         cb = (p, step) -> push!(steps_seen, step)
         evolve!(prob; nsteps=5, callbacks=[cb])
         @test steps_seen == [0, 1, 2, 3, 4, 5]
+
+        empty!(steps_seen)
+        @test_throws ArgumentError evolve!(prob; nsteps=-1, callbacks=[cb])
+        @test isempty(steps_seen)
     end
 
     @testset "evolve! repairs buffers after callback topology growth" begin
@@ -209,11 +216,11 @@ end
     @testset "Problem factory — stepper selection" begin
         c = circular_patch(0.5, 32, 1.0)
 
-        prob_lf = Problem(; stepper=:leapfrog, contours=[c], dt=0.01, ra_coeff=0.1)
-        @test prob_lf.stepper isa LeapfrogStepper
-        @test prob_lf.stepper.ra_coeff == 0.1
+        prob_rk4 = Problem(; stepper=:RK4, contours=[c], dt=0.01)
+        @test prob_rk4.stepper isa RK4Stepper
+        @test !isdefined(ContourDynamics, :LeapfrogStepper)
 
-        # Unknown stepper
+        @test_throws ArgumentError Problem(; stepper=:leapfrog, contours=[c], dt=0.01)
         @test_throws ArgumentError Problem(; stepper=:unknown, contours=[c], dt=0.01)
     end
 

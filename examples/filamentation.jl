@@ -16,7 +16,7 @@
 #                   * (lambda^-1 cos(theta), -sin(theta)),
 #
 # with lambda = 4, epsilon = 0.005, and peak vorticity 2pi. The paper's
-# case-1 run used dt = 0.05, cutoff scale delta = 1e-4, and 153 initial
+# case-1 run used dt = 0.05, cutoff scale δ = 1e-4, and 153 initial
 # nodes. The package's `mu` and `Delta_max` below are segment-length bounds
 # for the implemented remeshing, not Dritschel's node-density parameter p.
 
@@ -27,21 +27,12 @@
 using ContourDynamics
 using JLD2
 using StaticArrays
+using CUDA
+CUDA.device!(7)
 
 save_media = true
 save_media && include("visualization.jl")
 use_gpu = false
-
-if use_gpu
-    try
-        @eval using CUDA
-    catch err
-        error("use_gpu=true requires CUDA.jl in the active environment. " *
-              "Install CUDA.jl or set use_gpu=false. Original error: $err")
-    end
-    CUDA.functional() || error("use_gpu=true was requested, but CUDA is not functional on this machine.")
-end
-device = use_gpu ? GPU() : CPU()
 
 # --- Output ---
 OUTDIR = joinpath(@__DIR__, "output", "filamentation")
@@ -56,7 +47,7 @@ dt = 0.05
 t_final = 17.25
 nsteps = round(Int, t_final / dt)
 save_dt = 0.25
-delta = 1e-4
+δ = 1e-4
 mu = 0.01
 Delta_max = 0.15
 area_min = 1e-8
@@ -104,8 +95,8 @@ contour = dritschel_perturbed_ellipse(lambda, epsilon, mode, N, pv)
 
 prob = Problem(; contours=[contour],
                  dt=dt,
-                 surgery=SurgeryParams(delta, mu, Delta_max, area_min, n_surgery),
-                 dev=device)
+                 surgery=SurgeryParams(δ, mu, Delta_max, area_min, n_surgery),
+                 dev=GPU())
 display(prob); println()
 
 mkpath(OUTDIR)
@@ -187,6 +178,4 @@ end
 
 if save_media
     save_animation(mediabase, snaps; title="Dritschel Fig. 5 filamentation")
-else
-    println("Skipped media export because save_media=false.")
 end

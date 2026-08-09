@@ -312,27 +312,6 @@ end
         end
     end
 
-    @testset "DeviceContourState leapfrog steps match CPU contour leapfrog" begin
-        contours_in = [circular_patch(0.35, 18, 1.0)]
-        cpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours_in); dev=CPU())
-        state = DeviceContourState(deepcopy(contours_in), CPU())
-        dt = 0.002
-        cpu_stepper = LeapfrogStepper(dt, total_nodes(cpu_prob); dev=CPU(), ra_coeff=0.05)
-        state_stepper = LeapfrogStepper(dt, total_nodes(cpu_prob); dev=CPU(), ra_coeff=0.05)
-
-        for _ in 1:2
-            timestep!(cpu_prob, cpu_stepper)
-            ContourDynamics._leapfrog_state_step!(state, EulerKernel(), UnboundedDomain(),
-                                                  state_stepper, CPU())
-        end
-        state_contours = materialize_contours(state)
-
-        @test state_stepper.initialized
-        @test all(zip(state_contours, cpu_prob.contours)) do (actual, expected)
-            all(isapprox.(actual.nodes, expected.nodes; rtol=1e-10, atol=1e-10))
-        end
-    end
-
     @testset "DeviceContourState periodic wrapping matches CPU contour wrapping" begin
         domain = PeriodicDomain(1.0, 1.0)
         shifted = PVContour([p + SVector(2.2, -2.1) for p in circular_patch(0.2, 12, 1.0).nodes], 1.0)
@@ -353,20 +332,14 @@ end
 
     @testset "Stepper buffers honor selected device" begin
         rk_cpu = RK4Stepper(0.01, 8; dev=CPU())
-        lf_cpu = LeapfrogStepper(0.01, 8; dev=CPU())
         @test rk_cpu.k1 isa Vector{SVector{2,Float64}}
-        @test lf_cpu.vel_buf isa Vector{SVector{2,Float64}}
 
         if _TEST_CUDA_LOADED[]
             rk_gpu = RK4Stepper(0.01, 8; dev=GPU())
-            lf_gpu = LeapfrogStepper(0.01, 8; dev=GPU())
             @test !(rk_gpu.k1 isa Vector)
             @test !(rk_gpu.nodes_buf isa Vector)
-            @test !(lf_gpu.vel_buf isa Vector)
-            @test !(lf_gpu.nodes_buf isa Vector)
         else
             @test_throws ErrorException RK4Stepper(0.01, 8; dev=GPU())
-            @test_throws ErrorException LeapfrogStepper(0.01, 8; dev=GPU())
         end
     end
 
@@ -1447,39 +1420,6 @@ end
             timestep!(cpu_prob, cpu_stepper)
             ContourDynamics._rk4_multilayer_state_step!(states, ml_kernel,
                                                         UnboundedDomain(), state_stepper, CPU())
-        end
-
-        for ℓ in 1:2
-            actual = materialize_contours(states[ℓ])
-            expected = cpu_prob.layers[ℓ]
-            @test all(zip(actual, expected)) do (a, e)
-                all(isapprox.(a.nodes, e.nodes; rtol=1e-8, atol=1e-10))
-            end
-        end
-    end
-
-    @testset "Multi-layer state leapfrog matches CPU multi-layer leapfrog" begin
-        ml_Ld = SVector(1.0)
-        ml_F = 1.0 / (2 * ml_Ld[1]^2)
-        ml_coupling = SMatrix{2,2,Float64}(-ml_F, ml_F, ml_F, -ml_F)
-        ml_kernel = MultiLayerQGKernel(ml_Ld, ml_coupling)
-        ml_layers = (
-            [circular_patch(0.5, 24, 1.0)],
-            [PVContour([p + SVector(0.6, -0.2) for p in circular_patch(0.3, 16, -0.7).nodes], -0.7)],
-        )
-        dt = 0.002
-
-        cpu_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(), deepcopy(ml_layers))
-        cpu_stepper = LeapfrogStepper(dt, total_nodes(cpu_prob); ra_coeff=0.05)
-        states = (ContourDynamics.DeviceContourState(deepcopy(ml_layers[1]), CPU()),
-                  ContourDynamics.DeviceContourState(deepcopy(ml_layers[2]), CPU()))
-        state_stepper = LeapfrogStepper(dt, 40; dev=CPU(), ra_coeff=0.05)
-
-        # 3 steps covers the bootstrap half-step plus two regular leapfrog steps.
-        for _ in 1:3
-            timestep!(cpu_prob, cpu_stepper)
-            ContourDynamics._leapfrog_multilayer_state_step!(states, ml_kernel,
-                                                             UnboundedDomain(), state_stepper, CPU())
         end
 
         for ℓ in 1:2

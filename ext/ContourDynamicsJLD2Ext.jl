@@ -444,13 +444,16 @@ function ContourDynamics.jld2_recorder(filename::String;
     if save_every === nothing && save_dt === nothing
         throw(ArgumentError("Specify either save_every (iterations) or save_dt (time interval)"))
     end
+    if save_every !== nothing && save_dt !== nothing
+        throw(ArgumentError("Specify only one of save_every (iterations) or save_dt (time interval)"))
+    end
     if save_dt !== nothing && dt === nothing
         throw(ArgumentError("save_dt requires dt (time step size)"))
     end
     save_every !== nothing && ContourDynamics._require_positive("save_every", save_every)
+    dt !== nothing && ContourDynamics._require_positive("dt", dt)
     if save_dt !== nothing
         ContourDynamics._require_positive("save_dt", save_dt)
-        ContourDynamics._require_positive("dt", dt)
     end
 
     # Compute one integer iteration interval from either iteration-based or
@@ -459,6 +462,8 @@ function ContourDynamics.jld2_recorder(filename::String;
         save_every
     else
         ratio = save_dt / dt
+        (isfinite(ratio) && ratio <= typemax(Int)) || throw(ArgumentError(
+            "save_dt/dt must be finite and fit in an Int; got $ratio"))
         rounded = round(Int, ratio)
         if abs(ratio - rounded) / max(ratio, 1) > 0.01
             @warn "jld2_recorder: save_dt/dt = $ratio is not near-integer; rounding to $rounded (effective save_dt = $(rounded * dt))"

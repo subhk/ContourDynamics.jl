@@ -45,7 +45,7 @@ src/
 │   ├── contour_types.jl          PVContour
 │   ├── domain_types.jl           UnboundedDomain, PeriodicDomain
 │   ├── problem_types.jl          ContourProblem, MultiLayerContourProblem
-│   ├── stepper_types.jl          RK4Stepper, LeapfrogStepper
+│   ├── stepper_types.jl          AbstractTimeStepper, RK4Stepper
 │   ├── surgery_types.jl          SurgeryParams
 │   ├── problem.jl                the high-level Problem wrapper
 │   ├── problem_factory.jl        keyword construction of Problem
@@ -104,7 +104,7 @@ The object model is split by responsibility under `src/core/`:
 - `domain_types.jl`: `UnboundedDomain`, `PeriodicDomain`
 - `problem_types.jl`: `ContourProblem`, `MultiLayerContourProblem`
 - `surgery_types.jl`: `SurgeryParams`
-- `stepper_types.jl`: `RK4Stepper`, `LeapfrogStepper`
+- `stepper_types.jl`: `AbstractTimeStepper`, `RK4Stepper`
 
 The high-level wrapper type is in `src/core/problem.jl`:
 
@@ -166,7 +166,7 @@ multi-layer QG:
 
 - KernelAbstractions direct path, reading the device-resident state
 
-All GPU-tagged problems are device-resident: velocity, RK4/leapfrog
+All GPU-tagged problems are device-resident: velocity, RK4
 timestepping, periodic wrapping, surgery, and diagnostics operate on
 `DeviceContourState` without a per-step host round-trip. Surgery runs entirely
 on the device in both unbounded and periodic domains, including periodic

@@ -49,8 +49,7 @@ constructing the contour problem and time-stepper.
 | `layer_thicknesses` | Positive layer depths/weights for multi-layer QG; optional when `coupling` is symmetric or uniquely determines their ratios |
 | `domain` | `:unbounded` (default) or `:periodic` |
 | `Lx`, `Ly` | Positive periodic-domain half-widths; required for `domain=:periodic` |
-| `stepper` | `:RK4` (default) or `:leapfrog` |
-| `ra_coeff` | Robert--Asselin coefficient for leapfrog; default `0.05` |
+| `stepper` | `:RK4` (the only built-in method) |
 | `surgery` | `:standard`, `:conservative`, `:aggressive`, `:none`, or `SurgeryParams` |
 | `dev` | `CPU()` (default) or `GPU()` |
 | `T` | Floating-point type for converted inputs and internal buffers; default `Float64` |
@@ -72,5 +71,4 @@ domain
 ```@docs
 AbstractTimeStepper
 RK4Stepper
-LeapfrogStepper
 ```

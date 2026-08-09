@@ -3,7 +3,7 @@
 """
     AbstractTimeStepper
 
-Supertype for built-in time integration schemes. Steppers own reusable work
+Supertype for time steppers. Steppers own reusable work
 buffers sized by [`total_nodes`](@ref) and are advanced with [`timestep!`](@ref)
 or [`evolve!`](@ref).
 """
@@ -27,7 +27,9 @@ struct RK4Stepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: Abstract
 end
 
 function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:AbstractFloat}
-    dt > 0 || throw(ArgumentError("RK4Stepper requires dt > 0, got dt = $dt"))
+    isfinite(dt) && dt > zero(T) || throw(ArgumentError(
+        "RK4Stepper requires finite dt > 0, got dt = $dt"))
+    n >= 0 || throw(ArgumentError("RK4Stepper requires n >= 0, got n = $n"))
     k1 = device_zeros(dev, SVector{2,T}, n)
     A = typeof(k1)
     RK4Stepper(dt, k1,
@@ -36,37 +38,4 @@ function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:Abstract
                device_zeros(dev, SVector{2,T}, n),
                device_zeros(dev, SVector{2,T}, n),
                A[], Vector{Vector{UnitRange{Int}}}())
-end
-
-"""
-    LeapfrogStepper{T,A}(dt, n; dev=CPU(), ra_coeff=0.05)
-
-Leapfrog (second-order centred) time stepper with step size `dt`.
-The first step is bootstrapped with an RK2 midpoint half-step.
-Buffers are allocated on the given `dev`ice.
-"""
-mutable struct LeapfrogStepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: AbstractTimeStepper
-    dt::T
-    nodes_prev::A
-    vel_buf::A
-    nodes_buf::A
-    vel_mid::A
-    initialized::Bool
-    ra_coeff::T
-    vel_bufs::Vector{A}
-    node_ranges::Vector{Vector{UnitRange{Int}}}
-end
-
-function LeapfrogStepper(dt::T, n::Int; dev::AbstractDevice=CPU(), ra_coeff::Real=0.05) where {T<:AbstractFloat}
-    dt > 0 || throw(ArgumentError("LeapfrogStepper requires dt > 0, got dt = $dt"))
-    # `nodes_prev` stores the filtered previous level; `initialized` records
-    # whether the midpoint bootstrap has already supplied that history.
-    nodes_prev = device_zeros(dev, SVector{2,T}, n)
-    A = typeof(nodes_prev)
-    LeapfrogStepper(dt, nodes_prev,
-                    device_zeros(dev, SVector{2,T}, n),
-                    device_zeros(dev, SVector{2,T}, n),
-                    device_zeros(dev, SVector{2,T}, n),
-                    false, T(ra_coeff),
-                    A[], Vector{Vector{UnitRange{Int}}}())
 end

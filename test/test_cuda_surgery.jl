@@ -187,20 +187,6 @@ end
                 gpu_prob, stale_gpu_rk, total_nodes(gpu_prob))
             @test length(stale_gpu_rk.k1) == total_nodes(gpu_prob)
             @test length(stale_gpu_rk.nodes_buf) == total_nodes(gpu_prob)
-
-            cpu_lf = LeapfrogStepper(0.002, total_nodes(cpu_prob); dev=CPU())
-            gpu_prob_lf = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=GPU())
-            gpu_lf = LeapfrogStepper(0.002, total_nodes(gpu_prob_lf); dev=GPU())
-            cpu_prob_lf = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=CPU())
-            for _ in 1:2
-                timestep!(cpu_prob_lf, cpu_lf)
-                timestep!(gpu_prob_lf, gpu_lf)
-            end
-            gpu_lf_contours = materialize_contours(gpu_prob_lf)
-            @test gpu_lf.initialized
-            @test all(zip(gpu_lf_contours, cpu_prob_lf.contours)) do (gpu_c, cpu_c)
-                all(isapprox.(gpu_c.nodes, cpu_c.nodes; rtol=1e-8, atol=1e-8))
-            end
         end
 
         @testset "CUDA multi-layer paths match CPU references" begin

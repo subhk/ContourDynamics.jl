@@ -31,6 +31,14 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
             generic_domain, EulerKernel(); n_fourier=-1)
         @test_throws ArgumentError setup_ewald_cache!(
             generic_domain, EulerKernel(); n_images=-1)
+
+        setup_ewald_cache!(generic_domain, EulerKernel();
+                           n_fourier=1, n_images=0)
+        generic_cache = ContourDynamics._get_ewald_cache(
+            generic_domain, EulerKernel())
+        @test length(generic_cache.kx) == 3
+        @test length(generic_cache.ky) == 3
+        @test generic_cache.n_images == 0
     end
 
     straight_contour(nodes, pv) =

@@ -68,7 +68,7 @@ Open: [Multi-Layer QG](theory/multilayer_qg.md)
 
 ### Time Integration
 
-Describes the RK4 and leapfrog schemes used to advance contour nodes.
+Describes the RK4 scheme used to advance contour nodes.
 
 Open: [Time Integration](theory/time_integration.md)
 

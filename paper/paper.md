@@ -126,8 +126,7 @@ kernel types (`EulerKernel`, `QGKernel`, `SQGKernel`, `MultiLayerQGKernel`)
 and domain types (`UnboundedDomain`, `PeriodicDomain`) select the correct
 velocity formula at compile time via multiple dispatch. Node positions use
 `SVector{2,T}` from StaticArrays.jl for efficient, allocation-free arithmetic.
-Time integration uses a classical fourth-order Runge-Kutta scheme or a
-leapfrog scheme with Robert-Asselin filtering.
+Time integration uses a classical fourth-order Runge-Kutta scheme.
 
 For large problems, velocity evaluation is multithreaded on the CPU, and a
 device-resident evaluation path built on KernelAbstractions.jl provides GPU

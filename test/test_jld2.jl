@@ -6,6 +6,18 @@ function _jld2_contour_equal(a::PVContour, b::PVContour)
 end
 
 @testset "JLD2 Extension" begin
+    @testset "Recorder argument validation" begin
+        @test_throws ArgumentError jld2_recorder("unused.jld2")
+        @test_throws ArgumentError jld2_recorder(
+            "unused.jld2"; save_every=10, save_dt=0.1, dt=0.01)
+        @test_throws ArgumentError jld2_recorder(
+            "unused.jld2"; save_every=10, dt=Inf)
+        @test_throws ArgumentError jld2_recorder(
+            "unused.jld2"; save_dt=Inf, dt=0.01)
+        @test_throws ArgumentError jld2_recorder(
+            "unused.jld2"; save_dt=1.0e308, dt=1.0e-308)
+    end
+
     @testset "Snapshot helpers use materialized output boundary" begin
         ext = Base.get_extension(ContourDynamics, :ContourDynamicsJLD2Ext)
 

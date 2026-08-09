@@ -145,6 +145,11 @@ const _ewald_caches_f64 = Dict{_EwaldCacheKey{Float64}, EwaldCache{Float64}}()
 const _ewald_caches_f32 = Dict{_EwaldCacheKey{Float32}, EwaldCache{Float32}}()
 const _ewald_key_order_f64 = _EwaldCacheKey{Float64}[]
 const _ewald_key_order_f32 = _EwaldCacheKey{Float32}[]
+# Generic floating-point types use a heterogeneous registry. Include the value
+# precision in the key so a BigFloat cache built at one precision is never
+# reused by a higher-precision calculation with numerically equal parameters.
+const _ewald_caches_generic = Dict{Any,Any}()
+const _ewald_key_order_generic = Any[]
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
 
@@ -177,6 +182,14 @@ _ewald_cache_dict(::Type{Float32}) = _ewald_caches_f32
 _ewald_key_order(::Type{Float64}) = _ewald_key_order_f64
 _ewald_key_order(::Type{Float32}) = _ewald_key_order_f32
 
+@inline _kernel_value_precision(::EulerKernel) = 0
+@inline _kernel_value_precision(kernel::QGKernel) = precision(kernel.Ld)
+@inline _kernel_value_precision(kernel::SQGKernel) = precision(kernel.δ)
+@inline function _generic_cache_key(domain::PeriodicDomain{T}, kernel) where {T}
+    return (T, precision(domain.Lx), precision(domain.Ly),
+            _kernel_value_precision(kernel), _cache_key(domain, kernel))
+end
+
 function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T<:Union{Float64, Float32}}
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
@@ -207,9 +220,23 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     end
 end
 
-# Generic float types avoid the heterogeneously typed global registry.
-_get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) where {T<:AbstractFloat} =
-    build_ewald_cache(domain, kernel)
+# Generic float types use the same bounded, locked cache policy. A type assertion
+# at the lookup boundary restores the concrete cache type after reading from the
+# heterogeneous registry.
+function _get_ewald_cache(domain::PeriodicDomain{T},
+                          kernel::AbstractKernel) where {T<:AbstractFloat}
+    key = _generic_cache_key(domain, kernel)
+    cached = Base.@lock _ewald_cache_lock get(_ewald_caches_generic, key, nothing)
+    cached !== nothing && return cached::EwaldCache{T}
+
+    new_cache = build_ewald_cache(domain, kernel)
+    lock(_ewald_cache_lock) do
+        existing = get(_ewald_caches_generic, key, nothing)
+        existing !== nothing && return existing::EwaldCache{T}
+        return _store_ewald_cache!(_ewald_caches_generic,
+                                   _ewald_key_order_generic, key, new_cache)
+    end
+end
 
 # Pre-fetch Ewald cache for use in threaded velocity computation.
 # Returns `nothing` for unbounded domains (no cache needed).
@@ -268,6 +295,29 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
                             n_fourier::Int=8,
                             n_images::Int=2) where {T<:AbstractFloat}
     _validate_ewald_truncation(n_fourier, n_images)
+    key = _generic_cache_key(domain, kernel)
+    cache = build_ewald_cache(domain, kernel;
+                              n_fourier=n_fourier, n_images=n_images)
+    lock(_ewald_cache_lock) do
+        _store_ewald_cache!(_ewald_caches_generic,
+                            _ewald_key_order_generic, key, cache)
+    end
+    return nothing
+end
+
+function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
+                            n_fourier::Int=8,
+                            n_images::Int=2) where {T<:AbstractFloat}
+    _validate_ewald_truncation(n_fourier, n_images)
+    key = _generic_cache_key(domain, kernel)
+    cache = build_ewald_cache(domain, kernel;
+                              n_fourier=n_fourier, n_images=n_images)
+    lock(_ewald_cache_lock) do
+        _store_ewald_cache!(_ewald_caches_generic,
+                            _ewald_key_order_generic, key, cache)
+    end
+    setup_ewald_cache!(domain, EulerKernel();
+                       n_fourier=n_fourier, n_images=n_images)
     return nothing
 end
 
@@ -278,6 +328,8 @@ function clear_ewald_cache!()
         empty!(_ewald_caches_f32)
         empty!(_ewald_key_order_f64)
         empty!(_ewald_key_order_f32)
+        empty!(_ewald_caches_generic)
+        empty!(_ewald_key_order_generic)
     end
 end
 

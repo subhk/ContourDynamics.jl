@@ -181,11 +181,6 @@ function Base.show(io::IO, s::RK4Stepper{T}) where {T}
 end
 Base.show(io::IO, ::MIME"text/plain", s::RK4Stepper) = show(io, s)
 
-function Base.show(io::IO, s::LeapfrogStepper{T}) where {T}
-    print(io, "LeapfrogStepper{$T}: dt = ", s.dt, ", Robert-Asselin coeff = ", s.ra_coeff)
-end
-Base.show(io::IO, ::MIME"text/plain", s::LeapfrogStepper) = show(io, s)
-
 # ── SurgeryParams ───────────────────────────────────────
 
 function Base.show(io::IO, p::SurgeryParams{T}) where {T}

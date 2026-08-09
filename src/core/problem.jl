@@ -2,8 +2,33 @@
 # into a single object for GeophysicalFlows-style convenience.
 
 @inline function _require_positive(name::AbstractString, value::Real)
-    value > zero(value) || throw(ArgumentError("$name must be positive, got $value"))
+    isfinite(value) && value > zero(value) || throw(ArgumentError(
+        "$name must be finite and positive, got $value"))
     return value
+end
+
+@inline _problem_float_type(::ContourProblem{K,D,T}) where {K,D,T} = T
+@inline _problem_float_type(::MultiLayerContourProblem{N,K,D,T}) where {N,K,D,T} = T
+@inline _stepper_primary_buffer(stepper::RK4Stepper) = stepper.k1
+@inline _stepper_storage_matches(::CPU, buffer) = buffer isa Array
+@inline _stepper_storage_matches(::GPU, buffer) = !(buffer isa Array)
+@inline _stepper_storage_matches(::AbstractDevice, buffer) = true
+
+@inline _validate_problem_stepper_compatibility(prob, ::AbstractTimeStepper) = nothing
+
+function _validate_problem_stepper_compatibility(
+        prob::Union{ContourProblem,MultiLayerContourProblem},
+        stepper::RK4Stepper)
+    problem_T = _problem_float_type(prob)
+    stepper_T = typeof(stepper.dt)
+    problem_T === stepper_T || throw(ArgumentError(
+        "Problem coordinates use $problem_T but the stepper uses $stepper_T; " *
+        "construct both with the same floating-point type."))
+    buffer = _stepper_primary_buffer(stepper)
+    _stepper_storage_matches(prob.dev, buffer) || throw(ArgumentError(
+        "Problem uses $(typeof(prob.dev)) but the stepper buffer $(typeof(buffer)) " *
+        "belongs to a different device; construct the stepper with dev=prob.dev."))
+    return nothing
 end
 
 """
@@ -23,6 +48,13 @@ struct Problem{P<:Union{ContourProblem, MultiLayerContourProblem},
     contour_problem::P
     stepper::S
     surgery_params::SP
+    function Problem(contour_problem::P, stepper::S, surgery_params::SP) where {
+            P<:Union{ContourProblem,MultiLayerContourProblem},
+            S<:AbstractTimeStepper,
+            SP<:Union{SurgeryParams,Nothing}}
+        _validate_problem_stepper_compatibility(contour_problem, stepper)
+        new{P,S,SP}(contour_problem, stepper, surgery_params)
+    end
 end
 
 # ── Forwarded accessors ─────────────────────────────────

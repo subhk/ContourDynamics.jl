@@ -91,8 +91,6 @@ but the package does not identify them.
 | ``\mathbf{x}^n`` | Flat vector of all node positions at level ``n`` | Stepper node buffers |
 | ``\Delta t`` | Fixed timestep | `dt` |
 | ``\mathbf{k}_1,\ldots,\mathbf{k}_4`` | RK4 stage velocities | `RK4Stepper.k1`, ..., `.k4` |
-| ``\widetilde{\mathbf{x}}^n`` | Robert--Asselin-filtered middle level | Leapfrog history buffer |
-| ``\nu`` | Robert--Asselin filter coefficient | `ra_coeff` |
 | `nsteps` | Number of timesteps requested from `evolve!` | `nsteps` keyword |
 | `step_offset` | Global step number preceding a continued batch | `step_offset` keyword |
 
@@ -133,8 +131,7 @@ The principal [`Problem`](@ref) keywords map to the notation as follows:
 | `layer_thicknesses` | Positive ``H_i`` values used to symmetrize unequal-depth multi-layer coupling |
 | `domain` | `:unbounded` or `:periodic` |
 | `Lx`, `Ly` | Positive half-widths of a periodic domain |
-| `stepper` | `:RK4` or `:leapfrog` |
-| `ra_coeff` | Leapfrog filter coefficient ``\nu`` |
+| `stepper` | `:RK4` |
 | `surgery` | A preset, `:none`, or an explicit `SurgeryParams` |
 | `dev` | `CPU()` or `GPU()` storage/execution target |
 | `T` | Floating-point type used consistently by geometry, kernels, and buffers |

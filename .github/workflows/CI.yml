@@ -27,3 +27,32 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         env:
           JULIA_NUM_THREADS: 2
+
+  extensions:
+    name: ${{ matrix.dependency }} extension
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dependency: OrdinaryDiffEq
+            test_file: test/test_diffeq.jl
+          - dependency: RecordedArrays
+            test_file: test/test_recorded_arrays.jl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+      - uses: julia-actions/cache@v2
+      - name: Test optional extension
+        env:
+          EXTENSION_DEPENDENCY: ${{ matrix.dependency }}
+          EXTENSION_TEST_FILE: ${{ matrix.test_file }}
+        run: >-
+          julia --color=yes -e '
+            using Pkg;
+            Pkg.activate(; temp=true);
+            Pkg.develop(path=pwd());
+            Pkg.add(ENV["EXTENSION_DEPENDENCY"]);
+            include(joinpath(pwd(), ENV["EXTENSION_TEST_FILE"]));'

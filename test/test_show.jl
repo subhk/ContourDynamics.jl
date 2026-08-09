@@ -128,10 +128,6 @@ using StaticArrays
         rk = RK4Stepper(0.01, 64)
         s = repr("text/plain", rk)
         @test s == "RK4Stepper{Float64}: dt = 0.01"
-
-        lf = LeapfrogStepper(0.005, 32; ra_coeff=0.001)
-        s = repr("text/plain", lf)
-        @test s == "LeapfrogStepper{Float64}: dt = 0.005, Robert-Asselin coeff = 0.001"
     end
 
     @testset "SurgeryParams show" begin

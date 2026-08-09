@@ -62,7 +62,7 @@ export DeviceContourState, materialize_contours
 export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
 export ContourProblem, MultiLayerContourProblem
 export SurgeryParams
-export AbstractTimeStepper, RK4Stepper, LeapfrogStepper
+export AbstractTimeStepper, RK4Stepper
 export nlayers, total_nodes
 export velocity!, velocity, segment_velocity
 export vortex_area, centroid, ellipse_moments

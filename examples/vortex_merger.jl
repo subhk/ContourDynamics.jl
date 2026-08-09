@@ -24,6 +24,8 @@
 
 using ContourDynamics
 using JLD2
+using CUDA
+CUDA.device!(7)
 
 # --- Output ---
 OUTDIR = joinpath(@__DIR__, "output", "vortex_merger")
@@ -34,7 +36,7 @@ separation = 3.0 * R
 nlevels = 2
 profile_power = 2
 nodes_per_contour = 128
-dt = 0.005
+dt = 0.007
 nsteps = 1000
 save_every = 10
 δ = 1e-4
@@ -57,7 +59,8 @@ append!(initial_contours, nested_vortex(+separation / 2, 0.0))
 
 prob = Problem(; contours=initial_contours,
                  dt=dt,
-                 surgery=SurgeryParams(δ, μ, Δ_max, 1e-8, 10))
+                 surgery=SurgeryParams(δ, μ, Δ_max, 1e-8, 10),
+		 dev=GPU())
 display(prob);
 println()
 
@@ -123,3 +126,4 @@ end
 
 include("visualization.jl")
 save_animation(mediabase, snaps; title="Symmetric vortex merger")
+

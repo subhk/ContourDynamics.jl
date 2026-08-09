@@ -63,7 +63,8 @@ kernel above.
 struct SQGKernel{T<:AbstractFloat} <: AbstractKernel
     δ::T
     function SQGKernel(δ::T) where {T<:AbstractFloat}
-        δ > zero(T) || throw(ArgumentError("Regularization δ must be positive, got $δ"))
+        isfinite(δ) && δ > zero(T) || throw(ArgumentError(
+            "Regularization δ must be finite and positive, got $δ"))
         new{T}(δ)
     end
 end

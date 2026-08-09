@@ -432,25 +432,11 @@ using Test, ContourDynamics, StaticArrays, Logging
         @test abs(vortex_area(merged)) ≈ A0 rtol=0.2
     end
 
-    @testset "Surgery Re-bootstraps Leapfrog Even When Node Count Unchanged" begin
-        # Remeshing moves nodes along the contour on every surgery pass, so the
-        # leapfrog history is stale even when the total node count is
-        # preserved. The SurgeryParams docstring promises a re-bootstrap after
-        # each surgery pass.
+    @testset "Post-surgery RK4 buffer synchronization" begin
         c = circular_patch(0.5, 32, 1.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
 
-        st = LeapfrogStepper(0.01, total_nodes(prob))
-        st.initialized = true
-        ContourDynamics._handle_post_surgery!(prob, st, total_nodes(prob))
-        @test !st.initialized
-
-        st2 = LeapfrogStepper(0.01, total_nodes(prob))
-        st2.initialized = true
-        ContourDynamics._handle_post_surgery!(prob, st2, total_nodes(prob) + 5)
-        @test !st2.initialized
-
-        # RK4 has no history; the count-unchanged path must stay a no-op.
+        # A count-unchanged surgery pass needs no RK4 buffer work.
         rk = RK4Stepper(0.01, total_nodes(prob))
         @test ContourDynamics._handle_post_surgery!(prob, rk, total_nodes(prob)) === nothing
 
@@ -469,10 +455,11 @@ using Test, ContourDynamics, StaticArrays, Logging
         ml_prob = MultiLayerContourProblem(ml_kernel, UnboundedDomain(),
                                            ([circular_patch(0.4, 16, 1.0)],
                                             [circular_patch(0.3, 12, -0.5)]))
-        ml_st = LeapfrogStepper(0.01, total_nodes(ml_prob))
-        ml_st.initialized = true
-        ContourDynamics._handle_post_surgery!(ml_prob, ml_st, total_nodes(ml_prob))
-        @test !ml_st.initialized
+        ml_stale_rk = RK4Stepper(0.01, total_nodes(ml_prob) - 1)
+        ContourDynamics._handle_post_surgery!(
+            ml_prob, ml_stale_rk, total_nodes(ml_prob))
+        @test length(ml_stale_rk.k1) == total_nodes(ml_prob)
+        @test length(ml_stale_rk.nodes_buf) == total_nodes(ml_prob)
     end
 
     @testset "No Reconnection: Different PV" begin

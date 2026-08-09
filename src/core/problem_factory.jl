@@ -130,17 +130,14 @@ Base.@constprop :aggressive function _build_contour_problem(is_multilayer::Bool,
 end
 
 Base.@constprop :aggressive function _build_stepper(::Type{T}, stepper::Symbol,
-                                                    dt::Real, prob, dev,
-                                                    ra_coeff::Real) where {T}
+                                                    dt::Real, prob, dev) where {T}
     # Stepper buffers are sized from the current node count. Surgery may change
     # this later, in which case `resize_buffers!` is called by `evolve!`.
     N = total_nodes(prob)
     if stepper === :RK4
         return RK4Stepper(T(dt), N; dev=dev)
-    elseif stepper === :leapfrog
-        return LeapfrogStepper(T(dt), N; dev=dev, ra_coeff=T(ra_coeff))
     end
-    throw(ArgumentError("Unknown stepper :$stepper. Use :RK4 or :leapfrog."))
+    throw(ArgumentError("Unknown stepper :$stepper. Only :RK4 is supported."))
 end
 
 Base.@constprop :aggressive function _build_surgery(surgery, ::Type{T}) where {T}
@@ -190,7 +187,6 @@ Base.@constprop :aggressive function Problem(;
     Lx::Real=NaN,
     Ly::Real=NaN,
     stepper::Symbol=:RK4,
-    ra_coeff::Real=0.05,
     surgery=:standard,
     dev=CPU(),
     T::Type{<:AbstractFloat}=Float64,
@@ -209,7 +205,7 @@ Base.@constprop :aggressive function Problem(;
     device = _build_device(dev)
     contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain,
                                              typed_contours, typed_layers, device)
-    time_stepper = _build_stepper(T, stepper, dt, contour_problem, device, ra_coeff)
+    time_stepper = _build_stepper(T, stepper, dt, contour_problem, device)
     surgery_params = _build_surgery(surgery, T)
     return Problem(contour_problem, time_stepper, surgery_params)
 end

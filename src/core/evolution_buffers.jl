@@ -1,4 +1,4 @@
-# Buffer utilities shared by RK4 and leapfrog timesteppers.
+# Buffer utilities for the RK4 timestepper.
 #
 # Contour geometry is stored as nested vectors (`contours -> nodes` or
 # `layers -> contours -> nodes`) because that is natural for surgery and user
@@ -10,8 +10,8 @@
 #   scatter: flat node buffer -> contour nodes
 #   ranges:  cached contour/layer slices inside the flat buffer
 #
-# Keeping this mapping isolated prevents RK4/leapfrog code from duplicating
-# contour traversal logic and makes post-surgery resizing easier to reason about.
+# Keeping this mapping isolated makes post-surgery resizing easier to reason
+# about.
 
 """
     _collect_all_nodes!(buf, prob)
@@ -36,20 +36,6 @@ end
 @kernel function _rk4_update_ka!(nodes, k1, k2, k3, k4, dt)
     i = @index(Global)
     nodes[i] = nodes[i] + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
-end
-
-@kernel function _leapfrog_bootstrap_ka!(nodes_prev, nodes_current, vel_mid, dt)
-    i = @index(Global)
-    nodes_prev[i] = nodes_current[i]
-    nodes_current[i] = nodes_current[i] + dt * vel_mid[i]
-end
-
-@kernel function _leapfrog_step_ka!(nodes_prev, nodes_current, vel, dt, nu)
-    i = @index(Global)
-    y_next = nodes_prev[i] + 2 * dt * vel[i]
-    y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + nodes_prev[i])
-    nodes_prev[i] = y_filtered
-    nodes_current[i] = y_next
 end
 
 @kernel function _copy_with_offset_ka!(dest, src, offset)
@@ -154,15 +140,6 @@ end
         ci = contour_of_node[i]
         x[i] += shiftx[ci]
         y[i] += shifty[ci]
-    end
-end
-
-@kernel function _apply_shifts_to_flat_ka!(nodes, shiftx, shifty, contour_of_node, total_nodes)
-    i = @index(Global)
-    if i <= total_nodes
-        ci = contour_of_node[i]
-        node = nodes[i]
-        nodes[i] = SVector(node[1] + shiftx[ci], node[2] + shifty[ci])
     end
 end
 
@@ -294,8 +271,8 @@ end
 # CPU buffer/stepper updates run as plain loops rather than through
 # `@_ka_launch CPU()`: a KernelAbstractions launch costs ~288 B (closure +
 # ndrange object) plus a synchronize on every call, which is pure overhead for
-# these trivial elementwise vector operations and accumulates across the 4
-# velocity stages of every RK4/leapfrog step. GPU problems keep the
+# these trivial elementwise vector operations and accumulates across the four
+# velocity stages of every RK4 step. GPU problems keep the
 # device-resident `@_ka_launch dev` path via the methods above.
 @inline function _cpu_copy_to_flat!(dest, src, offset::Int)
     @inbounds for i in eachindex(src)
@@ -323,24 +300,6 @@ end
         nodes[i] = nodes[i] + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
     end
     return nodes
-end
-
-@inline function _cpu_leapfrog_bootstrap!(nodes_prev, nodes_current, vel_mid, dt)
-    @inbounds for i in eachindex(nodes_current)
-        nodes_prev[i] = nodes_current[i]
-        nodes_current[i] = nodes_current[i] + dt * vel_mid[i]
-    end
-    return nothing
-end
-
-@inline function _cpu_leapfrog_step!(nodes_prev, nodes_current, vel, dt, nu)
-    @inbounds for i in eachindex(nodes_current)
-        y_next = nodes_prev[i] + 2 * dt * vel[i]
-        y_filtered = nodes_current[i] + (nu / 2) * (y_next - 2 * nodes_current[i] + nodes_prev[i])
-        nodes_prev[i] = y_filtered
-        nodes_current[i] = y_next
-    end
-    return nothing
 end
 
 function _ka_copy_nodes_to_flat!(dest, src, offset::Int)
@@ -420,30 +379,6 @@ end
 
 _wrap_state_nodes!(state::DeviceContourState, ::UnboundedDomain, ::AbstractDevice) = state
 
-"""
-    _wrap_state_nodes_with_history!(state, domain, stepper, dev, nodes_prev=stepper.nodes_prev)
-
-Wrap the state's contour nodes into the fundamental domain and apply the same
-per-contour lattice shifts (left in `state.shiftx`/`state.shifty` by
-`_wrap_state_nodes!`) to the leapfrog history buffer, so the Robert–Asselin
-filter never mixes coordinates from different periodic images. `nodes_prev`
-lets multi-layer callers pass the layer's slice of the flat history buffer.
-"""
-function _wrap_state_nodes_with_history!(state::DeviceContourState{T},
-                                         domain::PeriodicDomain{T},
-                                         stepper::LeapfrogStepper{T},
-                                         dev::AbstractDevice,
-                                         nodes_prev::AbstractVector{SVector{2,T}}=stepper.nodes_prev) where {T}
-    _wrap_state_nodes!(state, domain, dev)
-    stepper.initialized || return state
-    N = _device_state_nnodes(state)
-    N == 0 && return state
-    _ka_stepper_update!(dev, _apply_shifts_to_flat_ka!, N,
-                        nodes_prev, state.shiftx, state.shifty,
-                        state.contour_of_node, N)
-    return state
-end
-
 @inline function _rk4_state_stage!(k, state::DeviceContourState{T}, kernel, domain,
                                    nodes_orig, increment, scale::T,
                                    dev::AbstractDevice) where {T}
@@ -478,34 +413,6 @@ function _rk4_state_step!(state::DeviceContourState{T}, kernel, domain,
 
     return _finish_rk4_state_step!(state, nodes_orig, stepper.k1, stepper.k2,
                                    stepper.k3, stepper.k4, dt, dev)
-end
-
-function _leapfrog_state_step!(state::DeviceContourState{T}, kernel, domain,
-                               stepper::LeapfrogStepper{T},
-                               dev::AbstractDevice) where {T}
-    dt = stepper.dt
-    N = _device_state_nnodes(state)
-    nodes_current = stepper.nodes_buf
-    length(nodes_current) >= N || throw(DimensionMismatch("Stepper buffer size ($(length(nodes_current))) < total nodes ($N). Call resize_buffers! first."))
-
-    _collect_state_nodes!(nodes_current, state, dev)
-    _ka_velocity_from_state!(stepper.vel_buf, state, kernel, domain, dev)
-
-    if !stepper.initialized
-        _scatter_state_shifted!(state, nodes_current, stepper.vel_buf, dt / 2, dev)
-        _ka_velocity_from_state!(stepper.vel_mid, state, kernel, domain, dev)
-        _ka_stepper_update!(dev, _leapfrog_bootstrap_ka!, N,
-                            stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
-        _scatter_state_nodes!(state, nodes_current, dev)
-        stepper.initialized = true
-    else
-        _ka_stepper_update!(dev, _leapfrog_step_ka!, N,
-                            stepper.nodes_prev, nodes_current, stepper.vel_buf,
-                            dt, stepper.ra_coeff)
-        _scatter_state_nodes!(state, nodes_current, dev)
-    end
-
-    return state
 end
 
 # ---------------------------------------------------------------------------
@@ -553,53 +460,6 @@ function _rk4_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, ke
         _finish_rk4_state_step!(states[ℓ], view(nodes_orig, r), view(stepper.k1, r),
                                 view(stepper.k2, r), view(stepper.k3, r),
                                 view(stepper.k4, r), dt, dev)
-    end
-    return states
-end
-
-# Multi-layer twin of _leapfrog_state_step! — keep the two in lockstep.
-function _leapfrog_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, kernel, domain,
-                                          stepper::LeapfrogStepper{T},
-                                          dev::AbstractDevice) where {N, T}
-    dt = stepper.dt
-    ranges = _layer_state_ranges(states)
-    Ntot = sum(length, ranges)
-    nodes_current = stepper.nodes_buf
-    length(nodes_current) >= Ntot || throw(DimensionMismatch("Stepper buffer size ($(length(nodes_current))) < total nodes ($Ntot). Call resize_buffers! first."))
-    Ntot == 0 && return states
-
-    for ℓ in 1:N
-        r = ranges[ℓ]
-        isempty(r) && continue
-        _collect_state_nodes!(view(nodes_current, r), states[ℓ], dev)
-    end
-    _ka_multilayer_velocity_from_states!(stepper.vel_buf, states, kernel, domain, dev)
-
-    if !stepper.initialized
-        for ℓ in 1:N
-            r = ranges[ℓ]
-            isempty(r) && continue
-            _scatter_state_shifted!(states[ℓ], view(nodes_current, r),
-                                    view(stepper.vel_buf, r), dt / 2, dev)
-        end
-        _ka_multilayer_velocity_from_states!(stepper.vel_mid, states, kernel, domain, dev)
-        _ka_stepper_update!(dev, _leapfrog_bootstrap_ka!, Ntot,
-                            stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
-        for ℓ in 1:N
-            r = ranges[ℓ]
-            isempty(r) && continue
-            _scatter_state_nodes!(states[ℓ], view(nodes_current, r), dev)
-        end
-        stepper.initialized = true
-    else
-        _ka_stepper_update!(dev, _leapfrog_step_ka!, Ntot,
-                            stepper.nodes_prev, nodes_current, stepper.vel_buf,
-                            dt, stepper.ra_coeff)
-        for ℓ in 1:N
-            r = ranges[ℓ]
-            isempty(r) && continue
-            _scatter_state_nodes!(states[ℓ], view(nodes_current, r), dev)
-        end
     end
     return states
 end
@@ -669,16 +529,6 @@ end
     return prob
 end
 
-@inline function _bootstrap_leapfrog!(prob::ContourProblem, stepper::LeapfrogStepper{T},
-                                      nodes_current, vel, dt, ranges) where {T}
-    _scatter_shifted!(prob, nodes_current, vel, dt / 2, ranges)
-    velocity!(stepper.vel_mid, prob)
-    _cpu_leapfrog_bootstrap!(stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
-    _scatter_nodes!(prob, nodes_current, ranges)
-    stepper.initialized = true
-    return prob
-end
-
 """
     _collect_velocities!(flat, vel)
 
@@ -726,16 +576,5 @@ end
 @inline function _finish_rk4_step!(prob::MultiLayerContourProblem, nodes_orig, k1, k2, k3, k4, dt, all_ranges)
     _cpu_rk4_combine!(nodes_orig, k1, k2, k3, k4, dt)
     _scatter_nodes!(prob, nodes_orig, all_ranges)
-    return prob
-end
-
-@inline function _bootstrap_leapfrog!(prob::MultiLayerContourProblem, stepper::LeapfrogStepper{T},
-                                      nodes_current, flat_vel, vel_tuple, dt, all_ranges) where {T}
-    _scatter_shifted!(prob, nodes_current, flat_vel, dt / 2, all_ranges)
-    velocity!(vel_tuple, prob)
-    _collect_velocities!(stepper.vel_mid, vel_tuple)
-    _cpu_leapfrog_bootstrap!(stepper.nodes_prev, nodes_current, stepper.vel_mid, dt)
-    _scatter_nodes!(prob, nodes_current, all_ranges)
-    stepper.initialized = true
     return prob
 end

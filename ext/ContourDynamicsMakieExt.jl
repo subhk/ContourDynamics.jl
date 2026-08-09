@@ -19,6 +19,7 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
                                           nsteps::Int, frameskip::Int=10,
                                           filename="contour_evolution.mp4",
                                           callbacks=nothing)
+    nsteps >= 0 || throw(ArgumentError("nsteps must be non-negative, got $nsteps"))
     frameskip > 0 || throw(ArgumentError("frameskip must be positive, got $frameskip"))
 
     fig = Makie.Figure()
@@ -89,6 +90,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                                           nsteps::Int, frameskip::Int=10,
                                           filename="contour_evolution.mp4",
                                           callbacks=nothing) where {N}
+    nsteps >= 0 || throw(ArgumentError("nsteps must be non-negative, got $nsteps"))
     frameskip > 0 || throw(ArgumentError("frameskip must be positive, got $frameskip"))
 
     fig = Makie.Figure()
