@@ -137,6 +137,9 @@ Base.@constprop :aggressive function _build_stepper(::Type{T}, stepper::Symbol,
     if stepper === :RK4
         return RK4Stepper(T(dt), N; dev=dev)
     end
+    stepper === :leapfrog && throw(ArgumentError(
+        "The :leapfrog stepper was removed in ContourDynamics v1.0.21; use " *
+        "stepper=:RK4 instead."))
     throw(ArgumentError("Unknown stepper :$stepper. Only :RK4 is supported."))
 end
 
@@ -190,7 +193,13 @@ Base.@constprop :aggressive function Problem(;
     surgery=:standard,
     dev=CPU(),
     T::Type{<:AbstractFloat}=Float64,
+    ra_coeff::Union{Nothing,Real}=nothing,
 )
+    # Removed keyword kept so pre-v1.0.21 call sites fail with migration
+    # guidance instead of an anonymous MethodError.
+    ra_coeff === nothing || throw(ArgumentError(
+        "The ra_coeff keyword belonged to the leapfrog stepper, which was " *
+        "removed in ContourDynamics v1.0.21; drop it and use stepper=:RK4."))
     # Build in dependency order: layout determines problem type, then kernel and
     # domain are normalized, then the concrete problem sizes the stepper buffers.
     is_multilayer = _validate_problem_layout(kernel, contours, layers)

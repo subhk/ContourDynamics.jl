@@ -674,6 +674,22 @@ end
             with_spanning, δ, CPU())) == dev_pairs
     end
 
+    @testset "Chunked pair scan matches CPU reference across chunk boundary" begin
+        # 1200 eligible segments → npairs = 1.44e6 > _PAIR_SCAN_CHUNK, so the
+        # candidate sweep spans two chunks; results must match the CPU
+        # spatial-index reference exactly.
+        δ = 0.05
+        contours = [circular_patch(1.0, 600, 1.0),
+                    circular_patch(1.0, 600, 1.0; cx=2.03)]
+        @test 600 * 600 * 4 > ContourDynamics._PAIR_SCAN_CHUNK
+        idx = ContourDynamics.build_spatial_index(contours, δ)
+        cpu_pairs = Set(ContourDynamics.find_close_segments(contours, idx, δ))
+        buffer = ContourDynamics._device_close_pair_candidate_buffer(contours, δ, CPU())
+        buffered = Set(ContourDynamics._unpack_close_pair_candidates(buffer))
+        @test !isempty(cpu_pairs)
+        @test cpu_pairs == buffered
+    end
+
     @testset "Device close-pair admissibility uses periodic minimum images" begin
         function periodic_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
             nodes = SVector{2,Float64}[]

@@ -83,11 +83,10 @@ function _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::Segme
                                       dev_kx, dev_ky, dev_fourier)
 end
 
-@inline _ka_periodic_cache(domain::PeriodicDomain, kernel::EulerKernel) =
-    _get_ewald_cache(domain, kernel)
-@inline _ka_periodic_cache(domain::PeriodicDomain, ::QGKernel) =
-    _get_ewald_cache(domain, EulerKernel())
-@inline _ka_periodic_cache(domain::PeriodicDomain, kernel::SQGKernel) =
+# Resolve the same registry entry as the CPU path (`_prefetch_ewald`): each
+# kernel reads its own key. The QG cache carries the periodic Euler
+# coefficients too, so the Euler sub-evaluation needs no separate entry.
+@inline _ka_periodic_cache(domain::PeriodicDomain, kernel::AbstractKernel) =
     _get_ewald_cache(domain, kernel)
 
 @inline function _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,

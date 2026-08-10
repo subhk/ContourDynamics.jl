@@ -63,6 +63,9 @@ export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
 export ContourProblem, MultiLayerContourProblem
 export SurgeryParams
 export AbstractTimeStepper, RK4Stepper
+# Removed API kept as an informative stub so downstream v1.0.x code fails with
+# migration guidance instead of UndefVarError (see stepper_types.jl).
+export LeapfrogStepper
 export nlayers, total_nodes
 export velocity!, velocity, segment_velocity
 export vortex_area, centroid, ellipse_moments

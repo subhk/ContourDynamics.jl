@@ -265,8 +265,10 @@ function ellipse_moments(c::PVContour{T}) where {T}
     n = length(nodes)
     A = vortex_area(c)
 
-    # Guard against degenerate contours (zero or near-zero area)
-    if abs(A) < eps(T) || n < 3
+    # Guard against degenerate contours: area at or below the shoelace rounding
+    # noise, which scales with the squared coordinate magnitude. An absolute
+    # eps floor would misclassify well-resolved but physically small vortices.
+    if n < 3 || abs(A) <= eps(T) * _shoelace_noise_scale(c)
         return (one(T), zero(T))
     end
 
@@ -302,8 +304,11 @@ function ellipse_moments(c::PVContour{T}) where {T}
     lambda2 = trace / 2 - disc
 
     # Guard against near-degenerate contours: if the trace (sum of eigenvalues)
-    # is negligible, the contour is essentially a point — return unit aspect ratio.
-    if trace < eps(T)
+    # is negligible relative to the vortex area — both carry units of length² —
+    # the contour is essentially a point; return unit aspect ratio. Comparing
+    # against bare eps(T) would flag every vortex smaller than ~1e-8 in linear
+    # scale as a circle regardless of its true shape.
+    if trace <= eps(T) * abs(A)
         return (one(T), zero(T))
     end
     lambda2_safe = max(lambda2, trace * eps(T) * T(100))

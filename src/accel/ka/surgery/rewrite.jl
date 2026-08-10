@@ -41,6 +41,19 @@ end
     return area2
 end
 
+# Device twin of `_shoelace_noise_scale`: squared coordinate magnitude of a
+# contour, the relative floor for sign decisions on shoelace areas.
+@inline function _flat_shoelace_noise_scale(x, y, offsets, lengths, ci)
+    n = lengths[ci]
+    off = offsets[ci]
+    s = zero(eltype(x))
+    @inbounds for li in 1:n
+        g = off + li - 1
+        s = max(s, abs(x[g]), abs(y[g]))
+    end
+    return s * s
+end
+
 @inline function _flat_split_part_area2(x, y, offsets, ci, inserted_idx,
                                         stitch_x, stitch_y, start_idx, len)
     area2 = zero(eltype(x))
@@ -113,8 +126,14 @@ end
         if op_k == UInt8(2)
             area1_2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
             area2_2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, cj)
-            area_tol = eps(one(area1_2)) * 2000
-            reverse_second = abs(area1_2) > area_tol && abs(area2_2) > area_tol &&
+            # Scale-relative floors matching the CPU `_reconnect_merge!` gate:
+            # shoelace sign noise grows with the squared coordinate magnitude.
+            # The `area*_2` values carry a factor 2, hence 2000 vs the CPU 1000.
+            tol1 = eps(one(area1_2)) * 2000 *
+                   _flat_shoelace_noise_scale(x, y, offsets, lengths, ci)
+            tol2 = eps(one(area2_2)) * 2000 *
+                   _flat_shoelace_noise_scale(x, y, offsets, lengths, cj)
+            reverse_second = abs(area1_2) > tol1 && abs(area2_2) > tol2 &&
                              ((area1_2 > zero(area1_2)) != (area2_2 > zero(area2_2)))
         end
 

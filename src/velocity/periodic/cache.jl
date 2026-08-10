@@ -40,8 +40,10 @@ end
 function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
     Lx, Ly = domain.Lx, domain.Ly
     α = sqrt(T(π)) / sqrt(Lx * Ly)
-    kx = [T(2π * m) / (2 * Lx) for m in -n_fourier:n_fourier]
-    ky = [T(2π * n) / (2 * Ly) for n in -n_fourier:n_fourier]
+    # `2π * m` would contaminate extended-precision types with a Float64
+    # product, so convert π to T before touching the integer index.
+    kx = [T(π) * m / Lx for m in -n_fourier:n_fourier]
+    ky = [T(π) * n / Ly for n in -n_fourier:n_fourier]
     area = 4 * Lx * Ly
     return α, kx, ky, area
 end

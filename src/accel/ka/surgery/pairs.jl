@@ -6,7 +6,7 @@
     sx = bx - ax
     sy = by - ay
     len2 = sx * sx + sy * sy
-    if len2 <= eps(len2)
+    if len2 <= eps(typeof(len2))
         dx = px - ax
         dy = py - ay
         return dx * dx + dy * dy
@@ -24,7 +24,7 @@ end
     sx = bx - ax
     sy = by - ay
     len2 = sx * sx + sy * sy
-    if len2 <= eps(len2)
+    if len2 <= eps(typeof(len2))
         dx = px - ax
         dy = py - ay
         return dx * dx + dy * dy, ax, ay
@@ -108,13 +108,17 @@ function _device_eligible_surgery_segment_indices(flat::FlatContourTopology,
     return eligible
 end
 
-@kernel function _close_pair_candidate_kernel!(valid, eligible, x, y, pv, wrapx, wrapy, offsets,
+# Evaluates pair indices `offset+1 : offset+nlocal` of the flattened
+# eligible×eligible pair space, writing chunk-local validity flags, so the
+# caller can sweep an O(neligible²) pair space with O(chunk) scratch.
+@kernel function _close_pair_candidate_kernel!(valid, offset, nlocal, eligible,
+                                               x, y, pv, wrapx, wrapy, offsets,
                                                lengths, contour_of_node, local_index,
                                                corners, periodic, Lx, Ly, δ2,
                                                neligible)
-    pair_idx = @index(Global)
-    npairs = neligible * neligible
-    if pair_idx <= npairs
+    local_idx = @index(Global)
+    if local_idx <= nlocal
+        pair_idx = local_idx + offset
         is_valid = false
         g1 = eligible[((pair_idx - 1) % neligible) + 1]
         g2 = eligible[((pair_idx - 1) ÷ neligible) + 1]
@@ -178,20 +182,21 @@ end
                 end
             end
         end
-        valid[pair_idx] = is_valid ? UInt8(1) : UInt8(0)
+        valid[local_idx] = is_valid ? UInt8(1) : UInt8(0)
     end
 end
 
 @kernel function _compact_close_pair_candidates_kernel!(pair_ci, pair_i,
                                                         pair_cj, pair_j,
-                                                        slots, valid,
+                                                        slots, valid, offset,
                                                         eligible,
                                                         contour_of_node,
                                                         local_index,
-                                                        neligible, npairs)
-    pair_idx = @index(Global)
-    if pair_idx <= npairs && !iszero(valid[pair_idx])
-        slot = slots[pair_idx]
+                                                        neligible, nlocal)
+    local_idx = @index(Global)
+    if local_idx <= nlocal && !iszero(valid[local_idx])
+        slot = slots[local_idx]
+        pair_idx = local_idx + offset
         g1 = eligible[((pair_idx - 1) % neligible) + 1]
         g2 = eligible[((pair_idx - 1) ÷ neligible) + 1]
         pair_ci[slot] = contour_of_node[g1]
@@ -200,6 +205,10 @@ end
         pair_j[slot] = local_index[g2]
     end
 end
+
+# Pair-index block size per launch when sweeping the eligible×eligible pair
+# space. Bounds the validity/scan scratch to ~33 MB regardless of node count.
+const _PAIR_SCAN_CHUNK = 1 << 20
 
 function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
                                              domain::AbstractDomain,
@@ -217,29 +226,68 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
         return DeviceClosePairCandidates(empty_ints, empty_ints, empty_ints, empty_ints)
     end
 
+    # The pair space is neligible², so materializing per-pair scratch for all
+    # of it at once would need ~24 bytes per pair (~10 GB for 20k eligible
+    # segments). Sweep it in fixed-size chunks instead: scratch stays
+    # O(_PAIR_SCAN_CHUNK) while the compacted candidate output — which is
+    # small in practice — is concatenated across chunks in pair-index order,
+    # preserving the ordering of the previous all-at-once implementation.
     npairs = neligible * neligible
-    valid = device_zeros(dev, UInt8, npairs)
-    periodic, Lx, Ly = _flat_surgery_domain(domain, T)
-    @_ka_launch dev npairs _close_pair_candidate_kernel!(
-        valid, eligible, flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy, flat.offsets,
-        flat.lengths, flat.contour_of_node, flat.local_index, flat.corners,
-        periodic, Lx, Ly, T(δ)^2, neligible)
-
-    slots = device_zeros(dev, Int, npairs)
+    chunk = min(npairs, _PAIR_SCAN_CHUNK)
+    valid = device_zeros(dev, UInt8, chunk)
+    slots = device_zeros(dev, Int, chunk)
+    scan_a = device_zeros(dev, Int, chunk)
+    scan_b = device_zeros(dev, Int, chunk)
     count_store = device_zeros(dev, Int, 1)
-    _device_compact_scan!(slots, count_store, valid, npairs, dev)
-    ncandidates = to_cpu(count_store)[1]
+    periodic, Lx, Ly = _flat_surgery_domain(domain, T)
+    δ2 = T(δ)^2
 
-    pair_ci = device_zeros(dev, Int, ncandidates)
-    pair_i = device_zeros(dev, Int, ncandidates)
-    pair_cj = device_zeros(dev, Int, ncandidates)
-    pair_j = device_zeros(dev, Int, ncandidates)
-    if ncandidates > 0
-        @_ka_launch dev npairs _compact_close_pair_candidates_kernel!(
-            pair_ci, pair_i, pair_cj, pair_j, slots, valid,
-            eligible, flat.contour_of_node, flat.local_index, neligible, npairs)
+    V = typeof(slots)
+    parts = Tuple{V,V,V,V}[]
+    total = 0
+    lo = 0
+    while lo < npairs
+        len = min(chunk, npairs - lo)
+        @_ka_launch dev len _close_pair_candidate_kernel!(
+            valid, lo, len, eligible, flat.x, flat.y, flat.pv, flat.wrapx,
+            flat.wrapy, flat.offsets, flat.lengths, flat.contour_of_node,
+            flat.local_index, flat.corners, periodic, Lx, Ly, δ2, neligible)
+        _device_compact_scan!(slots, count_store, valid, len, dev, scan_a, scan_b)
+        c = to_cpu(count_store)[1]
+        if c > 0
+            p_ci = device_zeros(dev, Int, c)
+            p_i = device_zeros(dev, Int, c)
+            p_cj = device_zeros(dev, Int, c)
+            p_j = device_zeros(dev, Int, c)
+            @_ka_launch dev len _compact_close_pair_candidates_kernel!(
+                p_ci, p_i, p_cj, p_j, slots, valid, lo, eligible,
+                flat.contour_of_node, flat.local_index, neligible, len)
+            push!(parts, (p_ci, p_i, p_cj, p_j))
+            total += c
+        end
+        lo += len
     end
 
+    if total == 0
+        empty_ints = device_zeros(dev, Int, 0)
+        return DeviceClosePairCandidates(empty_ints, empty_ints, empty_ints, empty_ints)
+    end
+    length(parts) == 1 &&
+        return DeviceClosePairCandidates(parts[1][1], parts[1][2], parts[1][3], parts[1][4])
+
+    pair_ci = device_zeros(dev, Int, total)
+    pair_i = device_zeros(dev, Int, total)
+    pair_cj = device_zeros(dev, Int, total)
+    pair_j = device_zeros(dev, Int, total)
+    off = 1
+    for (p_ci, p_i, p_cj, p_j) in parts
+        n = length(p_ci)
+        copyto!(pair_ci, off, p_ci, 1, n)
+        copyto!(pair_i, off, p_i, 1, n)
+        copyto!(pair_cj, off, p_cj, 1, n)
+        copyto!(pair_j, off, p_j, 1, n)
+        off += n
+    end
     return DeviceClosePairCandidates(pair_ci, pair_i, pair_cj, pair_j)
 end
 
@@ -298,7 +346,7 @@ end
     sx = bx - ax
     sy = by - ay
     seg_len = sqrt(sx * sx + sy * sy)
-    if seg_len <= eps(δ)
+    if seg_len <= eps(typeof(δ))
         px = (ax + bx) / 2
         py = (ay + by) / 2
         return periodic ? (_flat_wrap_coord(px, Lx), _flat_wrap_coord(py, Ly)) : (px, py)
@@ -310,7 +358,7 @@ end
     inward_x = area2 >= zero(area2) ? left_x : -left_x
     inward_y = area2 >= zero(area2) ? left_y : -left_y
     probe_distance = max(δ / 10,
-                         eps(δ) * (one(δ) + abs(ax) + abs(ay) + seg_len))
+                         eps(typeof(δ)) * (one(δ) + abs(ax) + abs(ay) + seg_len))
     px = (ax + bx) / 2 + probe_distance * inward_x
     py = (ay + by) / 2 + probe_distance * inward_y
     return periodic ? (_flat_wrap_coord(px, Lx), _flat_wrap_coord(py, Ly)) : (px, py)

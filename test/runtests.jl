@@ -281,6 +281,7 @@ include("test_sqg.jl")
 
     include("test_periodic_qg_sqg.jl")
     include("test_periodic_velocity_regression.jl")
+    include("test_periodic_velocity_oracle.jl")
 
     include("test_two_layer_qg_example.jl")
 
@@ -395,6 +396,28 @@ include("test_sqg.jl")
             include("test_jld2.jl")
         catch e
             @warn "JLD2 not available — skipping JLD2 extension tests" exception=e
+        end
+    end
+
+    if haskey(Base.loaded_modules, Base.PkgId(Base.UUID("1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"), "OrdinaryDiffEq"))
+        include("test_diffeq.jl")
+    else
+        try
+            using OrdinaryDiffEq
+            include("test_diffeq.jl")
+        catch e
+            @warn "OrdinaryDiffEq not available — skipping DiffEq extension tests" exception=e
+        end
+    end
+
+    if haskey(Base.loaded_modules, Base.PkgId(Base.UUID("1040807a-3a2f-4266-b2c1-805b33c7034a"), "RecordedArrays"))
+        include("test_recorded_arrays.jl")
+    else
+        try
+            using RecordedArrays
+            include("test_recorded_arrays.jl")
+        catch e
+            @warn "RecordedArrays not available — skipping RecordedArrays extension tests" exception=e
         end
     end
 end

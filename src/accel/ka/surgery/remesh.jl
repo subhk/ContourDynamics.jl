@@ -16,7 +16,7 @@ end
 
 @inline function _flat_fixed_span_interval_count(total_length, q, current::Int,
                                                  μ, Δ_max)
-    if total_length <= eps(total_length)
+    if total_length <= eps(typeof(total_length))
         return max(1, current)
     end
     min_intervals = max(1, Int(ceil(total_length / Δ_max)))
@@ -55,7 +55,7 @@ end
     b_norm = sqrt(bx * bx + by * by)
     chord_norm = sqrt(chord_x * chord_x + chord_y * chord_y)
     denom = a_norm * b_norm * chord_norm
-    denom <= eps(denom) && return zero(denom)
+    denom <= eps(typeof(denom)) && return zero(denom)
     return 2 * (ax * by - ay * bx) / denom
 end
 
@@ -210,7 +210,7 @@ end
         xj = x[g]
         yj = y[g]
         L = max(perimeters[ci] / eltype(x)(2π), Δ_max)
-        d2_floor = eps(L) * max(one(L), L)^2
+        d2_floor = eps(typeof(L)) * max(one(L), L)^2
         numerator = zero(L)
         denominator = zero(L)
 
@@ -219,7 +219,7 @@ end
             sli = local_index[sg]
             off = offsets[sc]
             ei = seg_lengths[sg]
-            ei <= eps(ei) && continue
+            ei <= eps(typeof(ei)) && continue
             mx = sli < lengths[sc] ? (x[sg] + x[sg + 1]) / 2 :
                  (x[sg] + x[off] + wrapx[sc]) / 2
             my = sli < lengths[sc] ? (y[sg] + y[sg + 1]) / 2 :
@@ -232,7 +232,7 @@ end
             numerator += weight * abs_curvatures[sg]
         end
 
-        K_j = denominator <= eps(denominator) ? zero(denominator) : numerator / denominator
+        K_j = denominator <= eps(typeof(denominator)) ? zero(denominator) : numerator / denominator
         α = eltype(x)(2) / eltype(x)(3)
         sqrt2 = sqrt(eltype(x)(2))
         node_density_curvatures[g] = inv(μ * L) * (K_j * L)^α + sqrt2 * K_j
@@ -250,7 +250,7 @@ end
         next_g = li < lengths[ci] ? g + 1 : offsets[ci]
         sqrt2 = sqrt(eltype(x)(2))
         κ̃ = (node_density_curvatures[g] + node_density_curvatures[next_g]) / 2
-        raw_densities[g] = κ̃ <= eps(κ̃) ? zero(κ̃) :
+        raw_densities[g] = κ̃ <= eps(typeof(κ̃)) ? zero(κ̃) :
                            κ̃ / (one(κ̃) + δ * κ̃ / sqrt2)
     end
 end
@@ -271,7 +271,7 @@ end
 
         min_density = one(eltype(x)) / Δ_max
         target_intervals = _flat_target_interval_count(perimeters[ci], n, μ, Δ_max)
-        density_scale[ci] = weighted <= eps(weighted) ?
+        density_scale[ci] = weighted <= eps(typeof(weighted)) ?
                             min_density :
                             eltype(x)(target_intervals) / weighted
     end
@@ -381,7 +381,7 @@ end
     tx = bx - ax
     ty = by - ay
     e = sqrt(tx * tx + ty * ty)
-    e <= eps(e) && return ax, ay
+    e <= eps(typeof(e)) && return ax, ay
     nx = -ty
     ny = tx
     α = -e * (2 * κa + κb) / 6
@@ -499,7 +499,7 @@ end
                     next_measure = span_measure + seg_lengths[in_g] * densities[in_g]
                     if s_target <= next_measure || count == chosen_segments
                         seg_measure = next_measure - span_measure
-                        p = seg_measure <= eps(seg_measure) ? zero(seg_measure) :
+                        p = seg_measure <= eps(typeof(seg_measure)) ? zero(seg_measure) :
                             (s_target - span_measure) / seg_measure
                         p = min(max(p, zero(p)), one(p))
                         next_li = seg < n ? seg + 1 : 1
@@ -533,7 +533,7 @@ end
 
             in_g = off + seg - 1
             seg_measure = seg_lengths[in_g] * densities[in_g]
-            p = seg_measure <= eps(seg_measure) ? zero(seg_measure) :
+            p = seg_measure <= eps(typeof(seg_measure)) ? zero(seg_measure) :
                 (s_target - measure_start[in_g]) / seg_measure
             p = min(max(p, zero(p)), one(p))
             next_g = seg < n ? in_g + 1 : off
@@ -579,7 +579,7 @@ end
 
         area = area2 / 2
         out_area[ci] = area
-        if abs(area) <= eps(area)
+        if abs(area) <= eps(typeof(area))
             out_centroid_x[ci] = sx / n
             out_centroid_y[ci] = sy / n
         else
@@ -601,10 +601,10 @@ end
         if remesh_mode[ci] == UInt8(0) && iszero(wrapx[ci]) && iszero(wrapy[ci])
             target = target_area[ci]
             current = out_area[ci]
-            if abs(target) > eps(target) && abs(current) > eps(current) &&
+            if abs(target) > eps(typeof(target)) && abs(current) > eps(typeof(current)) &&
                ((target > zero(target)) == (current > zero(current)))
                 scale = sqrt(abs(target / current))
-                if abs(scale - one(scale)) > sqrt(eps(scale))
+                if abs(scale - one(scale)) > sqrt(eps(typeof(scale)))
                     cx = out_centroid_x[ci]
                     cy = out_centroid_y[ci]
                     out_x[g] = cx + scale * (out_x[g] - cx)
@@ -652,7 +652,7 @@ end
            iszero(wrapx[ci]) && iszero(wrapy[ci])
             target = target_area[ci]
             A0 = out_area[ci]
-            if abs(target) > eps(target) && abs(A0) > eps(A0) &&
+            if abs(target) > eps(T) && abs(A0) > eps(T) &&
                ((target > zero(target)) == (A0 > zero(A0)))
                 rhs = target - A0
                 if abs(rhs) > sqrt(eps(T)) * abs(target)

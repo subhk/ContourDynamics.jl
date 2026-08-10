@@ -238,24 +238,13 @@ function _create_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int
                                           dev_fourier, nothing, total)
 end
 
-function _ensure_device_ewald!(ws::_GPUWorkspace{T}, cache::EwaldCache{T},
+function _ensure_device_ewald!(ws::Union{_GPUWorkspace{T}, _MultilayerWorkspace{T}},
+                               cache::EwaldCache{T},
                                dev::AbstractDevice) where {T}
     # Fourier/Ewald data depends only on the domain/kernel cache. Reuse the
-    # previous device copy when the same cache object is used across RK stages.
-    if ws.last_ewald !== cache
-        ws.dev_ewald_kx = to_device(dev, cache.kx)
-        ws.dev_ewald_ky = to_device(dev, cache.ky)
-        ws.dev_ewald_fourier = to_device(dev, cache.fourier_coeffs)
-        ws.last_ewald = cache
-    end
-    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier
-end
-
-function _ensure_device_ewald!(ws::_MultilayerWorkspace{T}, cache::EwaldCache{T},
-                               dev::AbstractDevice) where {T}
-    # Same identity-checked reuse as the single-layer workspace: the modal loop
-    # calls this once per mode per RK stage, but the upload happens only when
-    # the host cache object changes.
+    # previous device copy when the same cache object is used across RK stages
+    # (the multilayer modal loop calls this once per mode per stage, but the
+    # upload happens only when the host cache object changes).
     if ws.last_ewald !== cache
         ws.dev_ewald_kx = to_device(dev, cache.kx)
         ws.dev_ewald_ky = to_device(dev, cache.ky)

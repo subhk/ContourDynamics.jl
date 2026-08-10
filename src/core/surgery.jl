@@ -791,6 +791,18 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
     end
 end
 
+# Squared coordinate scale of a contour: the relative floor for sign decisions
+# on shoelace areas. The shoelace sum accumulates cross products of absolute
+# coordinates, so its rounding noise is proportional to the squared coordinate
+# magnitude, not to machine eps alone.
+@inline function _shoelace_noise_scale(c::PVContour{T}) where {T}
+    s = zero(T)
+    @inbounds for p in c.nodes
+        s = max(s, abs(p[1]), abs(p[2]))
+    end
+    return s * s
+end
+
 function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::Int, j::Int,
                            domain::AbstractDomain=UnboundedDomain()) where {T}
     c1 = contours[ci]
@@ -799,11 +811,15 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     # Check orientation consistency: both contours should have the same
     # sign of signed area. If they differ, reverse c2's node order so
     # the merged contour has consistent winding.
-    # Use a robust threshold: only reverse if c2 has a meaningfully signed area
-    # (well above numerical noise from the shoelace formula).
+    # Use a robust threshold: only reverse if both signed areas are well above
+    # the shoelace formula's rounding noise, which scales with each contour's
+    # squared coordinate magnitude (an absolute eps floor would silently skip
+    # the check for physically small contours).
     a1 = vortex_area(c1)
     a2 = vortex_area(c2)
-    reversed = abs(a1) > eps(T) * T(1000) && abs(a2) > eps(T) * T(1000) && sign(a1) != sign(a2)
+    tol1 = eps(T) * T(1000) * _shoelace_noise_scale(c1)
+    tol2 = eps(T) * T(1000) * _shoelace_noise_scale(c2)
+    reversed = abs(a1) > tol1 && abs(a2) > tol2 && sign(a1) != sign(a2)
     c2_nodes = reversed ? reverse(c2.nodes) : c2.nodes
     c2_corners = reversed ? reverse(c2.corners) : copy(c2.corners)
     n2_orig = nnodes(c2)
@@ -1022,22 +1038,20 @@ end
 # (with stall detection) → post-remesh → filament removal → spanning-proximity
 # check. Shared by single-layer `surgery!` and each layer of the multi-layer
 # `surgery!`; `layer_label` (e.g. " layer 2") is interpolated into warnings.
-function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
-                        params::SurgeryParams, remesh_buf::Vector{SVector{2,T}},
-                        arc_buf::Vector{T}, vnodes_buf::Vector{SVector{2,T}};
-                        layer_label::AbstractString="") where {T}
-    remove_filaments!(contours, params.area_min, params.μ)
-    _demote_obtuse_corners!(contours)
-    _promote_high_curvature_corners!(contours, params.δ)
-
-    # 1. Remesh all contours (Dritschel node redistribution).
-    _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
-
-    reconnection_bin_size = max(T(params.δ), T(params.μ))
-
-    # 2. Reconnection — iterate until no more close pairs remain. Stall detection
-    #    stops early if the close-pair count is not making progress, catching
-    #    both monotone growth and oscillation (e.g. 10→12→10→12).
+# Shared stall-detection reconnection loop (Dritschel surgery step 2). The CPU
+# and device surgery passes differ only in how they find close pairs, apply a
+# reconnection, and clean up afterwards; the termination policy — stop after 3
+# consecutive close-pair-count increases or 6 iterations without a new minimum,
+# retry once after a cleanup pass, and warn on large stalls — lives here so
+# every path terminates under the same rules.
+#
+# `find_pairs()` returns the current close-pair collection, `npairs(pairs)`
+# its size, `reconnect_step!(pairs)` applies one reconnection round (returning
+# `false` to abort the loop), and `stall_cleanup!()` runs the cleanup used for
+# the one retry before declaring a stall.
+function _reconnect_until_exhausted!(find_pairs::F, npairs::N, reconnect_step!::R,
+                                     stall_cleanup!::C,
+                                     warn_label::AbstractString) where {F,N,R,C}
     reconnected = false
     max_reconnect_iter = 100
     stall_warning_pairs = 100
@@ -1046,10 +1060,9 @@ function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
     stall_count = 0
     no_improve_count = 0
     for iter in 1:max_reconnect_iter
-        idx = build_spatial_index(contours, reconnection_bin_size, domain)
-        close_pairs = find_close_segments(contours, idx, params.δ, domain)
-        isempty(close_pairs) && break
-        n_pairs = length(close_pairs)
+        pairs = find_pairs()
+        n_pairs = npairs(pairs)
+        n_pairs == 0 && break
         if n_pairs > prev_n_pairs
             stall_count += 1
         else
@@ -1063,15 +1076,13 @@ function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
         end
         if stall_count >= 3 || no_improve_count >= 6
             # Reconnection creates near-duplicate stitch nodes by construction.
-            # Before warning about a stall, run the cleanup remesh that follows a
+            # Before warning about a stall, run the cleanup pass that follows a
             # successful reconnect and re-check proximity.
             if reconnected
-                _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
-                remove_filaments!(contours, params.area_min, params.μ)
-                idx = build_spatial_index(contours, reconnection_bin_size, domain)
-                close_pairs = find_close_segments(contours, idx, params.δ, domain)
-                isempty(close_pairs) && break
-                remeshed_n_pairs = length(close_pairs)
+                stall_cleanup!()
+                pairs = find_pairs()
+                remeshed_n_pairs = npairs(pairs)
+                remeshed_n_pairs == 0 && break
                 if remeshed_n_pairs < n_pairs
                     prev_n_pairs = remeshed_n_pairs
                     min_n_pairs = min(min_n_pairs, remeshed_n_pairs)
@@ -1082,20 +1093,54 @@ function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
                 n_pairs = remeshed_n_pairs
             end
             if n_pairs >= stall_warning_pairs
-                @warn "surgery!:$(layer_label) reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
+                @warn "surgery!:$(warn_label) reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
             end
             break
         end
         prev_n_pairs = n_pairs
-        reconnect!(contours, close_pairs, domain)
+        reconnect_step!(pairs) || break
         reconnected = true
-        remove_filaments!(contours, params.area_min, params.μ)
-        _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
-        remove_filaments!(contours, params.area_min, params.μ)
         if iter == max_reconnect_iter
-            @warn "surgery!:$(layer_label) reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
+            @warn "surgery!:$(warn_label) reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
         end
     end
+    return reconnected
+end
+
+function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
+                        params::SurgeryParams, remesh_buf::Vector{SVector{2,T}},
+                        arc_buf::Vector{T}, vnodes_buf::Vector{SVector{2,T}};
+                        layer_label::AbstractString="") where {T}
+    remove_filaments!(contours, params.area_min, params.μ)
+    _demote_obtuse_corners!(contours)
+    _promote_high_curvature_corners!(contours, params.δ)
+
+    # 1. Remesh all contours (Dritschel node redistribution).
+    _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
+
+    reconnection_bin_size = max(T(params.δ), T(params.μ))
+
+    # 2. Reconnection — iterate until no more close pairs remain, under the
+    #    shared stall policy in `_reconnect_until_exhausted!` (catches both
+    #    monotone growth and oscillation, e.g. 10→12→10→12).
+    reconnected = _reconnect_until_exhausted!(
+        () -> begin
+            idx = build_spatial_index(contours, reconnection_bin_size, domain)
+            find_close_segments(contours, idx, params.δ, domain)
+        end,
+        length,
+        close_pairs -> begin
+            reconnect!(contours, close_pairs, domain)
+            remove_filaments!(contours, params.area_min, params.μ)
+            _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
+            remove_filaments!(contours, params.area_min, params.μ)
+            true
+        end,
+        () -> begin
+            _remesh_all!(contours, params, remesh_buf, arc_buf, vnodes_buf)
+            remove_filaments!(contours, params.area_min, params.μ)
+        end,
+        layer_label)
 
     # 3. Re-remesh after reconnection to clean up short/long stitch segments.
     if reconnected

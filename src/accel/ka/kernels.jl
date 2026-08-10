@@ -457,48 +457,10 @@ end
         for q in eachindex(g_nodes)
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
-
-            r0x = xi - sx
-            r0y = yi - sy
-            G_corr = zero(T)
-
-            for px in -n_images:n_images
-                shiftx = T(2) * Lx * T(px)
-                for py in -n_images:n_images
-                    shifty = T(2) * Ly * T(py)
-                    rx = r0x - shiftx
-                    ry = r0y - shifty
-                    r2 = rx * rx + ry * ry
-
-                    if px == 0 && py == 0
-                        if r2 > eps(T)
-                            G_corr += inv4pi * (_expint_e1(α^2 * r2) + log(r2))
-                        else
-                            G_corr += inv4pi * (-γ_euler - T(2) * log(α))
-                        end
-                    elseif r2 > eps(T)
-                        G_corr += inv4pi * _expint_e1(α^2 * r2)
-                    end
-                end
-            end
-
-            rx = r0x
-            ry = r0y
-            nkx = length(kx)
-            nky = length(ky)
-            for mi in 1:nkx
-                kxi = kx[mi]
-                cx = cos(kxi * rx)
-                sx_trig = sin(kxi * rx)
-                for ni in 1:nky
-                    coeff = fourier_coeffs[mi, ni]
-                    abs(coeff) < eps(T) && continue
-                    kyi = ky[ni]
-                    G_corr += coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry))
-                end
-            end
-
-            corr_integral += g_weights[q] * (G_corr - _periodic_euler_zero_mode_scalar(α, Lx, Ly))
+            G_corr = _periodic_euler_green_correction_scalar(
+                xi, yi, sx, sy, α, Lx, Ly, n_images,
+                kx, ky, fourier_coeffs, inv4pi, γ_euler)
+            corr_integral += g_weights[q] * G_corr
         end
 
         vx += seg_pv[j] * half_dsx * corr_integral
@@ -585,25 +547,8 @@ end
         for q in eachindex(g_nodes)
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
-            rx = xi - sx
-            ry = yi - sy
-            G_corr = zero(T)
-
-            nkx = length(kx)
-            nky = length(ky)
-            for mi in 1:nkx
-                kxi = kx[mi]
-                cx = cos(kxi * rx)
-                sx_trig = sin(kxi * rx)
-                for ni in 1:nky
-                    kyi = ky[ni]
-                    k2 = kxi^2 + kyi^2
-                    k2 < eps(T) && continue
-                    coeff = -kappa2 / (k2 * (k2 + kappa2) * area)
-                    G_corr += coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry))
-                end
-            end
-
+            G_corr = _periodic_qg_green_correction_scalar(
+                xi, yi, sx, sy, kappa2, area, kx, ky)
             corr_integral += g_weights[q] * G_corr
         end
 
@@ -690,46 +635,9 @@ end
         for q in eachindex(g_nodes)
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
-
-            r0x = xi - sx
-            r0y = yi - sy
-            G_corr = zero(T)
-
-            for px in -n_images:n_images
-                shiftx = T(2) * Lx * T(px)
-                for py in -n_images:n_images
-                    shifty = T(2) * Ly * T(py)
-                    rx = r0x - shiftx
-                    ry = r0y - shifty
-                    r2 = rx * rx + ry * ry
-
-                    if px == 0 && py == 0
-                        G_corr -= inv2pi * _sqg_erf_over_r(α, r2)
-                    elseif r2 > eps(T)
-                        r = sqrt(r2)
-                        r_reg = sqrt(r2 + δ_sq)
-                        softening = -δ_sq / (r * r_reg * (r + r_reg))
-                        G_corr += inv2pi * (erfc(α * r) / r + softening)
-                    end
-                end
-            end
-
-            rx = r0x
-            ry = r0y
-            nkx = length(kx)
-            nky = length(ky)
-            for mi in 1:nkx
-                kxi = kx[mi]
-                cx = cos(kxi * rx)
-                sx_trig = sin(kxi * rx)
-                for ni in 1:nky
-                    coeff = fourier_coeffs[mi, ni]
-                    abs(coeff) < eps(T) && continue
-                    kyi = ky[ni]
-                    G_corr += inv2pi * coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry))
-                end
-            end
-
+            G_corr = _periodic_sqg_green_correction_scalar(
+                xi, yi, sx, sy, α, δ_sq, Lx, Ly, n_images,
+                kx, ky, fourier_coeffs, inv2pi)
             corr_integral += g_weights[q] * G_corr
         end
 

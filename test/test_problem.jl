@@ -218,10 +218,16 @@ end
 
         prob_rk4 = Problem(; stepper=:RK4, contours=[c], dt=0.01)
         @test prob_rk4.stepper isa RK4Stepper
-        @test !isdefined(ContourDynamics, :LeapfrogStepper)
+
+        # LeapfrogStepper survives only as a deprecation stub (removed in
+        # v1.0.21): the name resolves, every call raises migration guidance.
+        @test isdefined(ContourDynamics, :LeapfrogStepper)
+        @test_throws ArgumentError LeapfrogStepper(0.01, 10)
 
         @test_throws ArgumentError Problem(; stepper=:leapfrog, contours=[c], dt=0.01)
         @test_throws ArgumentError Problem(; stepper=:unknown, contours=[c], dt=0.01)
+        @test_throws ArgumentError Problem(; stepper=:RK4, contours=[c], dt=0.01,
+                                           ra_coeff=0.05)
     end
 
     @testset "Problem factory — surgery presets" begin

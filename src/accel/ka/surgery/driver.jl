@@ -318,134 +318,30 @@ function _unpack_rewrite_outputs(outputs::DeviceRewriteOutputs{T}) where {T}
     return out
 end
 
-function _device_surgery_reconnect_loop!(contours::Vector{PVContour{T}},
-                                         params::SurgeryParams,
-                                         domain::UnboundedDomain,
-                                         dev::AbstractDevice,
-                                         cleanup_reconnect_artifacts!) where {T}
-    reconnected = false
-    max_reconnect_iter = 100
-    stall_warning_pairs = 100
-    prev_n_pairs = typemax(Int)
-    min_n_pairs = typemax(Int)
-    stall_count = 0
-    no_improve_count = 0
-
-    for iter in 1:max_reconnect_iter
-        close_pairs = _device_admissible_close_segment_buffer(contours, params.δ, domain, dev)
-        length(close_pairs.ci) == 0 && break
-        n_pairs = length(close_pairs.ci)
-
-        if n_pairs > prev_n_pairs
-            stall_count += 1
-        else
-            stall_count = 0
-        end
-        if n_pairs < min_n_pairs
-            min_n_pairs = n_pairs
-            no_improve_count = 0
-        else
-            no_improve_count += 1
-        end
-
-        if stall_count >= 3 || no_improve_count >= 6
-            if reconnected
-                cleanup_reconnect_artifacts!()
-                _device_remove_filaments!(contours, params, dev)
-                close_pairs = _device_admissible_close_segment_buffer(contours, params.δ, domain, dev)
-                length(close_pairs.ci) == 0 && break
-                remeshed_n_pairs = length(close_pairs.ci)
-                if remeshed_n_pairs < n_pairs
-                    prev_n_pairs = remeshed_n_pairs
-                    min_n_pairs = min(min_n_pairs, remeshed_n_pairs)
-                    stall_count = 0
-                    no_improve_count = 0
-                    continue
-                end
-                n_pairs = remeshed_n_pairs
-            end
-            if n_pairs >= stall_warning_pairs
-                @warn "surgery!: device reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
-            end
-            break
-        end
-
-        prev_n_pairs = n_pairs
-        _device_reconnect!(contours, close_pairs, dev) || break
-        reconnected = true
-        _device_remove_filaments!(contours, params, dev)
-        cleanup_reconnect_artifacts!()
-        _device_remove_filaments!(contours, params, dev)
-        if iter == max_reconnect_iter
-            @warn "surgery!: device reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
-        end
-    end
-    return reconnected
-end
-
+# Device reconnection loop on the shared stall policy
+# (`_reconnect_until_exhausted!` in core/surgery.jl): find admissible close
+# pairs on the device, reconnect, and clean stitch artifacts, until the pair
+# count stops improving.
 function _device_surgery_reconnect_loop!(state::DeviceContourState{T},
                                          params::SurgeryParams,
                                          domain::AbstractDomain,
                                          dev::AbstractDevice,
                                          cleanup_reconnect_artifacts!) where {T}
-    reconnected = false
-    max_reconnect_iter = 100
-    stall_warning_pairs = 100
-    prev_n_pairs = typemax(Int)
-    min_n_pairs = typemax(Int)
-    stall_count = 0
-    no_improve_count = 0
-
-    for iter in 1:max_reconnect_iter
-        close_pairs = _device_admissible_close_segment_buffer(state, params.δ, domain, dev)
-        length(close_pairs.ci) == 0 && break
-        n_pairs = length(close_pairs.ci)
-
-        if n_pairs > prev_n_pairs
-            stall_count += 1
-        else
-            stall_count = 0
-        end
-        if n_pairs < min_n_pairs
-            min_n_pairs = n_pairs
-            no_improve_count = 0
-        else
-            no_improve_count += 1
-        end
-
-        if stall_count >= 3 || no_improve_count >= 6
-            if reconnected
-                cleanup_reconnect_artifacts!()
-                _device_remove_filaments!(state, params, dev)
-                close_pairs = _device_admissible_close_segment_buffer(state, params.δ, domain, dev)
-                length(close_pairs.ci) == 0 && break
-                remeshed_n_pairs = length(close_pairs.ci)
-                if remeshed_n_pairs < n_pairs
-                    prev_n_pairs = remeshed_n_pairs
-                    min_n_pairs = min(min_n_pairs, remeshed_n_pairs)
-                    stall_count = 0
-                    no_improve_count = 0
-                    continue
-                end
-                n_pairs = remeshed_n_pairs
-            end
-            if n_pairs >= stall_warning_pairs
-                @warn "surgery!: device reconnection stalled ($n_pairs close pairs, min seen: $min_n_pairs) — stopping early"
-            end
-            break
-        end
-
-        prev_n_pairs = n_pairs
-        _device_reconnect!(state, close_pairs, domain, dev) || break
-        reconnected = true
-        _device_remove_filaments!(state, params, dev)
-        cleanup_reconnect_artifacts!()
-        _device_remove_filaments!(state, params, dev)
-        if iter == max_reconnect_iter
-            @warn "surgery!: device reconnection iteration limit ($max_reconnect_iter) reached with $n_pairs close pairs remaining"
-        end
-    end
-    return reconnected
+    return _reconnect_until_exhausted!(
+        () -> _device_admissible_close_segment_buffer(state, params.δ, domain, dev),
+        pairs -> length(pairs.ci),
+        pairs -> begin
+            _device_reconnect!(state, pairs, domain, dev) || return false
+            _device_remove_filaments!(state, params, dev)
+            cleanup_reconnect_artifacts!()
+            _device_remove_filaments!(state, params, dev)
+            true
+        end,
+        () -> begin
+            cleanup_reconnect_artifacts!()
+            _device_remove_filaments!(state, params, dev)
+        end,
+        " device")
 end
 
 function _remesh_contours_after_surgery!(contours::Vector{PVContour{T}},

@@ -200,7 +200,7 @@ end
 
 function _build_multilayer_qg_kernel(
         Ld::SVector{M,T}, coupling::SMatrix{N,N,T},
-        H::SVector{N,T}) where {N,M,T<:AbstractFloat}
+        H::SVector{N,T}; strict::Bool=true) where {N,M,T<:AbstractFloat}
     M == N - 1 || throw(ArgumentError(
         "Number of deformation radii M=$M must equal N-1=$(N-1)"))
     all(x -> isfinite(x) && x > zero(T), Ld) || throw(ArgumentError(
@@ -240,9 +240,15 @@ function _build_multilayer_qg_kernel(
 
     λtol = _qg_modal_eigenvalue_tolerance(eigenvalues)
     for (m, λ) in enumerate(eigenvalues)
-        λ > λtol && throw(ArgumentError(
+        λ > λtol || continue
+        strict && throw(ArgumentError(
             "Coupling eigenvalue λ[$m] = $λ is positive; the QG stretching " *
-            "operator must be negative semidefinite."))
+            "operator must be negative semidefinite. Pass strict=false to " *
+            "accept the kernel anyway (pre-v1.0.18 warn-and-continue " *
+            "behavior, using |λ| for the modal radii)."))
+        @warn "MultiLayerQGKernel: coupling eigenvalue λ[$m] = $λ is positive; " *
+              "physical coupling matrices should have non-positive eigenvalues" maxlog=1
+        break
     end
 
     modal_radii = T[one(T) / sqrt(abs(λ)) for λ in eigenvalues if abs(λ) > λtol]
@@ -269,7 +275,7 @@ end
 
 function MultiLayerQGKernel(
         Ld::SVector{M,T}, coupling::SMatrix{N,N,T};
-        layer_thicknesses=nothing) where {N,M,T<:AbstractFloat}
+        layer_thicknesses=nothing, strict::Bool=true) where {N,M,T<:AbstractFloat}
     H = if layer_thicknesses === nothing
         _infer_qg_layer_thicknesses(coupling)
     else
@@ -277,20 +283,21 @@ function MultiLayerQGKernel(
             "Expected $N layer thicknesses, got $(length(layer_thicknesses))"))
         SVector{N,T}(T.(collect(layer_thicknesses)))
     end
-    return _build_multilayer_qg_kernel(Ld, coupling, H)
+    return _build_multilayer_qg_kernel(Ld, coupling, H; strict=strict)
 end
 
 function MultiLayerQGKernel(
         Ld::SVector{M,T}, coupling::SMatrix{N,N,T},
-        H::SVector{N,T}) where {N,M,T<:AbstractFloat}
-    return _build_multilayer_qg_kernel(Ld, coupling, H)
+        H::SVector{N,T}; strict::Bool=true) where {N,M,T<:AbstractFloat}
+    return _build_multilayer_qg_kernel(Ld, coupling, H; strict=strict)
 end
 
 function MultiLayerQGKernel(
         Ld::SVector{M,T}, coupling::SMatrix{N,N,T},
-        H::AbstractVector) where {N,M,T<:AbstractFloat}
+        H::AbstractVector; strict::Bool=true) where {N,M,T<:AbstractFloat}
     length(H) == N || throw(ArgumentError("Expected $N layer thicknesses, got $(length(H))"))
-    return _build_multilayer_qg_kernel(Ld, coupling, SVector{N,T}(T.(collect(H))))
+    return _build_multilayer_qg_kernel(Ld, coupling, SVector{N,T}(T.(collect(H)));
+                                       strict=strict)
 end
 
 """

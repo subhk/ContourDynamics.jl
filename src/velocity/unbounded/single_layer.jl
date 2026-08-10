@@ -142,14 +142,9 @@ function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
             direct_integral += (g_weights[q] / T(2)) *
                                _besselk0_approx_scalar(r / Ld) * tangent
         end
-        val = if r2 < eps(T)^2
-            log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
-        else
-            rr = r / Ld
-            rr < T(0.5) ?
-                _besselk0_correction(rr) + log(T(2) * Ld) - T(Base.MathConstants.eulergamma) :
-                _besselk0_approx_scalar(rr) + log(r)
-        end
+        val = r2 < eps(T)^2 ?
+            log(T(2) * Ld) - T(Base.MathConstants.eulergamma) :
+            _qg_smooth_correction_scalar(r / Ld, r, Ld)
         corr_integral += (g_weights[q] / T(2)) * val * tangent
     end
 
@@ -357,16 +352,11 @@ function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
         end
 
         r = sqrt(r2)
-        rr = r / Ld
-        # K₀(r/Ld) + log(r) = [K₀(z) + log(z/2) + γ] + log(2Ld) - γ
-        # For small z = r/Ld, use series to avoid catastrophic cancellation
-        # between besselk(0, z) ≈ -log(z/2) - γ and log(r).
-        if rr < T(0.5)
-            val = _besselk0_correction(rr) + log(2 * Ld) - T(Base.MathConstants.eulergamma)
-        else
-            val = _besselk0_approx_scalar(rr) + log(r)
-        end
-        corr_integral += g_weights[q] * val
+        # K₀(r/Ld) + log(r) = [K₀(z) + log(z/2) + γ] + log(2Ld) - γ; the shared
+        # scalar helper picks the series branch for small z = r/Ld to avoid
+        # catastrophic cancellation between besselk(0, z) ≈ -log(z/2) - γ and
+        # log(r).
+        corr_integral += g_weights[q] * _qg_smooth_correction_scalar(r / Ld, r, Ld)
     end
 
     # Scale: the Gauss quadrature approximates ∫₋₁¹ f(t) dt, and our

@@ -98,6 +98,37 @@ vortex_area(prob::Problem) = vortex_area(prob.contour_problem)
 """Return the number of layers when the wrapped contour problem is multi-layer."""
 nlayers(prob::Problem) = nlayers(prob.contour_problem)
 
+"""Wrap the nodes of the wrapped contour problem into the periodic domain."""
+function wrap_nodes!(prob::Problem)
+    wrap_nodes!(prob.contour_problem)
+    return prob
+end
+
+"""
+    surgery!(prob::Problem[, params::SurgeryParams])
+
+Apply contour surgery to the wrapped contour problem. Without an explicit
+`params`, the `SurgeryParams` stored in the wrapper are used; passing none at
+construction and none here is an error.
+"""
+function surgery!(prob::Problem, params::SurgeryParams)
+    surgery!(prob.contour_problem, params)
+    return prob
+end
+
+function surgery!(prob::Problem)
+    prob.surgery_params === nothing && throw(ArgumentError(
+        "Problem was constructed without SurgeryParams; pass them explicitly: " *
+        "surgery!(prob, params)"))
+    return surgery!(prob, prob.surgery_params)
+end
+
+"""Advance the wrapped contour problem one step with the bundled stepper."""
+function timestep!(prob::Problem)
+    timestep!(prob.contour_problem, prob.stepper)
+    return prob
+end
+
 # ── evolve! overload ────────────────────────────────────
 
 """

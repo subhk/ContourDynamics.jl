@@ -311,39 +311,6 @@ end
     return dsx, dsy, midx, midy, half_dsx, half_dsy
 end
 
-@inline function _energy_ewald_greens_scalar(rx::T, ry::T, α::T, Lx::T, Ly::T,
-                                             n_images::Int, kx, ky, fourier_coeffs) where {T}
-    inv4pi = one(T) / (T(4) * T(pi))
-    G_val = zero(T)
-
-    for px in -n_images:n_images
-        shiftx = T(2) * Lx * T(px)
-        for py in -n_images:n_images
-            shifty = T(2) * Ly * T(py)
-            sx = rx - shiftx
-            sy = ry - shifty
-            r2 = sx * sx + sy * sy
-            r2 > eps(T) && (G_val += inv4pi * _expint_e1(α * α * r2))
-        end
-    end
-
-    nkx = length(kx)
-    nky = length(ky)
-    for mi in 1:nkx
-        kxi = kx[mi]
-        cx = cos(kxi * rx)
-        sx_trig = sin(kxi * rx)
-        for ni in 1:nky
-            coeff = fourier_coeffs[mi, ni]
-            abs(coeff) < eps(T) && continue
-            kyi = ky[ni]
-            G_val += coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry))
-        end
-    end
-
-    return G_val
-end
-
 @inline function _sqg_ewald_real_potential_scalar(r::T, α::T) where {T}
     r <= zero(T) && return zero(T)
 
@@ -454,45 +421,6 @@ end
     partial[i] = pv[i] * local_s
 end
 
-@kernel function _log_green_energy_ka!(partial, ax, ay, bx, by, pv,
-                                       contour_id, local_index, n_seg)
-    i = @index(Global)
-    T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    self_seg_const = T(4) * log(T(2)) - T(6)
-    local_s = zero(T)
-
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
-        if _same_energy_segment(contour_id, local_index, i, j)
-            half_ds_len = sqrt(half_dsix * half_dsix + half_dsiy * half_dsiy)
-            quad = half_ds_len > eps(T) ?
-                   self_seg_const + T(4) * log(half_ds_len) : zero(T)
-        else
-            for qi in 1:3
-                pix = midix + g_nodes[qi] * half_dsix
-                piy = midiy + g_nodes[qi] * half_dsiy
-                for qj in 1:3
-                    pjx = midjx + g_nodes[qj] * half_dsjx
-                    pjy = midjy + g_nodes[qj] * half_dsjy
-                    dx = pix - pjx
-                    dy = piy - pjy
-                    r2 = max(dx * dx + dy * dy, eps(T))
-                    quad += g_weights[qi] * g_weights[qj] * log(r2) / T(2)
-                end
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
-    end
-
-    partial[i] = pv[i] * local_s
-end
-
 @kernel function _sqg_energy_ka!(partial, ax, ay, bx, by, pv, contour_id, local_index,
                                  δ, n_seg)
     i = @index(Global)
@@ -560,79 +488,9 @@ end
     partial[i] = pv[i] * local_s
 end
 
-@kernel function _periodic_green_energy_ka!(partial, ax, ay, bx, by, pv,
-                                             contour_id, local_index,
-                                             α, Lx, Ly, n_images, kx, ky,
-                                             fourier_coeffs, corr_at_zero, n_seg)
-    # Periodic Euler keeps the same singular split as the CPU path: the
-    # self-segment logarithmic term is analytical, and the smooth Ewald
-    # correction is evaluated by quadrature.
-    i = @index(Global)
-    T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
-    Lx2, Ly2 = _period_lengths(Lx, Ly)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    self_seg_const = T(4) * log(T(2)) - T(6)
-    local_s = zero(T)
-
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
-
-        if _same_energy_segment(contour_id, local_index, i, j)
-            half_ds_len = sqrt(half_dsix * half_dsix + half_dsiy * half_dsiy)
-            quad_analytical = half_ds_len > eps(T) ? self_seg_const + T(4) * log(half_ds_len) : zero(T)
-            quad_corr = zero(T)
-            for qi in 1:3
-                pix = midix + g_nodes[qi] * half_dsix
-                piy = midiy + g_nodes[qi] * half_dsiy
-                for qj in 1:3
-                    pjx = midjx + g_nodes[qj] * half_dsjx
-                    pjy = midjy + g_nodes[qj] * half_dsjy
-                    rx = pix - pjx
-                    ry = piy - pjy
-                    r2 = rx * rx + ry * ry
-                    if r2 > eps(T)
-                        G_per = _energy_ewald_greens_scalar(rx, ry, α, Lx, Ly, n_images,
-                                                            kx, ky, fourier_coeffs)
-                        quad_corr += g_weights[qi] * g_weights[qj] *
-                            (-T(2) * T(pi) * G_per - log(r2) / T(2))
-                    else
-                        quad_corr += g_weights[qi] * g_weights[qj] * corr_at_zero
-                    end
-                end
-            end
-            quad = quad_analytical + quad_corr
-        else
-            for qi in 1:3
-                pix = midix + g_nodes[qi] * half_dsix
-                piy = midiy + g_nodes[qi] * half_dsiy
-                for qj in 1:3
-                    pjx = midjx + g_nodes[qj] * half_dsjx
-                    pjy = midjy + g_nodes[qj] * half_dsjy
-                    rx_raw = pix - pjx
-                    ry_raw = piy - pjy
-                    rx = rx_raw - round(rx_raw / Lx2) * Lx2
-                    ry = ry_raw - round(ry_raw / Ly2) * Ly2
-                    G_per = _energy_ewald_greens_scalar(rx, ry, α, Lx, Ly, n_images,
-                                                        kx, ky, fourier_coeffs)
-                    quad += g_weights[qi] * g_weights[qj] * (-T(2) * T(pi) * G_per)
-                end
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
-    end
-
-    partial[i] = pv[i] * local_s
-end
-
 @kernel function _periodic_euler_energy_ka!(partial, ax, ay, bx, by, pv,
                                             contour_id, local_index,
-                                            α, Lx, Ly, n_images, kx, ky,
-                                            fourier_coeffs, corr_at_zero, n_seg)
+                                            Lx, Ly, kx, ky, n_seg)
     # Periodic Euler Hamiltonian in contour form.  For G_k=1/(A|k|²), the
     # smooth contour potential required by the shared normalization is
     # -4π cos(k·r)/(A|k|⁴).
@@ -799,27 +657,6 @@ function _ka_energy_raw(kernel!, contours, dev::AbstractDevice, ::Type{T}, args.
     return _ka_energy_raw_with_segments!(kernel!, data, dev, T, args...)
 end
 
-function _periodic_euler_corr_at_zero(cache::EwaldCache{T}, domain::PeriodicDomain{T}) where {T}
-    α = cache.α
-    Lx, Ly = domain.Lx, domain.Ly
-    corr = (T(Base.MathConstants.eulergamma) + T(2) * log(α)) / T(2)
-    for px in -cache.n_images:cache.n_images
-        for py in -cache.n_images:cache.n_images
-            (px == 0 && py == 0) && continue
-            shift_r2 = (T(2) * Lx * T(px))^2 + (T(2) * Ly * T(py))^2
-            corr -= _expint_e1(α^2 * shift_r2) / T(2)
-        end
-    end
-    for (mi, kxi) in enumerate(cache.kx)
-        for (ni, _kyi) in enumerate(cache.ky)
-            coeff = cache.fourier_coeffs[mi, ni]
-            abs(coeff) < eps(T) && continue
-            corr -= T(2) * T(π) * coeff
-        end
-    end
-    return corr
-end
-
 """
     _EnergySource{T}
 
@@ -885,11 +722,9 @@ function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::EulerKernel,
     cache = _get_ewald_cache(domain, kernel)
     data = _pack_energy_segments(src, dev, T)
     length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
-    kx, ky, fourier = _device_ewald_tables(cache, dev)
-    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    kx, ky, _ = _device_ewald_tables(cache, dev)
     raw = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                        cache.α, domain.Lx, domain.Ly,
-                                        cache.n_images, kx, ky, fourier, corr0)
+                                        domain.Lx, domain.Ly, kx, ky)
     return _normalize_energy(raw)
 end
 
@@ -961,11 +796,10 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::EulerKer
     cache = _get_ewald_cache(domain, kernel)
     n = _pack_energy_workspace!(ws, state, dev)
     n == 0 && return _normalize_energy(zero(T))
-    kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
-    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    kx, ky, _ = _ensure_energy_ewald!(ws, cache, dev)
     raw = _ka_energy_raw_with_workspace!(
-        _periodic_euler_energy_ka!, ws, n, dev, cache.α,
-        domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier, corr0)
+        _periodic_euler_energy_ka!, ws, n, dev,
+        domain.Lx, domain.Ly, kx, ky)
     return _normalize_energy(raw)
 end
 
@@ -1149,17 +983,16 @@ end
 
 @inline function _ka_periodic_modal_energy(
         ::EulerKernel, energy_ws, total, dev, cache, domain,
-        kx, ky, fourier, corr0, to_modal, mode, layer_circulation, area)
+        kx, ky, to_modal, mode, layer_circulation, area)
     raw = _ka_energy_raw_with_workspace!(
         _periodic_euler_energy_ka!, energy_ws, total, dev,
-        cache.α, domain.Lx, domain.Ly,
-        cache.n_images, kx, ky, fourier, corr0)
+        domain.Lx, domain.Ly, kx, ky)
     return raw, zero(area)
 end
 
 @inline function _ka_periodic_modal_energy(
         mode_kernel::QGKernel{T}, energy_ws, total, dev, cache, domain,
-        kx, ky, fourier, corr0, to_modal, mode,
+        kx, ky, to_modal, mode,
         layer_circulation, area) where {T}
     kappa2 = inv(mode_kernel.Ld * mode_kernel.Ld)
     raw = _ka_energy_raw_with_workspace!(
@@ -1180,8 +1013,7 @@ function _ka_multilayer_energy_with_ws(
     # Every mode uses the same Fourier grid; its kernel differs only through
     # the modal eigenvalue in the denominator.
     cache = _get_ewald_cache(domain, EulerKernel())
-    kx, ky, fourier = _ensure_energy_ewald!(ws.energy, cache, dev)
-    corr0 = _periodic_euler_corr_at_zero(cache, domain)
+    kx, ky, _ = _ensure_energy_ewald!(ws.energy, cache, dev)
     area = T(4) * domain.Lx * domain.Ly
     layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
     total == 0 && return zero(T)
@@ -1195,7 +1027,7 @@ function _ka_multilayer_energy_with_ws(
         lam = evals[mode]
         raw_mode, mode_zero = _dispatch_qg_mode(
             _ka_periodic_modal_energy, kernel, lam, energy_ws, total, dev,
-            cache, domain, kx, ky, fourier, corr0, to_modal, mode,
+            cache, domain, kx, ky, to_modal, mode,
             layer_circulation, area)
         raw += raw_mode
         zero_energy += mode_zero

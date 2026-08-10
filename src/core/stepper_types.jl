@@ -26,6 +26,20 @@ struct RK4Stepper{T<:AbstractFloat, A<:AbstractVector{SVector{2,T}}} <: Abstract
     node_ranges::Vector{Vector{UnitRange{Int}}}
 end
 
+"""
+    LeapfrogStepper(args...; kwargs...)
+
+Removed in ContourDynamics v1.0.21. Calling this stub raises an
+`ArgumentError` with migration guidance; use [`RK4Stepper`](@ref) instead.
+"""
+function LeapfrogStepper(args...; kwargs...)
+    throw(ArgumentError(
+        "LeapfrogStepper (the Robert-Asselin filtered leapfrog scheme and its " *
+        "ra_coeff parameter) was removed in ContourDynamics v1.0.21. Use " *
+        "RK4Stepper(dt, n; dev) — or stepper=:RK4 with the Problem keyword " *
+        "factory — instead."))
+end
+
 function RK4Stepper(dt::T, n::Int; dev::AbstractDevice=CPU()) where {T<:AbstractFloat}
     isfinite(dt) && dt > zero(T) || throw(ArgumentError(
         "RK4Stepper requires finite dt > 0, got dt = $dt"))
