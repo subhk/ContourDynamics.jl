@@ -633,35 +633,6 @@ function _device_reconnection_plan(flat::FlatContourTopology{T},
         domain, dev)
 end
 
-function _device_select_reconnection_pairs_from_plan(contours::Vector{PVContour{T}},
-                                                     close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                                     plan::DeviceReconnectionPlan{T}) where {T}
-    distance2 = to_cpu(plan.distance2)
-
-    ranked = Vector{Tuple{T,Tuple{Int,Int,Int,Int}}}(undef, length(close_pairs))
-    @inbounds for k in eachindex(close_pairs)
-        ranked[k] = (distance2[k], close_pairs[k])
-    end
-    sort!(ranked)
-
-    used_contours = Set{Int}()
-    selected_pairs = Tuple{Int,Int,Int,Int}[]
-    selected_flags = zeros(UInt8, length(close_pairs))
-    sizehint!(selected_pairs, min(length(close_pairs), length(contours)))
-    for (_, pair) in ranked
-        ci, _, cj, _ = pair
-        (ci in used_contours || cj in used_contours) && continue
-        push!(selected_pairs, pair)
-        push!(used_contours, ci)
-        push!(used_contours, cj)
-        selected_idx = findfirst(==(pair), close_pairs)
-        selected_idx === nothing || (selected_flags[selected_idx] = UInt8(1))
-    end
-
-    copyto!(plan.selected, selected_flags)
-    return selected_pairs
-end
-
 @kernel function _select_independent_pairs_kernel!(selected, used_contours,
                                                    distance2, pair_ci, pair_i,
                                                    pair_cj, pair_j, npairs)
@@ -789,17 +760,3 @@ function _device_select_reconnection_pair_buffer(contours::Vector{PVContour{T}},
         contours, _pack_close_pair_candidates(close_pairs, dev), dev)
 end
 
-function _device_select_reconnection_pairs(contours::Vector{PVContour{T}},
-                                           close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                           dev::AbstractDevice=CPU()) where {T}
-    isempty(close_pairs) && return Tuple{Int,Int,Int,Int}[]
-    plan = _device_reconnection_plan(contours, close_pairs, dev)
-    return _device_select_reconnection_pairs_from_plan(contours, close_pairs, plan)
-end
-
-function _device_select_reconnection_pairs(contours::Vector{PVContour{T}},
-                                           candidates::DeviceClosePairCandidates,
-                                           dev::AbstractDevice=CPU()) where {T}
-    return _unpack_close_pair_candidates(
-        _device_select_reconnection_pair_buffer(contours, candidates, dev))
-end

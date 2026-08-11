@@ -30,158 +30,88 @@ end
     return one(T) / (T(4) * cache.α^2 * area)
 end
 
+# The three periodic point kernels share one singular-subtraction template for
+# both straight and curved segments; only two ingredients vary per kernel:
+#
+#   * `_periodic_base_velocity` / `_periodic_curved_base_velocity` — the
+#     singularity-handling base term:
+#       - Euler: analytic unbounded Euler segment velocity (log singularity).
+#       - QG:    periodic-Euler Ewald velocity (the QG cache carries the Euler
+#                coefficients too, so one cache serves both parts).
+#       - SQG:   regularized unbounded SQG velocity (1/r handled via δ).
+#   * `_periodic_green_correction` — the smooth periodic correction
+#     `G_per - G_base` at one quadrature point (decomposition documented on
+#     each kernel's method below).
+const _PeriodicPointKernel{T} = Union{EulerKernel, QGKernel{T}, SQGKernel{T}}
+
+@inline _periodic_base_velocity(::EulerKernel, ::PeriodicDomain{T},
+                                x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                ::EwaldCache{T}) where {T} =
+    segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
+@inline _periodic_base_velocity(::QGKernel{T}, domain::PeriodicDomain{T},
+                                x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                cache::EwaldCache{T}) where {T} =
+    segment_velocity(EulerKernel(), domain, x, a, b, cache)
+@inline _periodic_base_velocity(kernel::SQGKernel{T}, ::PeriodicDomain{T},
+                                x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                ::EwaldCache{T}) where {T} =
+    segment_velocity(kernel, UnboundedDomain(), x, a, b)
+
 """
-    segment_velocity(kernel::EulerKernel, domain::PeriodicDomain, x, a, b)
+    segment_velocity(kernel, domain::PeriodicDomain, x, a, b[, cache])
 
-Velocity at point `x` from segment `a→b` in a periodic domain using Ewald summation.
+Velocity at point `x` from segment `a→b` in a periodic domain, for the Euler,
+QG, and SQG kernels.
 
-Uses singular subtraction: the log singularity is handled analytically by the
-unbounded Euler segment velocity, and only the smooth periodic correction
-`G_per - G_∞` is integrated with 5-point Gauss-Legendre quadrature.
+Uses singular subtraction: a per-kernel base velocity handles the singularity
+analytically (`_periodic_base_velocity`), and only the smooth periodic
+correction (`_periodic_green_correction`) is integrated with 5-point
+Gauss-Legendre quadrature.
+"""
+function segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
+    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, kernel))
+end
 
-The periodic correction decomposes as:
+@inline segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
+                          x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                          ::Nothing) where {T} =
+    segment_velocity(kernel, domain, x, a, b)
+
+function segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
+                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                           cache::EwaldCache{T}) where {T}
+    a, b = _nearest_periodic_segment_image(domain, x, a, b)
+    ds = b - a
+    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
+
+    # Singularity-handling base term (per-kernel; see _periodic_base_velocity).
+    v_base = _periodic_base_velocity(kernel, domain, x, a, b, cache)
+
+    # Smooth periodic correction, integrated by 5-point Gauss-Legendre.
+    g_nodes, g_weights = _gl5_nodes_weights(T)
+    mid = (a + b) / 2
+    half_ds = ds / 2
+    corr = zero(T)
+    for q in eachindex(g_nodes)
+        s_pt = mid + g_nodes[q] * half_ds
+        corr += g_weights[q] * _periodic_green_correction(kernel, domain, cache, x, s_pt)
+    end
+    return v_base + half_ds * corr
+end
+
+"""
+    _periodic_green_correction(kernel, domain, cache, x, s_pt)
+
+Smooth periodic Green's-function correction `G_per - G_base` at one quadrature
+point, per kernel.
+
+Euler decomposition (Ewald):
 - Central-image real-space: (1/(4π))[E₁(α²r²) + log(r²)] → (1/(4π))(-γ - 2ln α) as r→0
 - Non-central real-space: (1/(4π)) Σ_{images≠0} E₁(α²|r+shift|²)  (smooth)
 - Fourier space: Σ_{k≠0} coeff * cos(k·r)  (smooth)
 """
-function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
-                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, kernel))
-end
-
-@inline segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
-                          x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                          ::Nothing) where {T} =
-    segment_velocity(kernel, domain, x, a, b)
-
-function segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
-                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                           cache::EwaldCache{T}) where {T}
-    a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    ds = b - a
-    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
-
-    # Analytic unbounded Euler contribution (handles the log singularity exactly).
-    v_unbounded = segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
-
-    # Smooth periodic correction G_per - G_∞, integrated by 5-point Gauss-Legendre.
-    # The per-node correction lives in `_periodic_euler_green_correction` so the
-    # straight and curved segment paths share one implementation.
-    g_nodes, g_weights = _gl5_nodes_weights(T)
-    mid = (a + b) / 2
-    half_ds = ds / 2
-    corr = zero(T)
-    for q in eachindex(g_nodes)
-        s_pt = mid + g_nodes[q] * half_ds
-        corr += g_weights[q] * _periodic_euler_green_correction(kernel, domain, cache, x, s_pt)
-    end
-    return v_unbounded + half_ds * corr
-end
-
-"""
-    segment_velocity(kernel::QGKernel, domain::PeriodicDomain, x, a, b)
-
-Velocity at point `x` from segment `a→b` in a periodic domain using the QG kernel.
-
-Decomposes the periodic QG Green's function as:
-  G_QG_per = G_Euler_per - G_correction
-where the Euler part is handled by the validated Ewald summation, and the
-correction is a smooth, rapidly convergent Fourier series:
-  G_corr(r) = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²))
-with κ = 1/Ld.  Coefficients decay as 1/k⁴, so the truncated sum converges
-without Gaussian damping.
-"""
-function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
-                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, kernel))
-end
-
-@inline segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
-                          x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                          ::Nothing) where {T} =
-    segment_velocity(kernel, domain, x, a, b)
-
-function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
-                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                           cache::EwaldCache{T}) where {T}
-    a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    ds = b - a
-    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
-
-    # Euler periodic part handles the log singularity via Ewald. The QG cache
-    # carries the Euler coefficients too, so it serves both parts.
-    v_euler = segment_velocity(EulerKernel(), domain, x, a, b, cache)
-
-    # Smooth QG–Euler correction (Fourier series), integrated by Gauss-Legendre.
-    # The per-node correction lives in `_periodic_qg_green_correction` so the
-    # straight and curved segment paths share one implementation.
-    g_nodes, g_weights = _gl5_nodes_weights(T)
-    mid = (a + b) / 2
-    half_ds = ds / 2
-    corr = zero(T)
-    for q in eachindex(g_nodes)
-        s_pt = mid + g_nodes[q] * half_ds
-        corr += g_weights[q] * _periodic_qg_green_correction(kernel, domain, cache, x, s_pt)
-    end
-    return v_euler + half_ds * corr
-end
-
-"""
-    segment_velocity(kernel::SQGKernel, domain::PeriodicDomain, x, a, b)
-
-Velocity at point `x` from segment `a→b` in a periodic domain using the SQG kernel.
-
-Uses singular subtraction: the regularized unbounded SQG velocity (exact arcsinh
-antiderivative with ``\\δ > 0``) handles the ``1/r`` singularity analytically, and the
-smooth periodic correction ``G_{\\text{per}} - G_\\infty`` is integrated with 5-point
-Gauss-Legendre quadrature.
-
-The periodic correction decomposes as:
-- Central-image real-space: ``-(1/(2\\pi))\\operatorname{erf}(\\α r)/r``
-- Non-central real-space: the unregularized Ewald term plus
-  ``(1/(2\\pi))(1/r_\\δ-1/r)``, where
-  ``r_\\δ = \\sqrt{r^2+\\δ^2}``
-- Fourier space: ``(1/(2\\pi)) \\sum c_k \\cos(\\mathbf{k}\\cdot\\mathbf{r})``
-  with ``c_k = (2\\pi/|k|) \\operatorname{erfc}(|k|/(2\\α))/A``
-
-This is the Ewald sum of the regularized kernel over every periodic image.  The
-central correction has the finite limit ``-2\\α/\\sqrt{\\pi}`` at ``r=0``.
-"""
-function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
-                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    return segment_velocity(kernel, domain, x, a, b, _get_ewald_cache(domain, kernel))
-end
-
-@inline segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
-                          x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                          ::Nothing) where {T} =
-    segment_velocity(kernel, domain, x, a, b)
-
-function segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
-                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                           cache::EwaldCache{T}) where {T}
-    a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    ds = b - a
-    sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
-
-    # Exact unbounded regularized SQG velocity (handles the 1/r singularity via δ).
-    v_unbounded = segment_velocity(kernel, UnboundedDomain(), x, a, b)
-
-    # Smooth periodic correction G_per - G_∞, integrated by Gauss-Legendre.
-    # The per-node correction lives in `_periodic_sqg_green_correction` so the
-    # straight and curved segment paths share one implementation.
-    g_nodes, g_weights = _gl5_nodes_weights(T)
-    mid = (a + b) / 2
-    half_ds = ds / 2
-    corr = zero(T)
-    for q in eachindex(g_nodes)
-        s_pt = mid + g_nodes[q] * half_ds
-        corr += g_weights[q] * _periodic_sqg_green_correction(kernel, domain, cache, x, s_pt)
-    end
-    return v_unbounded + half_ds * corr
-end
-
-@inline function _periodic_euler_green_correction(::EulerKernel, domain::PeriodicDomain{T},
+@inline function _periodic_green_correction(::EulerKernel, domain::PeriodicDomain{T},
                                           cache::EwaldCache{T},
                                           x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     α = cache.α
@@ -228,7 +158,11 @@ end
     return G_corr - zero_mode
 end
 
-@inline function _periodic_qg_green_correction(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+# QG–Euler decomposition: G_QG_per = G_Euler_per - G_correction, where the
+# correction is a smooth, rapidly convergent Fourier series
+#   G_corr(r) = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²)),  κ = 1/Ld.
+# Coefficients decay as 1/k⁴, so the truncated sum converges without damping.
+@inline function _periodic_green_correction(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                                        cache::EwaldCache{T},
                                        x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     # The correction coefficients κ²/(k²(k²+κ²)A) are precomputed in `cache`
@@ -256,7 +190,12 @@ end
     return G_corr
 end
 
-@inline function _periodic_sqg_green_correction(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
+# SQG Ewald decomposition of the regularized kernel over every periodic image:
+# - Central-image real-space: -(1/(2π)) erf(αr)/r, finite limit -2α/√π at r=0.
+# - Non-central real-space: unregularized Ewald term plus (1/(2π))(1/r_δ - 1/r),
+#   with r_δ = √(r² + δ²).
+# - Fourier space: (1/(2π)) Σ c_k cos(k·r), c_k = (2π/|k|) erfc(|k|/(2α))/A.
+@inline function _periodic_green_correction(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                         cache::EwaldCache{T},
                                         x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     α = cache.α
@@ -311,13 +250,26 @@ end
     return T(2) * α / sqrt(T(π))
 end
 
-function curved_segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
+@inline _periodic_curved_base_velocity(::EulerKernel, ::PeriodicDomain{T},
+                                       x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                       κa::T, κb::T, ::EwaldCache{T}) where {T} =
+    curved_segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b, κa, κb)
+@inline _periodic_curved_base_velocity(::QGKernel{T}, domain::PeriodicDomain{T},
+                                       x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                       κa::T, κb::T, cache::EwaldCache{T}) where {T} =
+    curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb, cache)
+@inline _periodic_curved_base_velocity(kernel::SQGKernel{T}, ::PeriodicDomain{T},
+                                       x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                       κa::T, κb::T, ::EwaldCache{T}) where {T} =
+    curved_segment_velocity(kernel, UnboundedDomain(), x, a, b, κa, κb)
+
+function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T) where {T}
     curved_segment_velocity(kernel, domain, x, a, b, κa, κb, _get_ewald_cache(domain, kernel))
 end
 
-function curved_segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
+function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T, cache::EwaldCache{T}) where {T}
     a, b = _nearest_periodic_segment_image(domain, x, a, b)
@@ -333,70 +285,10 @@ function curved_segment_velocity(kernel::EulerKernel, domain::PeriodicDomain{T},
         p = (one(T) + g_nodes[q]) / T(2)
         s = _cubic_segment_point(a, b, κa, κb, p)
         tangent = _cubic_segment_tangent(a, b, κa, κb, p)
-        G_corr = _periodic_euler_green_correction(kernel, domain, cache, x, s)
+        G_corr = _periodic_green_correction(kernel, domain, cache, x, s)
         corr_integral += (g_weights[q] / T(2)) * G_corr * tangent
     end
 
-    return curved_segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b, κa, κb) +
-           corr_integral
-end
-
-function curved_segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
-                                  x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                  κa::T, κb::T) where {T}
-    curved_segment_velocity(kernel, domain, x, a, b, κa, κb, _get_ewald_cache(domain, kernel))
-end
-
-function curved_segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
-                                  x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                  κa::T, κb::T, cache::EwaldCache{T}) where {T}
-    a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    ds = b - a
-    ds_len = sqrt(ds[1]^2 + ds[2]^2)
-    ds_len < eps(T) && return zero(SVector{2,T})
-    max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
-        return segment_velocity(kernel, domain, x, a, b, cache)
-
-    g_nodes, g_weights = _gl5_nodes_weights(T)
-    corr_integral = zero(SVector{2,T})
-    @inbounds for q in 1:5
-        p = (one(T) + g_nodes[q]) / T(2)
-        s = _cubic_segment_point(a, b, κa, κb, p)
-        tangent = _cubic_segment_tangent(a, b, κa, κb, p)
-        G_corr = _periodic_qg_green_correction(kernel, domain, cache, x, s)
-        corr_integral += (g_weights[q] / T(2)) * G_corr * tangent
-    end
-
-    return curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb, cache) +
-           corr_integral
-end
-
-function curved_segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
-                                  x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                  κa::T, κb::T) where {T}
-    curved_segment_velocity(kernel, domain, x, a, b, κa, κb, _get_ewald_cache(domain, kernel))
-end
-
-function curved_segment_velocity(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
-                                  x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                  κa::T, κb::T, cache::EwaldCache{T}) where {T}
-    a, b = _nearest_periodic_segment_image(domain, x, a, b)
-    ds = b - a
-    ds_len = sqrt(ds[1]^2 + ds[2]^2)
-    ds_len < eps(T) && return zero(SVector{2,T})
-    max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
-        return segment_velocity(kernel, domain, x, a, b, cache)
-
-    g_nodes, g_weights = _gl5_nodes_weights(T)
-    corr_integral = zero(SVector{2,T})
-    @inbounds for q in 1:5
-        p = (one(T) + g_nodes[q]) / T(2)
-        s = _cubic_segment_point(a, b, κa, κb, p)
-        tangent = _cubic_segment_tangent(a, b, κa, κb, p)
-        G_corr = _periodic_sqg_green_correction(kernel, domain, cache, x, s)
-        corr_integral += (g_weights[q] / T(2)) * G_corr * tangent
-    end
-
-    return curved_segment_velocity(kernel, UnboundedDomain(), x, a, b, κa, κb) +
+    return _periodic_curved_base_velocity(kernel, domain, x, a, b, κa, κb, cache) +
            corr_integral
 end

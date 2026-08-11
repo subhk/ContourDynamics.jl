@@ -169,6 +169,39 @@ end
     return v
 end
 
+# Shared threaded/serial driver for direct O(N²) single-layer velocity loops:
+# evaluate `eval_node(xi)` at every contour node of `prob`, writing into `vel`.
+# The beta-plane path reuses this driver with its own node evaluator, so the
+# threading/index bookkeeping has exactly one home. `eval_node` must only
+# capture read-only state so the closure stays an unboxed immutable and the
+# serial path remains allocation-free.
+function _direct_velocity_loop!(vel::Vector{SVector{2,T}}, prob, N::Int,
+                                eval_node::F) where {T, F}
+    contours = prob.contours
+    # Thread over target nodes only once the workload is large enough to pay for it.
+    if _should_thread_velocity(N)
+        n_contours = length(contours)
+        offsets = _prepare_contour_offsets!(prob.velocity_scratch.offsets, contours)
+        Threads.@threads for i in 1:N
+            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
+            ci = clamp(ci, 1, n_contours)
+            local_i = i - offsets[ci]
+            (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
+            vel[i] = eval_node(contours[ci].nodes[local_i])
+        end
+    else
+        idx = 1
+        for target_contour in contours
+            @inbounds for local_i in 1:nnodes(target_contour)
+                vel[idx] = eval_node(target_contour.nodes[local_i])
+                idx += 1
+            end
+        end
+    end
+
+    return vel
+end
+
 """
     _direct_velocity!(vel, prob::ContourProblem)
 
@@ -179,38 +212,16 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
     kernel = prob.kernel
     domain = prob.domain
     contours = prob.contours
-    N = total_nodes(prob)
-    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    N = _validate_velocity_buffer!(vel, prob)
 
     # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
     ewald = _prefetch_ewald(domain, kernel)
-    scratch = prob.velocity_scratch
-    source_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures, contours)
+    source_curvatures = _prepare_curvature_buffers!(
+        prob.velocity_scratch.contour_curvatures, contours)
 
-    # Thread over target nodes only once the workload is large enough to pay for it.
-    if _should_thread_velocity(N)
-        n_contours = length(contours)
-        offsets = _prepare_contour_offsets!(scratch.offsets, contours)
-        Threads.@threads for i in 1:N
-            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
-            ci = clamp(ci, 1, n_contours)
-            local_i = i - offsets[ci]
-            (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
-            xi = contours[ci].nodes[local_i]
-            vel[i] = _accumulate_node_velocity(kernel, domain, contours, source_curvatures, ewald, xi)
-        end
-    else
-        idx = 1
-        for target_contour in contours
-            @inbounds for local_i in 1:nnodes(target_contour)
-                xi = target_contour.nodes[local_i]
-                vel[idx] = _accumulate_node_velocity(kernel, domain, contours, source_curvatures, ewald, xi)
-                idx += 1
-            end
-        end
-    end
-
-    return vel
+    return _direct_velocity_loop!(vel, prob, N,
+        xi -> _accumulate_node_velocity(kernel, domain, contours,
+                                        source_curvatures, ewald, xi))
 end
 
 @inline function _validate_velocity_buffer!(vel::Vector{SVector{2,T}},

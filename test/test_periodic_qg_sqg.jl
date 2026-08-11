@@ -322,7 +322,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
                          4 * phi(r)) / h^2
 
         G = inv(2π * sqrt(sum(abs2, r) + kernel.δ^2)) +
-            ContourDynamics._periodic_sqg_green_correction(
+            ContourDynamics._periodic_green_correction(
                 kernel, domain, cache, r, origin)
         @test laplacian_phi ≈ 4π * G rtol=2e-6
     end

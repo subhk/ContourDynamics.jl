@@ -46,36 +46,48 @@ choice of period image may be suboptimal.
 @inline function _periodic_reference_point(nodes::AbstractVector{SVector{2,T}},
                                            domain::PeriodicDomain) where {T}
     n = length(nodes)
-    p0 = nodes[1]
     Lx2 = T(2) * T(domain.Lx)
     Ly2 = T(2) * T(domain.Ly)
-    unwrap(p) = begin
-        dx = p[1] - p0[1]
-        dy = p[2] - p0[2]
-        SVector{2,T}(p0[1] + dx - Lx2 * round(dx / Lx2),
-                     p0[2] + dy - Ly2 * round(dy / Ly2))
-    end
+    rx, ry = _unwrapped_centroid_core(i -> (nodes[i][1], nodes[i][2]), n, Lx2, Ly2)
+    return SVector{2,T}(rx, ry)
+end
 
+# Scalar core of the unwrapped area-weighted centroid, shared verbatim by the
+# CPU `_periodic_reference_point` above and the flat-array device kernel in
+# evolution_buffers.jl (`_compute_state_shifts_ka!`). Both paths must produce
+# bit-identical reference points, so the accumulation order lives in exactly
+# one place. `getnode(i)` returns the i-th node as an `(x, y)` tuple.
+@inline function _unwrapped_centroid_core(getnode::F, n::Int,
+                                          Lx2::T, Ly2::T) where {F, T}
+    p0x, p0y = getnode(1)
     area2 = zero(T)
     cx = zero(T)
     cy = zero(T)
     sx = zero(T)
     sy = zero(T)
     @inbounds for i in 1:n
-        ui = unwrap(nodes[i])
-        uj = unwrap(nodes[i < n ? i + 1 : 1])
-        cross = ui[1] * uj[2] - uj[1] * ui[2]
+        xi, yi = getnode(i)
+        xj, yj = getnode(i < n ? i + 1 : 1)
+        dxi = xi - p0x
+        dyi = yi - p0y
+        uix = p0x + dxi - Lx2 * round(dxi / Lx2)
+        uiy = p0y + dyi - Ly2 * round(dyi / Ly2)
+        dxj = xj - p0x
+        dyj = yj - p0y
+        ujx = p0x + dxj - Lx2 * round(dxj / Lx2)
+        ujy = p0y + dyj - Ly2 * round(dyj / Ly2)
+        cross = uix * ujy - ujx * uiy
         area2 += cross
-        cx += (ui[1] + uj[1]) * cross
-        cy += (ui[2] + uj[2]) * cross
-        sx += ui[1]
-        sy += ui[2]
+        cx += (uix + ujx) * cross
+        cy += (uiy + ujy) * cross
+        sx += uix
+        sy += uiy
     end
     if n < 3 || abs(area2) <= T(2) * eps(T)
-        return SVector{2,T}(sx / n, sy / n)
+        return sx / n, sy / n
     end
     inv3A2 = one(T) / (T(3) * area2)
-    return SVector{2,T}(cx * inv3A2, cy * inv3A2)
+    return cx * inv3A2, cy * inv3A2
 end
 
 """
@@ -91,6 +103,20 @@ preserves its geometry across periodic seams; wrapping nodes independently does 
     return wrap_node(ref, domain) - ref
 end
 
+# Shared body of the periodic wrap_nodes! methods: shift each non-spanning
+# contour by one uniform lattice translation.
+function _wrap_contours!(contours, domain::PeriodicDomain)
+    for c in contours
+        is_spanning(c) && continue
+        shift = contour_periodic_shift(c, domain)
+        iszero(shift) && continue
+        @inbounds for i in eachindex(c.nodes)
+            c.nodes[i] += shift
+        end
+    end
+    return contours
+end
+
 """
     wrap_nodes!(prob::ContourProblem{K, PeriodicDomain{T}})
 
@@ -99,15 +125,7 @@ Spanning contours are left untouched since their positions encode
 the cross-domain topology via the wrap vector.
 """
 function wrap_nodes!(prob::ContourProblem{K, PeriodicDomain{T}}) where {K, T}
-    domain = prob.domain
-    for c in prob.contours
-        is_spanning(c) && continue
-        shift = contour_periodic_shift(c, domain)
-        iszero(shift) && continue
-        @inbounds for i in eachindex(c.nodes)
-            c.nodes[i] += shift
-        end
-    end
+    _wrap_contours!(prob.contours, prob.domain)
     return prob
 end
 
@@ -122,16 +140,8 @@ Wrap all non-spanning contours in every layer of a periodic multi-layer problem
 into the fundamental domain. Spanning contours are left untouched.
 """
 function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, CPU}) where {N, K, T}
-    domain = prob.domain
     for layer in prob.layers
-        for c in layer
-            is_spanning(c) && continue
-            shift = contour_periodic_shift(c, domain)
-            iszero(shift) && continue
-            @inbounds for i in eachindex(c.nodes)
-                c.nodes[i] += shift
-            end
-        end
+        _wrap_contours!(layer, prob.domain)
     end
     return prob
 end

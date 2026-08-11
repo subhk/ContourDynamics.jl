@@ -47,47 +47,11 @@ end
             Lx2 = T(2) * Lx
             Ly2 = T(2) * Ly
 
-            # Area-weighted centroid on minimum-image-unwrapped coordinates
-            # (anchored at the first node), matching the CPU
-            # `_periodic_reference_point`. Unwrapping makes this robust to
-            # contours stored straddling a periodic seam; for a contiguous
-            # contour the unwrap is the identity.
-            p0x = x[off]
-            p0y = y[off]
-            area2 = zero(T)
-            cx_num = zero(T)
-            cy_num = zero(T)
-            sx = zero(T)
-            sy = zero(T)
-            for li in 1:n
-                g = off + li - 1
-                ng = li < n ? g + 1 : off
-                dxi = x[g] - p0x
-                dyi = y[g] - p0y
-                uix = p0x + dxi - Lx2 * round(dxi / Lx2)
-                uiy = p0y + dyi - Ly2 * round(dyi / Ly2)
-                dxj = x[ng] - p0x
-                dyj = y[ng] - p0y
-                ujx = p0x + dxj - Lx2 * round(dxj / Lx2)
-                ujy = p0y + dyj - Ly2 * round(dyj / Ly2)
-                cross = uix * ujy - ujx * uiy
-                area2 += cross
-                cx_num += (uix + ujx) * cross
-                cy_num += (uiy + ujy) * cross
-                sx += uix
-                sy += uiy
-            end
-
-            refx = zero(T)
-            refy = zero(T)
-            if n < 3 || abs(area2) <= T(2) * eps(T)
-                refx = sx / T(n)
-                refy = sy / T(n)
-            else
-                inv3A2 = one(T) / (T(3) * area2)
-                refx = cx_num * inv3A2
-                refy = cy_num * inv3A2
-            end
+            # Reference point from the shared unwrapped-centroid core (see
+            # domains.jl) so this kernel stays bit-identical to the CPU
+            # `_periodic_reference_point` with no hand-synced second copy.
+            refx, refy = _unwrapped_centroid_core(
+                li -> (x[off + li - 1], y[off + li - 1]), Int(n), Lx2, Ly2)
 
             wrapped_x = refx - Lx2 * floor((refx + Lx) / Lx2)
             wrapped_y = refy - Ly2 * floor((refy + Ly) / Ly2)

@@ -138,14 +138,6 @@ function _materialize_rewrite_outputs(state::DeviceContourState{T},
                                         plan, layout, dev)
 end
 
-function _device_materialize_rewrite_outputs(contours::Vector{PVContour{T}},
-                                             selected_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                             dev::AbstractDevice=CPU()) where {T}
-    plan = _device_topology_rewrite_plan(contours, selected_pairs, dev)
-    layout = _rewrite_output_layout(contours, plan, dev)
-    return _materialize_rewrite_outputs(contours, plan, layout, dev)
-end
-
 function _device_materialize_full_rewrite_outputs(contours::Vector{PVContour{T}},
                                                   selected_pairs::Vector{Tuple{Int,Int,Int,Int}},
                                                   dev::AbstractDevice=CPU()) where {T}

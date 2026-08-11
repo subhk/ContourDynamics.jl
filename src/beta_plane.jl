@@ -53,26 +53,6 @@ end
     return SVector{2,T}(_beta_sawtooth_u(kernel.beta, κ, dy, ξ), zero(T))
 end
 
-function _sum_qg_contour_velocity(kernel::QGKernel{T},
-                                  domain::AbstractDomain,
-                                  x::SVector{2,T},
-                                  contours::Vector{PVContour{T}},
-                                  curvatures,
-                                  ewald) where {T}
-    v = zero(SVector{2,T})
-    for (ci, c) in pairs(contours)
-        nc = nnodes(c)
-        nc < 2 && continue
-        κ = curvatures[ci]
-        @inbounds for j in 1:nc
-            v += c.pv * _segment_velocity_with_geometry(
-                kernel, domain, x, c.nodes[j], next_node(c, j),
-                κ[j], κ[mod1(j + 1, nc)], ewald)
-        end
-    end
-    return v
-end
-
 @inline function _beta_plane_velocity_at(kernel::BetaPlaneQGKernel{T},
                                          domain::PeriodicDomain{T},
                                          x::SVector{2,T},
@@ -80,10 +60,13 @@ end
                                          contour_curvatures,
                                          reference_curvatures,
                                          ewald) where {T}
+    # Both the live-contour and frozen-reference sums are the same pv-weighted
+    # segment sweep the generic direct path uses; only the sources differ.
     qg = _qg_kernel(kernel)
-    current = _sum_qg_contour_velocity(qg, domain, x, contours, contour_curvatures, ewald)
-    reference = _sum_qg_contour_velocity(qg, domain, x, kernel.reference_contours,
-                                         reference_curvatures, ewald)
+    current = _accumulate_node_velocity(qg, domain, contours,
+                                        contour_curvatures, ewald, x)
+    reference = _accumulate_node_velocity(qg, domain, kernel.reference_contours,
+                                          reference_curvatures, ewald, x)
     return current - reference + _beta_plane_sawtooth_velocity(kernel, domain, x)
 end
 
@@ -92,8 +75,7 @@ function _direct_velocity!(vel::Vector{SVector{2,T}},
     kernel = prob.kernel
     domain = prob.domain
     contours = prob.contours
-    N = total_nodes(prob)
-    length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
+    N = _validate_velocity_buffer!(vel, prob)
 
     ewald = _prefetch_ewald(domain, kernel)
     scratch = prob.velocity_scratch
@@ -101,31 +83,10 @@ function _direct_velocity!(vel::Vector{SVector{2,T}},
     reference_curvatures = _prepare_curvature_buffers!(scratch.reference_curvatures,
                                                        kernel.reference_contours)
 
-    if _should_thread_velocity(N)
-        n_contours = length(contours)
-        offsets = _prepare_contour_offsets!(scratch.offsets, contours)
-        Threads.@threads for i in 1:N
-            ci = searchsortedlast(offsets, i - 1, 1, n_contours + 1, Base.Order.Forward)
-            ci = clamp(ci, 1, n_contours)
-            local_i = i - offsets[ci]
-            (1 <= local_i <= nnodes(contours[ci])) || throw(BoundsError(contours[ci].nodes, local_i))
-            vel[i] = _beta_plane_velocity_at(kernel, domain, contours[ci].nodes[local_i],
-                                             contours, contour_curvatures,
-                                             reference_curvatures, ewald)
-        end
-    else
-        idx = 1
-        for target_contour in contours
-            @inbounds for local_i in 1:nnodes(target_contour)
-                vel[idx] = _beta_plane_velocity_at(kernel, domain, target_contour.nodes[local_i],
-                                                   contours, contour_curvatures,
-                                                   reference_curvatures, ewald)
-                idx += 1
-            end
-        end
-    end
-
-    return vel
+    return _direct_velocity_loop!(vel, prob, N,
+        xi -> _beta_plane_velocity_at(kernel, domain, xi, contours,
+                                      contour_curvatures, reference_curvatures,
+                                      ewald))
 end
 
 function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},

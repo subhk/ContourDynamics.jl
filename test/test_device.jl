@@ -804,10 +804,10 @@ end
         close_pairs = ContourDynamics.find_close_segments(contours, idx, δ)
 
         cpu_selected = ContourDynamics._select_reconnection_pairs(contours, close_pairs)
-        device_selected = ContourDynamics._device_select_reconnection_pairs(contours, close_pairs, CPU())
+        device_selected = _device_select_reconnection_pairs(contours, close_pairs, CPU())
         candidate_buffer = ContourDynamics._device_close_pair_candidate_buffer(contours, δ, CPU())
         buffer_pairs = ContourDynamics._unpack_close_pair_candidates(candidate_buffer)
-        buffer_selected = ContourDynamics._device_select_reconnection_pairs(contours, candidate_buffer, CPU())
+        buffer_selected = _device_select_reconnection_pairs(contours, candidate_buffer, CPU())
         selected_buffer = ContourDynamics._device_select_reconnection_pair_buffer(
             contours, candidate_buffer, CPU())
         selected_buffer_pairs = ContourDynamics._unpack_close_pair_candidates(selected_buffer)
@@ -817,7 +817,7 @@ end
         buffer_rewrite = ContourDynamics._device_topology_rewrite_plan(contours, selected_buffer, CPU())
         _assert_device_layout_matches_host(contours, rewrite)
         materialized = ContourDynamics._unpack_rewrite_outputs(
-            ContourDynamics._device_materialize_rewrite_outputs(contours, device_selected, CPU()))
+            _device_materialize_rewrite_outputs(contours, device_selected, CPU()))
         expected_merge_lengths = [
             nnodes(contours[pair[1]]) + nnodes(contours[pair[3]]) + 1
             for pair in device_selected
@@ -892,7 +892,7 @@ end
         rewrite = ContourDynamics._device_topology_rewrite_plan(contours, selected, CPU())
         _assert_device_layout_matches_host(contours, rewrite)
         materialized = ContourDynamics._unpack_rewrite_outputs(
-            ContourDynamics._device_materialize_rewrite_outputs(contours, selected, CPU()))
+            _device_materialize_rewrite_outputs(contours, selected, CPU()))
 
         cpu_contours = deepcopy(contours)
         ContourDynamics.reconnect!(cpu_contours, selected)
