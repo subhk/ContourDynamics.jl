@@ -31,12 +31,6 @@ build_ewald_cache(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
                       n_fourier=n_fourier, n_images=n_images)
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
                             n_fourier::Int=8,
-                            n_images::Int=2) where {T<:Union{Float64, Float32}}
-    return setup_ewald_cache!(domain, _qg_kernel(kernel);
-                              n_fourier=n_fourier, n_images=n_images)
-end
-function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
-                            n_fourier::Int=8,
                             n_images::Int=2) where {T<:AbstractFloat}
     return setup_ewald_cache!(domain, _qg_kernel(kernel);
                               n_fourier=n_fourier, n_images=n_images)

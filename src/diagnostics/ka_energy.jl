@@ -670,62 +670,69 @@ function _ka_energy(prob::ContourProblem, dev::AbstractDevice)
     return _ka_energy_from_state(prob.contours, prob.kernel, prob.domain, dev)
 end
 
-function _ka_energy_from_state(src::Vector{PVContour{T}}, ::EulerKernel,
+# The kernel/domain-specific pieces of the single-layer device energy live in
+# three small traits so the launch-argument lists are written exactly once and
+# shared by both energy sources (host contours and device workspace):
+#   * `_unbounded_energy_recipe(kernel)`  -> (kernel!, trailing args)
+#   * `_periodic_energy_recipe(...)`      -> (kernel!, trailing args)
+#   * `_periodic_energy_zero_mode(...)`   -> k=0 adjustment after normalization
+@inline _unbounded_energy_recipe(::EulerKernel) = (_euler_energy_ka!, ())
+@inline _unbounded_energy_recipe(kernel::QGKernel) = (_qg_energy_ka!, (kernel.Ld,))
+@inline _unbounded_energy_recipe(kernel::SQGKernel) = (_sqg_energy_ka!, (kernel.δ,))
+
+@inline _periodic_energy_recipe(::EulerKernel, domain::PeriodicDomain{T},
+                                cache::EwaldCache{T}, tables) where {T} =
+    (_periodic_euler_energy_ka!, (domain.Lx, domain.Ly, tables[1], tables[2]))
+@inline function _periodic_energy_recipe(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+                                         cache::EwaldCache{T}, tables) where {T}
+    kappa2 = one(T) / (kernel.Ld * kernel.Ld)
+    area = T(4) * domain.Lx * domain.Ly
+    return (_periodic_qg_energy_ka!, (kappa2, area, tables[1], tables[2]))
+end
+@inline _periodic_energy_recipe(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
+                                cache::EwaldCache{T}, tables) where {T} =
+    (_periodic_sqg_energy_ka!, (cache.α, kernel.δ, domain.Lx, domain.Ly,
+                                cache.n_images, tables[1], tables[2], tables[3]))
+
+# `circulation_fn` is a thunk so only the kernels whose zero mode needs the
+# circulation pay for it (on the GPU path it is a device reduction).
+@inline _periodic_energy_zero_mode(::EulerKernel, domain::PeriodicDomain{T},
+                                   cache, circulation_fn::F) where {T, F} = zero(T)
+@inline function _periodic_energy_zero_mode(kernel::QGKernel{T},
+                                            domain::PeriodicDomain{T},
+                                            cache, circulation_fn::F) where {T, F}
+    γ = circulation_fn()
+    kappa2 = one(T) / (kernel.Ld * kernel.Ld)
+    area = T(4) * domain.Lx * domain.Ly
+    return γ * γ / (T(2) * area * kappa2)
+end
+@inline function _periodic_energy_zero_mode(kernel::SQGKernel{T},
+                                            domain::PeriodicDomain{T},
+                                            cache::EwaldCache{T},
+                                            circulation_fn::F) where {T, F}
+    γ = circulation_fn()
+    return -_sqg_periodic_ewald_zero_mode(cache, domain, kernel.δ) * γ * γ / T(2)
+end
+
+function _ka_energy_from_state(src::Vector{PVContour{T}},
+                               kernel::_PeriodicPointKernel{T},
                                ::UnboundedDomain, dev::AbstractDevice) where {T}
-    return _normalize_energy(_ka_energy_raw(_euler_energy_ka!, src, dev, T))
+    kernel!, args = _unbounded_energy_recipe(kernel)
+    return _normalize_energy(_ka_energy_raw(kernel!, src, dev, T, args...))
 end
 
-function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
-                               ::UnboundedDomain, dev::AbstractDevice) where {T}
-    return _normalize_energy(_ka_energy_raw(_sqg_energy_ka!, src, dev, T, kernel.δ))
-end
-
-function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
-                               ::UnboundedDomain, dev::AbstractDevice) where {T}
-    return _normalize_energy(_ka_energy_raw(_qg_energy_ka!, src, dev, T, kernel.Ld))
-end
-
-function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::EulerKernel,
-                               domain::PeriodicDomain{T},
-                               dev::AbstractDevice) where {T}
-    cache = _get_ewald_cache(domain, kernel)
-    data = _pack_energy_segments(src, dev, T)
-    length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
-    kx, ky, _ = _device_ewald_tables(cache, dev)
-    raw = _ka_energy_raw_with_segments!(_periodic_euler_energy_ka!, data, dev, T,
-                                        domain.Lx, domain.Ly, kx, ky)
-    return _normalize_energy(raw)
-end
-
-function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::QGKernel{T},
+function _ka_energy_from_state(src::Vector{PVContour{T}},
+                               kernel::_PeriodicPointKernel{T},
                                domain::PeriodicDomain{T},
                                dev::AbstractDevice) where {T}
     cache = _get_ewald_cache(domain, kernel)
     data = _pack_energy_segments(src, dev, T)
     length(data.seg.ax) == 0 && return zero(T)
-    kx, ky, fourier = _device_ewald_tables(cache, dev)
-    kappa2 = one(T) / (kernel.Ld * kernel.Ld)
-    area = T(4) * domain.Lx * domain.Ly
-    raw = _ka_energy_raw_with_segments!(
-        _periodic_qg_energy_ka!, data, dev, T, kappa2, area, kx, ky)
-    γ = _energy_contour_circulation(src)
-    return _normalize_energy(raw) + γ * γ / (T(2) * area * kappa2)
-end
-
-function _ka_energy_from_state(src::Vector{PVContour{T}}, kernel::SQGKernel{T},
-                               domain::PeriodicDomain{T},
-                               dev::AbstractDevice) where {T}
-    cache = _get_ewald_cache(domain, kernel)
-    data = _pack_energy_segments(src, dev, T)
-    length(data.seg.ax) == 0 && return _normalize_energy(zero(T))
-    kx, ky, fourier = _device_ewald_tables(cache, dev)
-    raw = _ka_energy_raw_with_segments!(_periodic_sqg_energy_ka!, data, dev, T,
-                                        cache.α, kernel.δ,
-                                        domain.Lx, domain.Ly,
-                                        cache.n_images, kx, ky, fourier)
-    γ = _energy_contour_circulation(src)
-    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.δ)
-    return _normalize_energy(raw) - zero_mode * γ * γ / T(2)
+    tables = _device_ewald_tables(cache, dev)
+    kernel!, args = _periodic_energy_recipe(kernel, domain, cache, tables)
+    raw = _ka_energy_raw_with_segments!(kernel!, data, dev, T, args...)
+    return _normalize_energy(raw) + _periodic_energy_zero_mode(
+        kernel, domain, cache, () -> _energy_contour_circulation(src))
 end
 
 function _ka_energy_from_state(state::DeviceContourState{T}, kernel,
@@ -735,71 +742,28 @@ function _ka_energy_from_state(state::DeviceContourState{T}, kernel,
     return _ka_energy_state_with_ws(state, kernel, domain, dev, ws)
 end
 
-function _ka_energy_state_with_ws(state::DeviceContourState{T}, ::EulerKernel,
+function _ka_energy_state_with_ws(state::DeviceContourState{T},
+                                  kernel::_PeriodicPointKernel{T},
                                   ::UnboundedDomain, dev::AbstractDevice,
                                   ws::_EnergyWorkspace{T}) where {T}
+    kernel!, args = _unbounded_energy_recipe(kernel)
     n = _pack_energy_workspace!(ws, state, dev)
     return _normalize_energy(
-        _ka_energy_raw_with_workspace!(_euler_energy_ka!, ws, n, dev))
+        _ka_energy_raw_with_workspace!(kernel!, ws, n, dev, args...))
 end
 
-function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKernel{T},
-                                  ::UnboundedDomain, dev::AbstractDevice,
-                                  ws::_EnergyWorkspace{T}) where {T}
-    n = _pack_energy_workspace!(ws, state, dev)
-    return _normalize_energy(
-        _ka_energy_raw_with_workspace!(_sqg_energy_ka!, ws, n, dev, kernel.δ))
-end
-
-function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel{T},
-                                  ::UnboundedDomain, dev::AbstractDevice,
-                                  ws::_EnergyWorkspace{T}) where {T}
-    n = _pack_energy_workspace!(ws, state, dev)
-    return _normalize_energy(
-        _ka_energy_raw_with_workspace!(_qg_energy_ka!, ws, n, dev, kernel.Ld))
-end
-
-function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::EulerKernel,
-                                  domain::PeriodicDomain{T}, dev::AbstractDevice,
-                                  ws::_EnergyWorkspace{T}) where {T}
-    cache = _get_ewald_cache(domain, kernel)
-    n = _pack_energy_workspace!(ws, state, dev)
-    n == 0 && return _normalize_energy(zero(T))
-    kx, ky, _ = _ensure_energy_ewald!(ws, cache, dev)
-    raw = _ka_energy_raw_with_workspace!(
-        _periodic_euler_energy_ka!, ws, n, dev,
-        domain.Lx, domain.Ly, kx, ky)
-    return _normalize_energy(raw)
-end
-
-function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::QGKernel{T},
+function _ka_energy_state_with_ws(state::DeviceContourState{T},
+                                  kernel::_PeriodicPointKernel{T},
                                   domain::PeriodicDomain{T}, dev::AbstractDevice,
                                   ws::_EnergyWorkspace{T}) where {T}
     cache = _get_ewald_cache(domain, kernel)
     n = _pack_energy_workspace!(ws, state, dev)
     n == 0 && return zero(T)
-    kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
-    kappa2 = one(T) / (kernel.Ld * kernel.Ld)
-    area = T(4) * domain.Lx * domain.Ly
-    raw = _ka_energy_raw_with_workspace!(
-        _periodic_qg_energy_ka!, ws, n, dev, kappa2, area, kx, ky)
-    γ = _state_circulation(state, dev)
-    return _normalize_energy(raw) + γ * γ / (T(2) * area * kappa2)
-end
-
-function _ka_energy_state_with_ws(state::DeviceContourState{T}, kernel::SQGKernel{T},
-                                  domain::PeriodicDomain{T}, dev::AbstractDevice,
-                                  ws::_EnergyWorkspace{T}) where {T}
-    cache = _get_ewald_cache(domain, kernel)
-    n = _pack_energy_workspace!(ws, state, dev)
-    n == 0 && return _normalize_energy(zero(T))
-    kx, ky, fourier = _ensure_energy_ewald!(ws, cache, dev)
-    raw = _ka_energy_raw_with_workspace!(
-        _periodic_sqg_energy_ka!, ws, n, dev, cache.α, kernel.δ,
-        domain.Lx, domain.Ly, cache.n_images, kx, ky, fourier)
-    γ = _state_circulation(state, dev)
-    zero_mode = _sqg_periodic_ewald_zero_mode(cache, domain, kernel.δ)
-    return _normalize_energy(raw) - zero_mode * γ * γ / T(2)
+    tables = _ensure_energy_ewald!(ws, cache, dev)
+    kernel!, args = _periodic_energy_recipe(kernel, domain, cache, tables)
+    raw = _ka_energy_raw_with_workspace!(kernel!, ws, n, dev, args...)
+    return _normalize_energy(raw) + _periodic_energy_zero_mode(
+        kernel, domain, cache, () -> _state_circulation(state, dev))
 end
 
 # ── Multi-layer modal energy ─────────────────────────────────────────────

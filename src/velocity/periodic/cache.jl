@@ -36,7 +36,6 @@ Base.propertynames(::EwaldCache; private::Bool=false) =
 end
 
 # Shared Ewald setup: splitting parameter, Fourier wavenumbers, and domain area.
-# The three build_ewald_cache methods differ only in the coefficient formula.
 function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
     Lx, Ly = domain.Lx, domain.Ly
     α = sqrt(T(π)) / sqrt(Lx * Ly)
@@ -48,38 +47,27 @@ function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
     return α, kx, ky, area
 end
 
-"""
-    build_ewald_cache(domain::PeriodicDomain, kernel::EulerKernel; n_fourier=8, n_images=2)
-
-Precompute Fourier-space coefficients for Ewald summation.
-"""
-function build_ewald_cache(domain::PeriodicDomain{T}, ::EulerKernel;
-                           n_fourier::Int=8, n_images::Int=2) where {T}
-    _validate_ewald_truncation(n_fourier, n_images)
-    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
-    nk = length(kx)
-    fourier_coeffs = zeros(T, nk, nk)
-    for (mi, kxi) in enumerate(kx)
-        for (ni, kyi) in enumerate(ky)
-            k2 = kxi^2 + kyi^2
-            if k2 > eps(T)
-                fourier_coeffs[mi, ni] = exp(-k2 / (4 * α^2)) / (k2 * area)
-            end
-        end
-    end
-    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
+# Per-kernel Ewald Fourier coefficient at squared wavenumber `k2`:
+# - Euler: exp(-k²/4α²)/(k²A), the standard Ewald split of the 2-D log kernel.
+# - SQG:   (2π/|k|) erfc(|k|/2α)/A, reflecting the fractional Laplacian's
+#          half-order (1/|k| vs Euler's 1/k²).
+@inline _ewald_fourier_coefficient(::EulerKernel, k2::T, α::T, area::T) where {T} =
+    exp(-k2 / (4 * α^2)) / (k2 * area)
+@inline function _ewald_fourier_coefficient(::SQGKernel{T}, k2::T, α::T,
+                                            area::T) where {T}
+    k_mag = sqrt(k2)
+    return 2 * T(π) * erfc(k_mag / (2 * α)) / (k_mag * area)
 end
 
 """
-    build_ewald_cache(domain::PeriodicDomain, kernel::SQGKernel; n_fourier=8, n_images=2)
+    build_ewald_cache(domain::PeriodicDomain, kernel; n_fourier=8, n_images=2)
 
-Ewald cache for SQG kernel in periodic domain.
-
-The SQG Green's function `G(r) = 1/(2πr)` is split via Ewald summation.
-Fourier coefficients are `(2π/|k|) erfc(|k|/(2α)) / A`, reflecting the
-fractional Laplacian's half-order (`1/|k|` vs Euler's `1/k²`).
+Precompute Fourier-space coefficients for Ewald summation. The Euler and SQG
+caches differ only in the coefficient formula (`_ewald_fourier_coefficient`);
+the QG cache additionally carries the QG correction table (see its method).
 """
-function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
+function build_ewald_cache(domain::PeriodicDomain{T},
+                           kernel::Union{EulerKernel, SQGKernel{T}};
                            n_fourier::Int=8, n_images::Int=2) where {T}
     _validate_ewald_truncation(n_fourier, n_images)
     α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
@@ -89,9 +77,7 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::SQGKernel{T};
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
             if k2 > eps(T)
-                k_mag = sqrt(k2)
-                fourier_coeffs[mi, ni] = 2 * T(π) * erfc(k_mag / (2 * α)) /
-                    (k_mag * area)
+                fourier_coeffs[mi, ni] = _ewald_fourier_coefficient(kernel, k2, α, area)
             end
         end
     end
@@ -209,16 +195,8 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
     lock(_ewald_cache_lock) do
         # Double-check: another thread may have built it while we were computing.
         existing = get(caches, key, nothing)
-        if existing !== nothing
-            return existing
-        end
-        while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
-            old_key = popfirst!(order)
-            delete!(caches, old_key)
-        end
-        caches[key] = new_cache
-        push!(order, key)
-        return new_cache
+        existing !== nothing && return existing
+        return _store_ewald_cache!(caches, order, key, new_cache)
     end
 end
 
@@ -243,9 +221,31 @@ end
 # Pre-fetch Ewald cache for use in threaded velocity computation.
 # Returns `nothing` for unbounded domains (no cache needed).
 _prefetch_ewald(::UnboundedDomain, ::AbstractKernel) = nothing
-_prefetch_ewald(domain::PeriodicDomain, ::EulerKernel) = _get_ewald_cache(domain, EulerKernel())
-_prefetch_ewald(domain::PeriodicDomain, kernel::QGKernel) = _get_ewald_cache(domain, kernel)
-_prefetch_ewald(domain::PeriodicDomain, kernel::SQGKernel) = _get_ewald_cache(domain, kernel)
+_prefetch_ewald(domain::PeriodicDomain,
+                kernel::Union{EulerKernel, QGKernel, SQGKernel}) =
+    _get_ewald_cache(domain, kernel)
+
+# Store `cache` for (domain, kernel) in the precision-appropriate registry.
+function _store_ewald!(domain::PeriodicDomain{T}, kernel::AbstractKernel,
+                       cache) where {T<:Union{Float64, Float32}}
+    key = _cache_key(domain, kernel)
+    caches = _ewald_cache_dict(T)
+    order = _ewald_key_order(T)
+    lock(_ewald_cache_lock) do
+        _store_ewald_cache!(caches, order, key, cache)
+    end
+    return nothing
+end
+
+function _store_ewald!(domain::PeriodicDomain{T}, kernel::AbstractKernel,
+                       cache) where {T<:AbstractFloat}
+    key = _generic_cache_key(domain, kernel)
+    lock(_ewald_cache_lock) do
+        _store_ewald_cache!(_ewald_caches_generic,
+                            _ewald_key_order_generic, key, cache)
+    end
+    return nothing
+end
 
 """
     setup_ewald_cache!(domain, kernel; n_fourier=8, n_images=2)
@@ -254,72 +254,21 @@ Pre-build and store an Ewald cache with custom parameters.  Call this before
 `evolve!` to override the default `n_fourier=8`, `n_images=2`.  The cached
 result is used automatically by all subsequent velocity computations on
 the same domain/kernel combination.
-"""
-function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
-                            n_fourier::Int=8, n_images::Int=2) where {T<:Union{Float64, Float32}}
-    _validate_ewald_truncation(n_fourier, n_images)
-    key = _cache_key(domain, kernel)
-    caches = _ewald_cache_dict(T)
-    order = _ewald_key_order(T)
-    lock(_ewald_cache_lock) do
-        _store_ewald_cache!(caches, order, key,
-            build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images))
-    end
-    return nothing
-end
 
+For `QGKernel` the stored cache carries both the Euler periodic coefficients
+and the QG correction coefficients (see [`build_ewald_cache`](@ref)), and an
+Euler-keyed cache is also stored so pure-Euler evaluations on the same domain
+share the warmed `n_fourier`/`n_images` setup.
 """
-    setup_ewald_cache!(domain, kernel::QGKernel; n_fourier=8, n_images=2)
-
-Pre-build the Ewald cache for QG velocity computation.  The periodic QG cache
-carries both the Euler periodic coefficients and the QG correction coefficients
-(see [`build_ewald_cache`](@ref)), so the velocity path reads everything it needs
-from this single cache.  An Euler-keyed cache is also stored so pure-Euler
-evaluations on the same domain share the warmed `n_fourier`/`n_images` setup.
-"""
-function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
-                            n_fourier::Int=8, n_images::Int=2) where {T<:Union{Float64, Float32}}
-    _validate_ewald_truncation(n_fourier, n_images)
-    # Store QG-specific cache (for direct queries / introspection)
-    key = _cache_key(domain, kernel)
-    caches = _ewald_cache_dict(T)
-    order = _ewald_key_order(T)
-    lock(_ewald_cache_lock) do
-        _store_ewald_cache!(caches, order, key,
-            build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images))
-    end
-    # Also build the Euler cache that the QG velocity path actually uses
-    setup_ewald_cache!(domain, EulerKernel(); n_fourier=n_fourier, n_images=n_images)
-    return nothing
-end
-
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
                             n_fourier::Int=8,
                             n_images::Int=2) where {T<:AbstractFloat}
     _validate_ewald_truncation(n_fourier, n_images)
-    key = _generic_cache_key(domain, kernel)
-    cache = build_ewald_cache(domain, kernel;
-                              n_fourier=n_fourier, n_images=n_images)
-    lock(_ewald_cache_lock) do
-        _store_ewald_cache!(_ewald_caches_generic,
-                            _ewald_key_order_generic, key, cache)
-    end
-    return nothing
-end
-
-function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::QGKernel{T};
-                            n_fourier::Int=8,
-                            n_images::Int=2) where {T<:AbstractFloat}
-    _validate_ewald_truncation(n_fourier, n_images)
-    key = _generic_cache_key(domain, kernel)
-    cache = build_ewald_cache(domain, kernel;
-                              n_fourier=n_fourier, n_images=n_images)
-    lock(_ewald_cache_lock) do
-        _store_ewald_cache!(_ewald_caches_generic,
-                            _ewald_key_order_generic, key, cache)
-    end
-    setup_ewald_cache!(domain, EulerKernel();
-                       n_fourier=n_fourier, n_images=n_images)
+    _store_ewald!(domain, kernel,
+        build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images))
+    # The QG velocity path reads the Euler-keyed cache for its G_Euler part.
+    kernel isa QGKernel &&
+        setup_ewald_cache!(domain, EulerKernel(); n_fourier=n_fourier, n_images=n_images)
     return nothing
 end
 
