@@ -42,10 +42,7 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", k::MultiLayerQGKernel{N, M, T}) where {N, M, T}
     println(io, "MultiLayerQGKernel{$N, $T}")
-    println(io, "├── Ld: ", k.Ld)
-    println(io, "├── layer thicknesses: ", k.layer_thicknesses)
-    println(io, "├── coupling: $(N)×$(N) SMatrix{$T}")
-    print(io,   "└── eigenvalues: ", k.eigenvalues)
+    _show_kernel_details(io, k, "")
 end
 
 # ── Domains ─────────────────────────────────────────────
@@ -151,6 +148,7 @@ function _show_multilayer_problem(io::IO, prob::MultiLayerContourProblem{N, K, D
     # are the core state that distinguishes multi-layer QG problems.
     println(io, "├── kernel: ", prob.kernel)
     _show_kernel_details(io, prob.kernel, "│   ")
+    println(io)
     println(io, "├── domain: ", prob.domain)
     println(io, "├── device: ", prob.dev)
     print(io, "└── layers: $N layer", N == 1 ? "" : "s")
@@ -171,7 +169,7 @@ function _show_kernel_details(io::IO, k::MultiLayerQGKernel{N, M, T}, pad::Strin
     println(io, pad, "├── Ld: ", k.Ld)
     println(io, pad, "├── layer thicknesses: ", k.layer_thicknesses)
     println(io, pad, "├── coupling: $(N)×$(N) SMatrix{$T}")
-    println(io, pad, "└── eigenvalues: ", k.eigenvalues)
+    print(io, pad, "└── eigenvalues: ", k.eigenvalues)
 end
 
 # ── Time Steppers ───────────────────────────────────────

@@ -34,7 +34,7 @@ end
 @inline _state_norm2(dx::T, dy::T) where {T} = sqrt(dx * dx + dy * dy)
 
 @inline function _state_signed_node_curvature(x, y, wrapx, wrapy, offsets,
-                                              lengths, corners, ci::Int, li::Int)
+                                              lengths, corners, ci, li)
     T = eltype(x)
     n = lengths[ci]
     n < 3 && return zero(T)
@@ -361,19 +361,6 @@ function _fill_segment_bufs!(ax, ay, bx, by, pv_vec, ka, kb, prob)
         end
     end
     return idx - 1
-end
-
-"""
-    pack_targets(prob::ContourProblem, dev::AbstractDevice)
-
-Pack all target node positions into flat x/y arrays on the given device.
-"""
-function pack_targets(prob::ContourProblem{K,D,T}, dev::AbstractDevice) where {K,D,T}
-    N = total_nodes(prob)
-    tx = Vector{T}(undef, N)
-    ty = Vector{T}(undef, N)
-    _fill_target_bufs!(tx, ty, prob)
-    (to_device(dev, tx), to_device(dev, ty))
 end
 
 # Shared logic for filling CPU target buffers.

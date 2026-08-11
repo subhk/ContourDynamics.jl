@@ -13,47 +13,10 @@
 # Keeping this mapping isolated makes post-surgery resizing easier to reason
 # about.
 
-"""
-    _collect_all_nodes!(buf, prob)
-
-Collect the current contour nodes into pre-allocated flat buffer `buf`.
-"""
-@kernel function _copy_nodes_to_flat_ka!(dest, src, offset)
-    i = @index(Global)
-    dest[offset + i] = src[i]
-end
-
-@kernel function _copy_flat_to_nodes_ka!(dest, src, offset)
-    i = @index(Global)
-    dest[i] = src[offset + i]
-end
-
-@kernel function _scatter_shifted_slice_ka!(dest, base, δ, offset, scale)
-    i = @index(Global)
-    dest[i] = base[offset + i] + scale * δ[offset + i]
-end
-
-@kernel function _rk4_update_ka!(nodes, k1, k2, k3, k4, dt)
-    i = @index(Global)
-    nodes[i] = nodes[i] + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
-end
-
-@kernel function _copy_with_offset_ka!(dest, src, offset)
-    i = @index(Global)
-    dest[offset + i] = src[i]
-end
-
 @kernel function _state_nodes_to_flat_ka!(dest, x, y)
     i = @index(Global)
     T = eltype(x)
     dest[i] = SVector{2,T}(x[i], y[i])
-end
-
-@kernel function _flat_to_state_nodes_ka!(x, y, src)
-    i = @index(Global)
-    node = src[i]
-    x[i] = node[1]
-    y[i] = node[2]
 end
 
 @kernel function _state_scatter_shifted_ka!(x, y, base, δ, scale)
@@ -302,30 +265,6 @@ end
     return nodes
 end
 
-function _ka_copy_nodes_to_flat!(dest, src, offset::Int)
-    isempty(src) && return dest
-    _cpu_copy_to_flat!(dest, src, offset)
-    return dest
-end
-
-function _ka_copy_flat_to_nodes!(dest, src, offset::Int)
-    isempty(dest) && return dest
-    _cpu_copy_from_flat!(dest, src, offset)
-    return dest
-end
-
-function _ka_scatter_shifted_slice!(dest, base, δ, offset::Int, scale)
-    isempty(dest) && return dest
-    _cpu_scatter_shifted!(dest, base, δ, offset, scale)
-    return dest
-end
-
-function _ka_copy_with_offset!(dest, src, offset::Int)
-    isempty(src) && return dest
-    _cpu_copy_to_flat!(dest, src, offset)
-    return dest
-end
-
 function _collect_state_nodes!(buf::AbstractVector{SVector{2,T}},
                                state::DeviceContourState{T},
                                dev::AbstractDevice) where {T}
@@ -334,16 +273,6 @@ function _collect_state_nodes!(buf::AbstractVector{SVector{2,T}},
     N == 0 && return buf
     _ka_stepper_update!(dev, _state_nodes_to_flat_ka!, N, buf, state.x, state.y)
     return buf
-end
-
-function _scatter_state_nodes!(state::DeviceContourState{T},
-                               nodes::AbstractVector{SVector{2,T}},
-                               dev::AbstractDevice) where {T}
-    N = _device_state_nnodes(state)
-    _check_flat_buffer_length("nodes", length(nodes), N)
-    N == 0 && return state
-    _ka_stepper_update!(dev, _flat_to_state_nodes_ka!, N, state.x, state.y, nodes)
-    return state
 end
 
 function _scatter_state_shifted!(state::DeviceContourState{T},
@@ -474,7 +403,7 @@ function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::_AnyProblem,
                              ranges::_NodeRanges) where {T}
     _check_flat_buffer_length("buffer", length(buf), total_nodes(prob))
     _for_each_contour_range!(prob, ranges) do c, r
-        _ka_copy_nodes_to_flat!(buf, c.nodes, first(r) - 1)
+        _cpu_copy_to_flat!(buf, c.nodes, first(r) - 1)
     end
 end
 
@@ -487,7 +416,7 @@ function _scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}},
                          ranges::_NodeRanges) where {T}
     _check_flat_buffer_length("all_nodes", length(all_nodes), total_nodes(prob))
     _for_each_contour_range!(prob, ranges) do c, r
-        _ka_copy_flat_to_nodes!(c.nodes, all_nodes, first(r) - 1)
+        _cpu_copy_from_flat!(c.nodes, all_nodes, first(r) - 1)
     end
 end
 
@@ -503,7 +432,7 @@ function _scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
     _check_flat_buffer_length("base", length(base), N)
     _check_flat_buffer_length("δ", length(δ), N)
     _for_each_contour_range!(prob, ranges) do c, r
-        _ka_scatter_shifted_slice!(c.nodes, base, δ, first(r) - 1, scale)
+        _cpu_scatter_shifted!(c.nodes, base, δ, first(r) - 1, scale)
     end
 end
 
@@ -541,7 +470,7 @@ function _collect_velocities!(flat::Vector{SVector{2,T}}, vel::NTuple{N, Vector{
     _check_flat_buffer_length("flat", length(flat), total)
     idx = 1
     for i in 1:N
-        _ka_copy_with_offset!(flat, vel[i], idx - 1)
+        _cpu_copy_to_flat!(flat, vel[i], idx - 1)
         idx += length(vel[i])
     end
     return flat

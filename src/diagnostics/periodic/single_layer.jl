@@ -26,32 +26,6 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     return _normalize_energy(E) + zero_mode
 end
 
-"""QG-Euler correction for periodic energy: smooth Fourier series with -κ²/(k²(k²+κ²)) coefficients (precomputed in `cache.corr_coeffs`)."""
-function _energy_contour_pair_qg_correction(ci::PVContour{T}, cj::PVContour{T},
-                                             cache::EwaldCache{T};
-                                             _partial::Vector{T}=zeros(T, nnodes(ci))) where {T}
-    corr_coeffs = cache.corr_coeffs
-    kx = cache.kx
-    ky = cache.ky
-    nkx = length(kx)
-    nky = length(ky)
-    # Smooth everywhere — a pure Fourier series, so no self-segment branch.
-    Φ = rv -> begin
-        G_corr = zero(T)
-        for mi in 1:nkx
-            kxi = kx[mi]
-            for ni in 1:nky
-                coeff = corr_coeffs[mi, ni]
-                iszero(coeff) && continue
-                phase = kxi * rv[1] + ky[ni] * rv[2]
-                G_corr -= coeff * cos(phase)
-            end
-        end
-        -2 * T(π) * G_corr
-    end
-    return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
-end
-
 function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = prob.contours

@@ -549,15 +549,6 @@ function velocity!(vel::AbstractVector{SVector{2,T}},
 end
 
 # Reject unsupported GPU kernel/domain combinations without computing on CPU.
-function velocity!(vel::Vector{SVector{2,T}},
-                   prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
-    throw(ArgumentError(
-        "GPU velocity is implemented for single-layer EulerKernel, QGKernel, and SQGKernel " *
-        "on UnboundedDomain or PeriodicDomain, and BetaPlaneQGKernel on PeriodicDomain. " *
-        "Got $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
-        "Use dev=CPU() for other kernel/domain combinations."))
-end
-
 function velocity!(vel::AbstractVector{SVector{2,T}},
                    prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
     throw(ArgumentError(

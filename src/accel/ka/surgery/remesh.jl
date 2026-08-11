@@ -26,39 +26,6 @@ end
     return max(1, n_intervals, target_intervals)
 end
 
-@inline function _flat_signed_node_curvature(x, y, wrapx, wrapy, offsets,
-                                             lengths, corners, ci, li)
-    n = lengths[ci]
-    n < 3 && return zero(eltype(x))
-    off = offsets[ci]
-    prev_i = li == 1 ? n : li - 1
-    next_i = li == n ? 1 : li + 1
-    (!iszero(corners[off + prev_i - 1]) ||
-     !iszero(corners[off + li - 1]) ||
-     !iszero(corners[off + next_i - 1])) && return zero(eltype(x))
-
-    g = off + li - 1
-    curr_x = x[g]
-    curr_y = y[g]
-    prev_x = li == 1 ? x[off + n - 1] - wrapx[ci] : x[g - 1]
-    prev_y = li == 1 ? y[off + n - 1] - wrapy[ci] : y[g - 1]
-    next_x = li == n ? x[off] + wrapx[ci] : x[g + 1]
-    next_y = li == n ? y[off] + wrapy[ci] : y[g + 1]
-
-    ax = curr_x - prev_x
-    ay = curr_y - prev_y
-    bx = next_x - curr_x
-    by = next_y - curr_y
-    chord_x = next_x - prev_x
-    chord_y = next_y - prev_y
-    a_norm = sqrt(ax * ax + ay * ay)
-    b_norm = sqrt(bx * bx + by * by)
-    chord_norm = sqrt(chord_x * chord_x + chord_y * chord_y)
-    denom = a_norm * b_norm * chord_norm
-    denom <= eps(typeof(denom)) && return zero(denom)
-    return 2 * (ax * by - ay * bx) / denom
-end
-
 @kernel function _demote_obtuse_state_corners_kernel!(corners, x, y, wrapx,
                                                       wrapy, offsets, lengths,
                                                       contour_of_node,
@@ -107,7 +74,7 @@ end
                 prev_g = off + prev_i - 1
                 next_g = off + next_i - 1
                 (iszero(out_corners[prev_g]) && iszero(out_corners[next_g])) || continue
-                κ = _flat_signed_node_curvature(x, y, wrapx, wrapy, offsets,
+                κ = _state_signed_node_curvature(x, y, wrapx, wrapy, offsets,
                                                  lengths, corners, ci, li)
                 abs(κ) >= inv(δ) || continue
                 curr_x = x[g]
@@ -172,7 +139,7 @@ end
         dx = bx - ax
         dy = by - ay
         seg_lengths[g] = sqrt(dx * dx + dy * dy)
-        κ = _flat_signed_node_curvature(x, y, wrapx, wrapy, offsets,
+        κ = _state_signed_node_curvature(x, y, wrapx, wrapy, offsets,
                                          lengths, corners, ci, li)
         signed_curvatures[g] = κ
         abs_curvatures[g] = abs(κ)

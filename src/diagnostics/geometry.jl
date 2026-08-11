@@ -3,30 +3,6 @@
 const _THREADING_THRESHOLD = 64
 
 """
-    @_maybe_threads cond for-loop
-
-Apply `Threads.@threads` to `for-loop` only when `cond` is true at runtime.
-Falls back to a plain serial loop otherwise, avoiding thread-spawn overhead.
-"""
-macro _maybe_threads(cond, loop)
-    @assert loop.head === :for
-    # Inject @inbounds into both paths for consistent semantics.
-    # Tasks don't inherit @inbounds from the caller scope, so the
-    # threaded path needs it explicitly. The serial path also gets
-    # @inbounds so that both paths behave identically.
-    inbounds_loop = Expr(:for, loop.args[1], Expr(:macrocall, Symbol("@inbounds"), nothing, loop.args[2]))
-    threaded = esc(:(Threads.@threads $inbounds_loop))
-    serial = esc(inbounds_loop)
-    quote
-        if $(esc(cond))
-            $threaded
-        else
-            $serial
-        end
-    end
-end
-
-"""
     @_energy_segment_loop partial workspace n for-loop
 
 Reset `partial[1:n]`, run `for-loop` with the diagnostics threading policy,
@@ -153,37 +129,16 @@ would show up as a regression in `test_allocations.jl`.
 end
 
 """
-    _log_self_seg_quad(half_ds)
-
-Analytical self-segment integral of the `log(r²)/2` singularity:
-`∫₋₁¹∫₋₁¹ log(|s-t|·|half_ds|) ds dt = (4log2 - 6) + 4log|half_ds|`.
-Shared by the Euler, QG, and periodic-Euler self branches.
-"""
-@inline function _log_self_seg_quad(half_ds::SVector{2,T}) where {T}
-    half_ds_len = sqrt(half_ds[1]^2 + half_ds[2]^2)
-    return half_ds_len > eps(T) ? (4 * log(T(2)) - T(6)) + 4 * log(half_ds_len) : zero(T)
-end
-
-"""
-    _energy_contour_pair(ci, cj, Φ[, self_quad]; _partial)
+    _energy_contour_pair(ci, cj, Φ; _partial)
 
 Double contour integral `∮∮ Φ(r) ds·ds'` over the segment pairs of `ci` and
 `cj`, threaded over the outer segments. Every single-layer energy kernel is
-this same O(N²) loop with a different integrand, so only `Φ` — and, for
-kernels with a singularity at coincident segments, `self_quad` — varies.
-
-`self_quad(mid, half_ds, g_nodes, g_weights)` is called instead of the
-quadrature when a contour is integrated against itself and `i == j`
-(so `midj == midi` and `half_dsj == half_dsi`). Pass `nothing` for kernels
-that are smooth everywhere: `S === Nothing` is known at compile time, so the
-self branch is pruned rather than tested per segment pair.
+this same O(N²) loop with a different integrand, so only `Φ` varies.
 """
-function _energy_contour_pair(ci::PVContour{T}, cj::PVContour{T}, Φ::F,
-                              self_quad::S=nothing;
-                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T,F,S}
+function _energy_contour_pair(ci::PVContour{T}, cj::PVContour{T}, Φ::F;
+                              _partial::Vector{T}=zeros(T, nnodes(ci))) where {T,F}
     nci = nnodes(ci)
     ncj = nnodes(cj)
-    is_self = S !== Nothing && ci.nodes === cj.nodes
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
     # Thread over outer segments, each thread accumulates a partial sum.
@@ -201,11 +156,7 @@ function _energy_contour_pair(ci::PVContour{T}, cj::PVContour{T}, Φ::F,
             midj = (aj + bj) / 2
             half_dsj = dsj / 2
             dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-            quad = if S !== Nothing && is_self && i == j
-                self_quad(midi, half_dsi, g_nodes, g_weights)
-            else
-                _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
-            end
+            quad = _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
             # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
             local_s += quad / 4 * dot_ds
         end

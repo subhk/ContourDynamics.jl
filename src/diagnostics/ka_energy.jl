@@ -293,10 +293,6 @@ function _pack_energy_segments(state::DeviceContourState{T}, dev::AbstractDevice
                              contour_id, local_index)
 end
 
-@inline function _same_energy_segment(contour_id, local_index, i, j)
-    return contour_id[i] == contour_id[j] && local_index[i] == local_index[j]
-end
-
 @inline function _energy_segment_geometry(ax, ay, bx, by, i, ::Type{T}) where {T}
     ax_i = ax[i]
     ay_i = ay[i]
@@ -309,33 +305,6 @@ end
     half_dsx = dsx / T(2)
     half_dsy = dsy / T(2)
     return dsx, dsy, midx, midy, half_dsx, half_dsy
-end
-
-@inline function _sqg_ewald_real_potential_scalar(r::T, α::T) where {T}
-    r <= zero(T) && return zero(T)
-
-    inv_α_sqrtpi = one(T) / (α * sqrt(T(pi)))
-    ar = α * r
-    z = ar * ar
-    γ_euler = T(Base.MathConstants.eulergamma)
-
-    log_plus_half_e1 = if z < T(0.25)
-        s = -log(α) - γ_euler / T(2)
-        term = one(T)
-        for n in 1:80
-            term *= -z / T(n)
-            incr = -term / (T(2) * T(n))
-            s += incr
-            abs(incr) < eps(T) * max(one(T), abs(s)) && break
-        end
-        s
-    else
-        log(r) + _expint_e1(z) / T(2)
-    end
-
-    zero_limit = (-one(T) - γ_euler / T(2) - log(α)) * inv_α_sqrtpi
-    return r * erfc(ar) - exp(-z) * inv_α_sqrtpi +
-        log_plus_half_e1 * inv_α_sqrtpi - zero_limit
 end
 
 @inline function _sqg_regularized_energy_potential_scalar(r2::T, δ::T) where {T}
@@ -362,7 +331,7 @@ end
             r = sqrt(r2)
             # The regularized potential is already doubled for the shared
             # energy normalization; scale every other Ewald piece likewise.
-            phi += T(2) * _sqg_ewald_real_potential_scalar(r, α) +
+            phi += T(2) * _sqg_ewald_real_potential(r, α) +
                    _sqg_regularized_energy_potential_scalar(r2, δ) - T(2) * r
         end
     end

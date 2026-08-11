@@ -344,43 +344,6 @@ function _device_surgery_reconnect_loop!(state::DeviceContourState{T},
         " device")
 end
 
-function _remesh_contours_after_surgery!(contours::Vector{PVContour{T}},
-                                         params::SurgeryParams,
-                                         remesh_buf::Vector{SVector{2,T}},
-                                         arc_buf::Vector{T},
-                                         vnodes_buf::Vector{SVector{2,T}}) where {T}
-    density_sources = copy(contours)
-    density_source_data = _prepare_density_sources(density_sources)
-    for i in eachindex(contours)
-        contours[i] = remesh(contours[i], params;
-                             _buf=remesh_buf,
-                             _arc_buf=arc_buf,
-                             _vnodes_buf=vnodes_buf,
-                             _density_sources=density_sources,
-                             _density_source_data=density_source_data)
-    end
-    _demote_obtuse_corners!(contours)
-    return contours
-end
-
-function _device_remesh_contours_after_surgery!(contours::Vector{PVContour{T}},
-                                                params::SurgeryParams,
-                                                dev::AbstractDevice,
-                                                remesh_buf::Vector{SVector{2,T}},
-                                                arc_buf::Vector{T},
-                                                vnodes_buf::Vector{SVector{2,T}}) where {T}
-    remeshed = _device_remesh_contours(contours, params, dev)
-    if remeshed !== nothing
-        empty!(contours)
-        append!(contours, remeshed)
-        _demote_obtuse_corners!(contours)
-        return contours
-    end
-
-    return _remesh_contours_after_surgery!(contours, params, remesh_buf,
-                                           arc_buf, vnodes_buf)
-end
-
 function _device_remesh_contours_after_surgery!(state::DeviceContourState{T},
                                                 params::SurgeryParams,
                                                 dev::AbstractDevice) where {T}
