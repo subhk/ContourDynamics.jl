@@ -66,7 +66,7 @@ the default entry point.
 - **Diagnostics:** energy, enstrophy, circulation, angular momentum, vortex
   area, and ellipse moments where supported by the kernel and domain.
 - **Ecosystem integration:** optional Makie, JLD2, RecordedArrays, and
-  DifferentialEquations.jl extensions.
+  OrdinaryDiffEq.jl extensions.
 - **High performance:** threaded CPU kernels, device-resident CUDA paths, and
   low-allocation time integration.
 

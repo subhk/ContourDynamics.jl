@@ -77,8 +77,8 @@ Open: [Devices](api/devices.md)
 
 ### Extensions
 
-Optional integrations for DifferentialEquations.jl, RecordedArrays.jl, JLD2.jl,
-and Makie.
+Optional integrations for OrdinaryDiffEq.jl (also loaded via
+DifferentialEquations.jl), RecordedArrays.jl, JLD2.jl, and Makie.
 
 Open: [Extensions](api/extensions.md)
 

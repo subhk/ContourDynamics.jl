@@ -9,7 +9,7 @@ from the source paper.
 |:--|:--|:--|
 | `vortex_merger.jl` | [Dritschel (1988), Figure 13](https://doi.org/10.1016/0021-9991(88)90165-9) | Shorter run and package remeshing/surgery |
 | `filamentation.jl` | [Dritschel (1988), equation (13), Figure 5, Table IV case 1](https://doi.org/10.1016/0021-9991(88)90165-9) | Package remeshing parameters and diagnostics |
-| `beta_drift.jl` | [Lam & Dritschel (2001), Table 1 case D and Figure 5](https://doi.org/10.1017/S0022112001003974) | Direct contour dynamics; reduced-resolution `demo` preset |
+| `beta_drift.jl` | [Lam & Dritschel (2001), Table 1 case D and Figure 5](https://doi.org/10.1017/S0022112001003974) | Direct contour dynamics; resolution set by top-level constants, `BETA_DRIFT_DRY_RUN=1` for a quick pass |
 | `sqg_elliptical_vortex.jl` | [Held et al. (1995), equation (19) and Figure 2](https://doi.org/10.1017/S0022112095000012) | Smooth field represented by contour levels; unbounded default |
 | `two_layer_qg.jl` | [Polvani, Zabusky & Flierl (1989), Figure 19](https://doi.org/10.1017/S0022112089002016) | Symmetric modal transform, automatic surgery, and shorter run |
 
@@ -26,12 +26,11 @@ Suggested reading order:
 
 Longer runnable scripts are available in the [`examples/`](https://github.com/subhk/ContourDynamics.jl/tree/main/examples) directory. Those scripts save JLD2 snapshots, final PNG/SVG figures, and MP4 animations under `examples/output/`. The pages in this section provide shorter versions of the same setups, with smaller contour discretizations so the docs build stays fast.
 
-::: tip GPU Acceleration
-Every example here can run on GPU: add `using CUDA` and pass `dev=GPU()` to
-`Problem`. Single-layer Euler, QG, SQG, and beta-plane QG, as well as
-multi-layer QG, all evaluate velocity, timestep, and run surgery against
-device-resident contour state.
-:::
+!!! tip "GPU Acceleration"
+    Every example here can run on GPU: add `using CUDA` and pass `dev=GPU()` to
+    `Problem`. Single-layer Euler, QG, SQG, and beta-plane QG, as well as
+    multi-layer QG, all evaluate velocity, timestep, and run surgery against
+    device-resident contour state.
 
 Each example page includes:
 

@@ -19,14 +19,15 @@ velocity!(vel, prob)                         # public entry (CPU method)
 └─ _velocity_policy!(vel, prob)              # shared CPU+GPU skeleton
    ├─ _validate_velocity_buffer!(vel, prob) # buffer big enough?
    └─ _small_velocity!(vel, prob)           # device branch: CPU vs GPU
-      └─ _direct_velocity!(vel, prob)        # the CPU reference loop
-         └─ _accumulate_node_velocity(...)   # sum over source segments, per target node
-            └─ _segment_velocity_with_geometry(...)   # straight vs curved segment
-               └─ segment_velocity(kernel, domain, x, a, b)   # the Green's-function math
+      └─ _direct_velocity!(vel, prob)        # prep: Ewald cache, curvatures, evaluator
+         └─ _direct_velocity_loop!(...)      # serial/threaded loop over target nodes
+            └─ _accumulate_node_velocity(...)   # sum over source segments, per target node
+               └─ _segment_velocity_with_geometry(...)   # straight vs curved segment
+                  └─ segment_velocity(kernel, domain, x, a, b, ewald)   # the Green's-function math
 ```
 
-Five thin hops, then the math leaf. Each hop exists for one reason — spelled out
-below.
+A stack of thin hops, then the math leaf. Each hop exists for one reason —
+spelled out below.
 
 ## Hop 1 — `velocity!` (public entry)
 
@@ -87,9 +88,9 @@ direct evaluator. The GPU method routes to the KA kernels in `src/accel/ka/`.
 > GPU part ways — without it, every public method would repeat the validate +
 > dispatch logic.
 
-## Hop 5 — `_direct_velocity!` (the CPU reference loop)
+## Hop 5 — `_direct_velocity!` (prep for the CPU reference loop)
 
-This is where work actually happens. In order:
+This sets the loop up. In order:
 
 1. **Prefetch the Ewald cache** — `_prefetch_ewald(domain, kernel)`. Returns
    `nothing` for `UnboundedDomain` (no periodic images); for `PeriodicDomain` it
@@ -97,24 +98,36 @@ This is where work actually happens. In order:
 2. **Prepare curvature buffers** — `_prepare_curvature_buffers!` fills per-node
    signed curvatures (reused scratch, so no allocation). Curvature decides
    straight-vs-curved integration later.
-3. **Loop over every target node**, writing `vel[i]`. Two branches:
-   - **Serial** (small problems): a plain nested loop over contours and nodes.
-   - **Threaded** (`N ≥ 128`, multiple threads): `Threads.@threads` over a flat
-     node index `i`. The flat index is mapped back to `(contour, local node)`
-     with `searchsortedlast` over precomputed `offsets` — that lookup is the
-     price of threading a ragged set of contours with one flat loop.
+3. **Build the per-node evaluator** — a closure over the read-only state above
+   that computes the velocity at one target point — and hand it to
+   `_direct_velocity_loop!`, which owns the actual loop.
 
-   Both branches call the same inner helper for each target node.
+## Hop 6 — `_direct_velocity_loop!` (serial vs threaded driver)
 
-## Hop 6 — `_accumulate_node_velocity` (sum over sources)
+Loops over every target node, writing `vel[i]` via the evaluator. Two branches:
+
+- **Serial** (small problems): a plain nested loop over contours and nodes.
+- **Threaded** (`N ≥ 128`, multiple threads): `Threads.@threads` over a flat
+  node index `i`. The flat index is mapped back to `(contour, local node)`
+  with `searchsortedlast` over precomputed `offsets` — that lookup is the
+  price of threading a ragged set of contours with one flat loop.
+
+Both branches call the same evaluator for each target node. The driver is
+deliberately generic: the **beta-plane CPU path** (`src/beta_plane.jl`) defines
+its own `_direct_velocity!` method that reuses this exact driver with its own
+evaluator (live contours minus frozen reference plus the analytic sawtooth
+jet), so the threading and index bookkeeping have exactly one home.
+
+## Hop 7 — `_accumulate_node_velocity` (sum over sources)
 
 ```julia
 function _accumulate_node_velocity(kernel, domain, contours, source_curvatures, ewald, xi)
     v = zero(SVector{2,T})
     for (source_ci, c) in pairs(contours)
+        nc = nnodes(c)
         pv = c.pv
         κ  = source_curvatures[source_ci]
-        for j in 1:nnodes(c)
+        for j in 1:nc
             a = c.nodes[j]
             b = next_node(c, j)        # wraps to node 1 on closed contours
             v += pv * _segment_velocity_with_geometry(
@@ -130,10 +143,11 @@ This is the O(N²) heart: the velocity at one target node `xi` is the sum, over
 by the source contour's PV jump `pv`. A segment is the pair `(a, b)` of
 consecutive nodes.
 
-## Hop 7 — `_segment_velocity_with_geometry` (straight vs curved)
+## Hop 8 — `_segment_velocity_with_geometry` (straight vs curved)
 
 ```julia
-ds_len = norm(b - a)
+ds = b - a
+ds_len = sqrt(ds[1]^2 + ds[2]^2)
 max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
     return segment_velocity(kernel, domain, x, a, b, ewald)   # nearly straight: analytic
 return curved_segment_velocity(kernel, domain, x, a, b, κa, κb, ewald)  # curved: quadrature
@@ -166,10 +180,14 @@ Each hop removes a different kind of duplication:
 - **`_velocity_policy!`** — one validate-then-compute skeleton for both devices.
 - **`_small_velocity!`** — the *only* CPU/GPU branch; everything above it is
   device-agnostic.
-- **`_direct_velocity!`** — owns buffer reuse and the serial/threaded choice, so
-  the inner math never thinks about threading.
+- **`_direct_velocity!`** — owns buffer reuse and per-call setup (Ewald cache,
+  curvature scratch), so the loop never thinks about caches.
+- **`_direct_velocity_loop!`** — owns the serial/threaded choice and flat-index
+  bookkeeping, shared with the beta-plane path, so the inner math never thinks
+  about threading.
 - **`_accumulate_node_velocity`** — the segment sum lives in one place, shared by
-  the serial and threaded branches.
+  the serial and threaded branches (and reused twice by the beta-plane
+  evaluator: once for live contours, once for the frozen reference).
 - **`_segment_velocity_with_geometry`** — the straight/curved decision, so each
   `segment_velocity` method only implements one clean formula.
 

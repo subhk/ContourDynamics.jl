@@ -58,6 +58,7 @@ src/
 │   ├── device_state.jl           DeviceContourState, the device-resident layout
 │   ├── shapes.jl                 circular_patch, elliptical_patch, …
 │   └── show.jl                   pretty printing for the public types
+├── precompile.jl                 PrecompileTools workload for common paths
 ├── velocity/
 │   ├── common.jl                 public velocity! API and dispatch policy
 │   ├── unbounded/single_layer.jl unbounded Euler/QG/SQG segment velocity
@@ -78,6 +79,7 @@ src/
 └── diagnostics/
     ├── geometry.jl               area, circulation, enstrophy, angular momentum
     ├── ka_energy.jl              device-resident energy, single- and multi-layer
+    ├── multilayer_qg.jl          shared multi-layer modal energy helpers
     ├── unbounded/                unbounded energy, single- and multi-layer
     └── periodic/                 periodic energy, single- and multi-layer
 
@@ -139,12 +141,14 @@ agree on precision.
 
 `evolve!` in `src/core/evolution.jl` is the main simulation loop:
 
-1. run callbacks for step 0
-2. call `timestep!`
+1. run callbacks for the starting step (`step_offset`, 0 by default; skipped
+   with `run_initial_callbacks=false`)
+2. synchronize every stepper work buffer with the current node count (catches
+   callback-induced topology changes), then call `timestep!`
 3. wrap nodes for periodic domains
-4. optionally run `surgery!`
-5. synchronize every stepper work buffer with the post-surgery node count
-6. run callbacks for the new step
+4. optionally run `surgery!`, then re-synchronize the buffers with the
+   post-surgery node count
+5. run callbacks for the new step
 
 The low-level flat-buffer packing/scattering helpers live in
 `src/core/evolution_buffers.jl` so the public stepping logic stays readable.

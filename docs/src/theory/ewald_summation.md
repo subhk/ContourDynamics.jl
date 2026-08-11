@@ -71,14 +71,21 @@ adding many distant image copies directly.
 
 ### Singular Subtraction for Periodic Velocity
 
-The periodic segment velocity uses the same singular-subtraction approach as the
-unbounded formulation:
+Every periodic segment velocity is built by singular subtraction: a
+singularity-handling **base velocity** plus a **smooth correction** integrated
+by Gauss–Legendre quadrature. In the code this split is explicit — the base
+term is `_periodic_base_velocity` and the per-quadrature-point correction is
+`_periodic_green_correction`, dispatched on the kernel:
 
-- the singular part is handled analytically using the exact unbounded segment formula
-- only the smooth correction ``G_{\text{per}} - G_\infty`` is left for numerical quadrature
+- **Euler and SQG**: the base is the exact *unbounded* segment formula, and the
+  correction is ``G_{\text{per}} - G_\infty``, where ``G_\infty`` is the
+  corresponding unbounded-space Green's function.
+- **QG**: the base is the *periodic Euler* (Ewald) velocity itself, and the
+  correction is the smooth QG–Euler Fourier series described in the next
+  section (its coefficients are precomputed in `EwaldCache.corr_coeffs`).
 
-Here ``G_\infty`` means the corresponding unbounded-space Green's function. This
-is important because quadrature is most reliable on smooth integrands, not on
+Either way, only a smooth function is left for numerical quadrature. This is
+important because quadrature is most reliable on smooth integrands, not on
 functions with logarithmic or stronger singular behavior.
 
 ## QG Periodic Decomposition

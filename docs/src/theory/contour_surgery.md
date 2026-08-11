@@ -52,8 +52,11 @@ while close pairs remain:
     demote corners that have become obtuse
     remove unresolved filament debris
     rebuild the spatial index and close-pair list
-wrap periodic contours and synchronize timestep buffers with the final node count
 ```
+
+Surgery itself ends there. In `evolve!`, periodic wrapping runs *before* each
+surgery pass (right after the timestep), and the stepper's work buffers are
+synchronized with the final node count after surgery returns.
 
 This is the same conceptual structure as Dritschel's contour-surgery loop, but
 expressed in the terms used by this package. The velocity solver never performs
@@ -306,8 +309,10 @@ When two contour segments approach within distance ``\delta``:
 Here ``\delta`` is the proximity threshold used to decide that two segments are
 close enough to be considered for reconnection.
 
-Reconnection uses a **spatial index** (a hash-map binned by a ``\delta``-sized
-grid) to filter candidate segment pairs before exact checks. The acceptance
+Reconnection uses a **spatial index** (a hash-map binned by a
+``\max(\delta, \mu)``-sized grid — ``\mu``-sized for every built-in preset,
+since presets keep ``\delta \le \mu/4``) to filter candidate segment pairs
+before exact checks; the contact test itself uses ``\delta``. The acceptance
 test follows Dritschel's surgery condition: a node on one contour segment must
 lie within ``\delta`` of the straight segment on the other contour part. In
 practice the spatial index gives near-linear candidate lookup for well-resolved
@@ -344,16 +349,17 @@ resolution of the contour description.
 
 ## Surgery Parameters
 
-| Parameter | Symbol | Description |
+| Field (ASCII alias) | Symbol | Description |
 |-----------|--------|-------------|
-| `δ` | ``\delta`` | Proximity threshold for detecting close segments |
-| `mu` | ``\mu`` | Minimum segment length after remeshing |
-| `Delta_max` | ``\Delta_{\max}`` | Maximum segment length after remeshing |
+| `δ` (`delta`) | ``\delta`` | Proximity threshold for detecting close segments |
+| `μ` (`mu`) | ``\mu`` | Minimum segment length after remeshing |
+| `Δ_max` (`Delta_max`) | ``\Delta_{\max}`` | Maximum segment length after remeshing |
 | `area_min` | ``A_{\min}`` | Minimum contour area; smaller contours are removed |
 | `n_surgery` | — | Number of time steps between surgery passes |
 
-Typical choices in this implementation are ``\delta \lesssim \mu/4``,
-``\Delta_{\max} \approx 10\text{–}40\mu``, and ``A_{\min} \approx \delta^2``.
+The built-in presets use ``\delta \le \mu/4``,
+``\Delta_{\max} \approx 7.5\text{–}15\,\mu``, and ``A_{\min}`` between roughly
+``\delta^2/25`` and ``\delta^2``.
 Choosing ``\delta`` too large relative to ``\mu`` increases the chance of
 spurious reconnections and is warned about by the constructor for
 [`SurgeryParams`](@ref).

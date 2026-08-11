@@ -49,7 +49,7 @@ constructing the contour problem and time-stepper.
 | `layer_thicknesses` | Positive layer depths/weights for multi-layer QG; optional when `coupling` is symmetric or uniquely determines their ratios |
 | `domain` | `:unbounded` (default) or `:periodic` |
 | `Lx`, `Ly` | Positive periodic-domain half-widths; required for `domain=:periodic` |
-| `stepper` | `:RK4` (the only built-in method) |
+| `stepper` | `:RK4` (the only built-in method; `:leapfrog` was removed in v1.0.21 and now throws with migration guidance) |
 | `surgery` | `:standard`, `:conservative`, `:aggressive`, `:none`, or `SurgeryParams` |
 | `dev` | `CPU()` (default) or `GPU()` |
 | `T` | Floating-point type for converted inputs and internal buffers; default `Float64` |
@@ -71,4 +71,14 @@ domain
 ```@docs
 AbstractTimeStepper
 RK4Stepper
+```
+
+### Removed steppers
+
+`LeapfrogStepper` (and the `stepper=:leapfrog` / `ra_coeff` keywords) were
+removed in v1.0.21. The exported stub below remains only so v1.0.x code fails
+with migration guidance instead of an `UndefVarError`; use `RK4Stepper`.
+
+```@docs
+LeapfrogStepper
 ```
