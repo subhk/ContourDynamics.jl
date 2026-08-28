@@ -14,21 +14,20 @@
 
 @inline _qg_kernel(kernel::BetaPlaneQGKernel{T}) where {T} = QGKernel(kernel.Ld)
 
-@inline _prefetch_ewald(domain::PeriodicDomain, kernel::BetaPlaneQGKernel) =
-    _prefetch_ewald(domain, _qg_kernel(kernel))
+@inline _prefetch_ewald(domain::PeriodicDomain, kernel::BetaPlaneQGKernel) = _prefetch_ewald(domain, _qg_kernel(kernel))
 
 # The beta-plane velocity path consumes the QG-keyed Ewald cache (via the
 # delegation above), so the public cache API must accept BetaPlaneQGKernel too:
 # `setup_ewald_cache!`/`build_ewald_cache` configure the same entry the
 # velocity evaluation reads.
-@inline _cache_key(domain::PeriodicDomain, kernel::BetaPlaneQGKernel) =
-    _cache_key(domain, _qg_kernel(kernel))
-@inline _kernel_value_precision(kernel::BetaPlaneQGKernel) =
-    _kernel_value_precision(_qg_kernel(kernel))
+@inline _cache_key(domain::PeriodicDomain, kernel::BetaPlaneQGKernel) = _cache_key(domain, _qg_kernel(kernel))
+
+@inline _kernel_value_precision(kernel::BetaPlaneQGKernel) = _kernel_value_precision(_qg_kernel(kernel))
+
 build_ewald_cache(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
-                  n_fourier::Int=8, n_images::Int=2) where {T} =
-    build_ewald_cache(domain, _qg_kernel(kernel);
-                      n_fourier=n_fourier, n_images=n_images)
+                  n_fourier::Int=8, n_images::Int=2) where {T} = 
+        build_ewald_cache(domain, _qg_kernel(kernel); n_fourier=n_fourier, n_images=n_images)
+
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
                             n_fourier::Int=8,
                             n_images::Int=2) where {T<:AbstractFloat}

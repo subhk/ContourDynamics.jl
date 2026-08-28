@@ -65,6 +65,7 @@ end
     cy = zero(T)
     sx = zero(T)
     sy = zero(T)
+    
     @inbounds for i in 1:n
         xi, yi = getnode(i)
         xj, yj = getnode(i < n ? i + 1 : 1)

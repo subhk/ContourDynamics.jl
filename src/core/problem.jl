@@ -24,10 +24,13 @@ function _validate_problem_stepper_compatibility(
     problem_T === stepper_T || throw(ArgumentError(
         "Problem coordinates use $problem_T but the stepper uses $stepper_T; " *
         "construct both with the same floating-point type."))
+
     buffer = _stepper_primary_buffer(stepper)
+    
     _stepper_storage_matches(prob.dev, buffer) || throw(ArgumentError(
         "Problem uses $(typeof(prob.dev)) but the stepper buffer $(typeof(buffer)) " *
         "belongs to a different device; construct the stepper with dev=prob.dev."))
+    
     return nothing
 end
 
@@ -48,13 +51,17 @@ struct Problem{P<:Union{ContourProblem, MultiLayerContourProblem},
     contour_problem::P
     stepper::S
     surgery_params::SP
+
     function Problem(contour_problem::P, stepper::S, surgery_params::SP) where {
             P<:Union{ContourProblem,MultiLayerContourProblem},
             S<:AbstractTimeStepper,
             SP<:Union{SurgeryParams,Nothing}}
+
         _validate_problem_stepper_compatibility(contour_problem, stepper)
+        
         new{P,S,SP}(contour_problem, stepper, surgery_params)
     end
+
 end
 
 # ── Forwarded accessors ─────────────────────────────────
