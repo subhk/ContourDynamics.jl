@@ -9,6 +9,7 @@ function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T}) wher
     layer_circulation = ntuple(layer -> sum(
         c.pv * vortex_area(c) for c in prob.layers[layer]
         if _valid_energy_contour(c); init=zero(T)), Val(N))
+            
     partial = zeros(T, maximum(
         nnodes(c) for layer in prob.layers for c in layer
         if _valid_energy_contour(c); init=0))
