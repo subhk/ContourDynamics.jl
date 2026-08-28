@@ -20,14 +20,15 @@ struct SurgeryParams{T<:AbstractFloat}
     function SurgeryParams(δ::T, μ::T, Δ_max::T, area_min::T, n_surgery::Int) where {T<:AbstractFloat}
         isfinite(δ) && δ > zero(T) || throw(ArgumentError("δ must be finite and positive"))
         isfinite(μ) && μ > zero(T) || throw(ArgumentError("μ must be finite and positive"))
-        isfinite(Δ_max) && Δ_max > μ || throw(ArgumentError(
-            "Δ_max must be finite and greater than μ"))
-        isfinite(area_min) && area_min > zero(T) || throw(ArgumentError(
-            "area_min must be finite and positive"))
+        isfinite(Δ_max) && Δ_max > μ || throw(ArgumentError("Δ_max must be finite and greater than μ"))
+
+        isfinite(area_min) && area_min > zero(T) || throw(ArgumentError("area_min must be finite and positive"))
         n_surgery > 0 || throw(ArgumentError("n_surgery must be positive"))
+        
         if δ > μ / 4
             @warn "SurgeryParams: δ ($δ) > μ/4 = $(μ/4); δ should usually be <= μ/4 for Dritschel surgery" maxlog=1
         end
+        
         new{T}(δ, μ, Δ_max, area_min, n_surgery)
     end
 end

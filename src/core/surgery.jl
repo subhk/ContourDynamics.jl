@@ -25,8 +25,7 @@ are astronomically unlikely with floating-point arithmetic.
     T = promote_type(Tr, Td)
     Lx2 = 2 * T(domain.Lx)
     Ly2 = 2 * T(domain.Ly)
-    SVector{2,T}(T(r[1]) - round(T(r[1]) / Lx2) * Lx2,
-                 T(r[2]) - round(T(r[2]) / Ly2) * Ly2)
+    SVector{2,T}(T(r[1]) - round(T(r[1]) / Lx2) * Lx2, T(r[2]) - round(T(r[2]) / Ly2) * Ly2)
 end
 @inline _min_image(r::SVector{2}, ::UnboundedDomain) = r
 
@@ -288,13 +287,13 @@ function _best_node_segment_contact(c1::PVContour{T}, i1::Int,
     return best
 end
 
-function _insert_stitch_node(nodes::Vector{SVector{2,T}}, seg_idx::Int,
-                             point::SVector{2,T}) where {T}
+function _insert_stitch_node(nodes::Vector{SVector{2,T}}, seg_idx::Int, point::SVector{2,T}) where {T}
     # Insert immediately after seg_idx, which is the local representation of a
     # point lying on segment seg_idx -> seg_idx+1. If seg_idx is the closing
     # segment, append so cyclic ordering is preserved.
     n = length(nodes)
     new_nodes = Vector{SVector{2,T}}(undef, n + 1)
+
     if seg_idx == n
         copyto!(new_nodes, 1, nodes, 1, n)
         new_nodes[n + 1] = point
@@ -304,6 +303,7 @@ function _insert_stitch_node(nodes::Vector{SVector{2,T}}, seg_idx::Int,
     copyto!(new_nodes, 1, nodes, 1, seg_idx)
     new_nodes[seg_idx + 1] = point
     copyto!(new_nodes, seg_idx + 2, nodes, seg_idx + 1, n - seg_idx)
+
     return new_nodes, seg_idx + 1
 end
 
@@ -313,6 +313,7 @@ function _insert_corner_flag(corners::BitVector, seg_idx::Int, flag::Bool=false)
     # reconnect operation has decided which topology it is creating.
     n = length(corners)
     new_corners = falses(n + 1)
+
     if seg_idx == n
         copyto!(new_corners, 1, corners, 1, n)
         new_corners[n + 1] = flag
@@ -322,6 +323,7 @@ function _insert_corner_flag(corners::BitVector, seg_idx::Int, flag::Bool=false)
     copyto!(new_corners, 1, corners, 1, seg_idx)
     new_corners[seg_idx + 1] = flag
     copyto!(new_corners, seg_idx + 2, corners, seg_idx + 1, n - seg_idx)
+
     return new_corners
 end
 
@@ -336,6 +338,7 @@ function _demote_obtuse_corners(c::PVContour{T}) where {T}
     # Dritschel corners are temporary labels. Once local geometry has opened into
     # an obtuse angle, the node can return to the ordinary remeshing population.
     any(c.corners) || return c
+
     corners = copy(c.corners)
     changed = false
     n = nnodes(c)
@@ -346,11 +349,15 @@ function _demote_obtuse_corners(c::PVContour{T}) where {T}
         prev = c.nodes[mod1(i - 1, n)]
         curr = c.nodes[i]
         nxt = next_node(c, i)
+
         v_prev = prev - curr
         v_next = nxt - curr
+        
         l_prev = sqrt(v_prev[1]^2 + v_prev[2]^2)
         l_next = sqrt(v_next[1]^2 + v_next[2]^2)
+        
         (l_prev <= eps(T) || l_next <= eps(T)) && continue
+
         if v_prev[1] * v_next[1] + v_prev[2] * v_next[2] < zero(T)
             corners[i] = false
             changed = true
@@ -402,17 +409,14 @@ function _promote_high_curvature_corners!(contours::Vector{PVContour{T}}, δ) wh
     return contours
 end
 
-@inline function _ray_crosses_segment(pt::SVector{2,T},
-                                      a::SVector{2,T},
-                                      b::SVector{2,T}) where {T}
+@inline function _ray_crosses_segment(pt::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
     y = pt[2]
     (a[2] > y) == (b[2] > y) && return false
     x_cross = a[1] + (y - a[2]) * (b[1] - a[1]) / (b[2] - a[2])
     return pt[1] < x_cross
 end
 
-function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T},
-                                  ::UnboundedDomain) where {T}
+function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T}, ::UnboundedDomain) where {T}
     # Even-odd ray casting. Spanning contours are intentionally excluded because
     # they do not define a closed interior in the local surgery sense.
     is_spanning(c) && return false
@@ -423,8 +427,7 @@ function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T},
     return inside
 end
 
-function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T},
-                                  domain::PeriodicDomain{T}) where {T}
+function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T}, domain::PeriodicDomain{T}) where {T}
     is_spanning(c) && return false
     pt_q = _wrap_query_pt(pt, domain)
     inside = false
@@ -435,22 +438,24 @@ function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T},
     return inside
 end
 
-function _segment_interior_probe(c::PVContour{T}, i::Int, δ,
-                                 domain::AbstractDomain=UnboundedDomain()) where {T}
+function _segment_interior_probe(c::PVContour{T}, i::Int, δ, domain::AbstractDomain=UnboundedDomain()) where {T}
     # Probe just inside segment i. The sign of contour area tells us which side
     # is inward, so nested contours can be compared by the vorticity they enclose
     # locally rather than by PV jump alone.
     a = c.nodes[i]
     b = next_node(c, i)
     seg = b - a
+    
     seg_len = sqrt(seg[1]^2 + seg[2]^2)
     seg_len <= eps(T) && return _wrap_query_pt((a + b) / 2, domain)
 
     area_sign = sign(vortex_area(c))
     area_sign == 0 && (area_sign = one(T))
+    
     left_normal = SVector{2,T}(-seg[2] / seg_len, seg[1] / seg_len)
     inward = area_sign > 0 ? left_normal : -left_normal
     probe_distance = max(T(δ) / T(10), eps(T) * (one(T) + abs(a[1]) + abs(a[2]) + seg_len))
+
     return _wrap_query_pt((a + b) / 2 + probe_distance * inward, domain)
 end
 
@@ -486,6 +491,7 @@ end
     mi = _min_image(raw, domain)
     shift = raw - mi
     iszero(shift) && return (a, b)
+
     return (a + shift, b + shift)
 end
 
@@ -511,9 +517,11 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
     # halves the per-entry memory vs Set{Tuple{Int,Int,Int,Int}} and speeds
     # hashing.  Fall back to the tuple Set for (impractically) large problems.
     max_idx = 0
+
     for c in contours
         max_idx = max(max_idx, nnodes(c))
     end
+
     use_compact = length(contours) <= typemax(UInt16) && max_idx <= typemax(UInt16)
     seen_compact = use_compact ? Set{UInt64}() : nothing
     seen_tuple = use_compact ? nothing : Set{Tuple{Int,Int,Int,Int}}()
@@ -566,6 +574,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
             seg_i_len = sqrt(seg_i[1]^2 + seg_i[2]^2)
             n_query = max(2, ceil(Int, seg_i_len / bin_size) + 1)
             query_bins = Tuple{Int,Int}[]
+
             for k in 0:(n_query - 1)
                 t = T(k) / T(n_query - 1)
                 pt = _wrap_query_pt(a_i + t * seg_i, domain)
@@ -631,12 +640,16 @@ function _close_pair_distance2(contours::Vector{PVContour{T}},
     c_i = contours[ci]
     c_j = contours[cj]
     a_i = c_i.nodes[i]
+
     b_i = next_node(c_i, i)
     a_j = c_j.nodes[j]
     b_j = next_node(c_j, j)
+    
     mid_q = _wrap_query_pt((a_i + b_i) / 2, domain)
+    
     a_i_img, b_i_img = _shift_segment_to_image(a_i, b_i, mid_q, domain)
     a_j_img, b_j_img = _shift_segment_to_image(a_j, b_j, mid_q, domain)
+    
     return _surgery_contact_distance2(a_i_img, b_i_img, a_j_img, b_j_img)
 end
 
@@ -661,6 +674,7 @@ function _select_reconnection_pairs(contours::Vector{PVContour{T}},
     used_contours = Set{Int}()
     selected = Tuple{Int,Int,Int,Int}[]
     sizehint!(selected, min(length(close_pairs), length(contours)))
+
     for (_, pair) in ranked
         ci, _, cj, _ = pair
         (ci in used_contours || cj in used_contours) && continue
@@ -668,6 +682,7 @@ function _select_reconnection_pairs(contours::Vector{PVContour{T}},
         push!(used_contours, ci)
         push!(used_contours, cj)
     end
+    
     return selected
 end
 
@@ -817,11 +832,14 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     # the check for physically small contours).
     a1 = vortex_area(c1)
     a2 = vortex_area(c2)
+
     tol1 = eps(T) * T(1000) * _shoelace_noise_scale(c1)
     tol2 = eps(T) * T(1000) * _shoelace_noise_scale(c2)
+    
     reversed = abs(a1) > tol1 && abs(a2) > tol2 && sign(a1) != sign(a2)
     c2_nodes = reversed ? reverse(c2.nodes) : c2.nodes
     c2_corners = reversed ? reverse(c2.corners) : copy(c2.corners)
+    
     n2_orig = nnodes(c2)
     j_seg = reversed ? mod1(n2_orig - j, n2_orig) : j
     c2_eff = PVContour(c2_nodes, c2.pv, reversed ? -c2.wrap : c2.wrap, c2_corners)
@@ -840,6 +858,7 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     node_from_c1, node_idx, seg_idx, stitch_point = _best_node_segment_contact(c1, i, c2_eff, j_seg, domain)
     c1_nodes = c1.nodes
     c1_corners = copy(c1.corners)
+
     # Only one contour needs an inserted node: the other contour already owns
     # the endpoint that best represents the node-to-segment contact.
     if node_from_c1
@@ -861,12 +880,14 @@ function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::
     c1_part_corners = vcat(c1_corners[i:n1], c1_corners[1:(i - 1)])
     c2_part_nodes = vcat(c2_nodes[j_eff:n2], c2_nodes[1:(j_eff - 1)])
     c2_part_corners = vcat(c2_corners[j_eff:n2], c2_corners[1:(j_eff - 1)])
+
     c1_part_corners[1] = true
     c2_part_corners[1] = true
 
     new_nodes = vcat(c1_part_nodes, c2_part_nodes)
     new_corners = vcat(c1_part_corners, c2_part_corners)
     contours[ci] = PVContour(new_nodes, c1.pv, c1.wrap, new_corners)
+
     deleteat!(contours, cj)
 end
 
@@ -926,8 +947,7 @@ function remove_filaments!(contours::Vector{PVContour{T}}, area_min, μ=nothing)
         area = abs(vortex_area(c))
         perimeter = _contour_perimeter(c)
         area >= amin &&
-            perimeter >= min_perimeter &&
-            !_is_corner_filament(c, area, perimeter, μ_cut)
+            perimeter >= min_perimeter && !_is_corner_filament(c, area, perimeter, μ_cut)
     end
 end
 
@@ -962,6 +982,7 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, δ,
     spanning_bins = Dict{Tuple{Int,Int}, Vector{SVector{2,T}}}()
     has_spanning = false
     _push_spanning_bin!(bins, key, sn) = (v = get!(bins, key, SVector{2,T}[]); push!(v, sn))
+
     for c in contours
         is_spanning(c) || continue
         has_spanning = true
@@ -991,6 +1012,7 @@ function _check_spanning_proximity(contours::Vector{PVContour{T}}, δ,
         end
     end
     has_spanning || return
+
     for c in contours
         is_spanning(c) && continue
         for node in c.nodes
@@ -1023,12 +1045,14 @@ function _remesh_all!(contours::Vector{PVContour{T}}, params::SurgeryParams,
                       vnodes_buf::Vector{SVector{2,T}}) where {T}
     density_sources = copy(contours)
     density_source_data = _prepare_density_sources(density_sources)
+
     for i in eachindex(contours)
         contours[i] = remesh(contours[i], params;
                              _buf=remesh_buf, _arc_buf=arc_buf,
                              _vnodes_buf=vnodes_buf, _density_sources=density_sources,
                              _density_source_data=density_source_data)
     end
+
     _demote_obtuse_corners!(contours)
     return contours
 end
@@ -1055,10 +1079,12 @@ function _reconnect_until_exhausted!(find_pairs::F, npairs::N, reconnect_step!::
     reconnected = false
     max_reconnect_iter = 100
     stall_warning_pairs = 100
+
     prev_n_pairs = typemax(Int)
     min_n_pairs = typemax(Int)
     stall_count = 0
     no_improve_count = 0
+
     for iter in 1:max_reconnect_iter
         pairs = find_pairs()
         n_pairs = npairs(pairs)
@@ -1111,6 +1137,7 @@ function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
                         params::SurgeryParams, remesh_buf::Vector{SVector{2,T}},
                         arc_buf::Vector{T}, vnodes_buf::Vector{SVector{2,T}};
                         layer_label::AbstractString="") where {T}
+                        
     remove_filaments!(contours, params.area_min, params.μ)
     _demote_obtuse_corners!(contours)
     _promote_high_curvature_corners!(contours, params.δ)

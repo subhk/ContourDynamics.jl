@@ -431,36 +431,26 @@ function _state_weighted_diagnostic(state::DeviceContourState{T}, mode::UInt8,
     return sum(to_cpu(partial))
 end
 
-_state_circulation(state::DeviceContourState, dev::AbstractDevice=CPU()) =
-    _state_weighted_diagnostic(state, UInt8(1), dev)
-_state_enstrophy(state::DeviceContourState, dev::AbstractDevice=CPU()) =
-    _state_weighted_diagnostic(state, UInt8(2), dev)
-_state_angular_momentum(state::DeviceContourState, dev::AbstractDevice=CPU()) =
-    _state_weighted_diagnostic(state, UInt8(3), dev)
+_state_circulation(state::DeviceContourState, dev::AbstractDevice=CPU()) = _state_weighted_diagnostic(state, UInt8(1), dev)
+
+_state_enstrophy(state::DeviceContourState, dev::AbstractDevice=CPU()) = _state_weighted_diagnostic(state, UInt8(2), dev)
+
+_state_angular_momentum(state::DeviceContourState, dev::AbstractDevice=CPU()) = _state_weighted_diagnostic(state, UInt8(3), dev)
 
 circulation(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} =
-    _state_circulation(prob.device_state, prob.dev)
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_circulation(prob.device_state, prob.dev)
 
 vortex_area(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} =
-    to_cpu(_state_vortex_area(prob.device_state, prob.dev))
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = to_cpu(_state_vortex_area(prob.device_state, prob.dev))
 
 enstrophy(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} =
-    _state_enstrophy(prob.device_state, prob.dev)
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_enstrophy(prob.device_state, prob.dev)
 
 angular_momentum(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} =
-    _state_angular_momentum(prob.device_state, prob.dev)
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_angular_momentum(prob.device_state, prob.dev)
 
 function circulation(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-}
+    N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat,S}
     s = zero(T)
     for i in 1:N
         s += _state_circulation(prob.device_state[i], prob.dev)
@@ -469,14 +459,12 @@ function circulation(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
 end
 
 function vortex_area(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-}
+    N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat,S}
     ntuple(i -> to_cpu(_state_vortex_area(prob.device_state[i], prob.dev)), Val(N))
 end
 
 function enstrophy(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-}
+    N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, S}
     s = zero(T)
     for i in 1:N
         s += _state_enstrophy(prob.device_state[i], prob.dev)
@@ -485,8 +473,7 @@ function enstrophy(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
 end
 
 function angular_momentum(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-}
+    N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, S}
     s = zero(T)
     for i in 1:N
         s += _state_angular_momentum(prob.device_state[i], prob.dev)
