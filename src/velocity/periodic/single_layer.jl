@@ -46,16 +46,15 @@ const _PeriodicPointKernel{T} = Union{EulerKernel, QGKernel{T}, SQGKernel{T}}
 
 @inline _periodic_base_velocity(::EulerKernel, ::PeriodicDomain{T},
                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                ::EwaldCache{T}) where {T} =
-    segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
+                                ::EwaldCache{T}) where {T} =  segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
+
 @inline _periodic_base_velocity(::QGKernel{T}, domain::PeriodicDomain{T},
                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                cache::EwaldCache{T}) where {T} =
-    segment_velocity(EulerKernel(), domain, x, a, b, cache)
+                                cache::EwaldCache{T}) where {T} = segment_velocity(EulerKernel(), domain, x, a, b, cache)
+
 @inline _periodic_base_velocity(kernel::SQGKernel{T}, ::PeriodicDomain{T},
                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                ::EwaldCache{T}) where {T} =
-    segment_velocity(kernel, UnboundedDomain(), x, a, b)
+                                ::EwaldCache{T}) where {T} = segment_velocity(kernel, UnboundedDomain(), x, a, b)
 
 """
     segment_velocity(kernel, domain::PeriodicDomain, x, a, b[, cache])
@@ -75,8 +74,7 @@ end
 
 @inline segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                          ::Nothing) where {T} =
-    segment_velocity(kernel, domain, x, a, b)
+                          ::Nothing) where {T} = segment_velocity(kernel, domain, x, a, b)
 
 function segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
@@ -93,6 +91,7 @@ function segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomai
     mid = (a + b) / 2
     half_ds = ds / 2
     corr = zero(T)
+
     for q in eachindex(g_nodes)
         s_pt = mid + g_nodes[q] * half_ds
         corr += g_weights[q] * _periodic_green_correction(kernel, domain, cache, x, s_pt)
@@ -143,6 +142,7 @@ Euler decomposition (Ewald):
     rx, ry = r_vec0[1], r_vec0[2]
     nkx = length(cache.kx)
     nky = length(cache.ky)
+
     @inbounds for mi in 1:nkx
         kxi = cache.kx[mi]
         cx = cos(kxi * rx)
@@ -252,21 +252,21 @@ end
 
 @inline _periodic_curved_base_velocity(::EulerKernel, ::PeriodicDomain{T},
                                        x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                       κa::T, κb::T, ::EwaldCache{T}) where {T} =
-    curved_segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b, κa, κb)
+                                       κa::T, κb::T, ::EwaldCache{T}) where {T} = curved_segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b, κa, κb)
+
 @inline _periodic_curved_base_velocity(::QGKernel{T}, domain::PeriodicDomain{T},
                                        x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                       κa::T, κb::T, cache::EwaldCache{T}) where {T} =
-    curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb, cache)
+                                       κa::T, κb::T, cache::EwaldCache{T}) where {T} = curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb, cache)
+
 @inline _periodic_curved_base_velocity(kernel::SQGKernel{T}, ::PeriodicDomain{T},
                                        x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                       κa::T, κb::T, ::EwaldCache{T}) where {T} =
-    curved_segment_velocity(kernel, UnboundedDomain(), x, a, b, κa, κb)
+                                       κa::T, κb::T, ::EwaldCache{T}) where {T} = curved_segment_velocity(kernel, UnboundedDomain(), x, a, b, κa, κb)
 
 function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T) where {T}
-    curved_segment_velocity(kernel, domain, x, a, b, κa, κb, _get_ewald_cache(domain, kernel))
+    curved_segment_velocity(kernel, domain, x, a, b, κa, κb, 
+                            _get_ewald_cache(domain, kernel))
 end
 
 function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
@@ -281,6 +281,7 @@ function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::Period
 
     g_nodes, g_weights = _gl5_nodes_weights(T)
     corr_integral = zero(SVector{2,T})
+    
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
         s = _cubic_segment_point(a, b, κa, κb, p)
@@ -289,6 +290,5 @@ function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::Period
         corr_integral += (g_weights[q] / T(2)) * G_corr * tangent
     end
 
-    return _periodic_curved_base_velocity(kernel, domain, x, a, b, κa, κb, cache) +
-           corr_integral
+    return _periodic_curved_base_velocity(kernel, domain, x, a, b, κa, κb, cache) + corr_integral
 end

@@ -56,8 +56,7 @@ end
     end
 
     h_sq = h * h
-    return _euler_antideriv(u_a, h, h_sq) -
-           _euler_antideriv(u_a - ds_len, h, h_sq)
+    return _euler_antideriv(u_a, h, h_sq) - _euler_antideriv(u_a - ds_len, h, h_sq)
 end
 
 function segment_velocity(::EulerKernel, ::UnboundedDomain,
@@ -97,6 +96,7 @@ function curved_segment_velocity(::EulerKernel, ::UnboundedDomain,
     straight = segment_velocity(EulerKernel(), UnboundedDomain(), x, a, b)
     g_nodes, g_weights = _gl5_nodes_weights(T)
     correction = zero(SVector{2,T})
+
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
         s = _cubic_segment_point(a, b, κa, κb, p)
@@ -139,8 +139,7 @@ function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
         r = sqrt(r2)
         min_r = min(min_r, r)
         if r2 > eps(T)^2
-            direct_integral += (g_weights[q] / T(2)) *
-                               _besselk0_approx_scalar(r / Ld) * tangent
+            direct_integral += (g_weights[q] / T(2)) * _besselk0_approx_scalar(r / Ld) * tangent
         end
         val = r2 < eps(T)^2 ?
             log(T(2) * Ld) - T(Base.MathConstants.eulergamma) :
@@ -150,8 +149,7 @@ function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
 
     inv2pi = one(T) / (2 * T(π))
     min_r > T(4) * max(Ld, ds_len) && return inv2pi * direct_integral
-    return curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb) +
-           inv2pi * corr_integral
+    return curved_segment_velocity(EulerKernel(), domain, x, a, b, κa, κb) + inv2pi * corr_integral
 end
 
 function curved_segment_velocity(kernel::SQGKernel{T}, domain::UnboundedDomain,
@@ -183,19 +181,16 @@ end
 
 @inline curved_segment_velocity(k::AbstractKernel, d::AbstractDomain,
                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                ::T, ::T) where {T} =
-    segment_velocity(k, d, x, a, b)
+                                ::T, ::T) where {T} = segment_velocity(k, d, x, a, b)
 
 @inline curved_segment_velocity(k::AbstractKernel, d::AbstractDomain,
                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                                κa::T, κb::T, ewald) where {T} =
-    curved_segment_velocity(k, d, x, a, b, κa, κb)
+                                κa::T, κb::T, ewald) where {T} = curved_segment_velocity(k, d, x, a, b, κa, κb)
 
 # Unbounded domains don't use Ewald caches; ignore the argument.
 @inline segment_velocity(k::AbstractKernel, d::UnboundedDomain,
                           x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
-                          ::Nothing) where {T} =
-    segment_velocity(k, d, x, a, b)
+                          ::Nothing) where {T} = segment_velocity(k, d, x, a, b)
 
 # Compute K₀(z) + log(z/2) + γ without catastrophic cancellation for small z.
 # Uses the identity: K₀(z) = -(log(z/2) + γ)I₀(z) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
