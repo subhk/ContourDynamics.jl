@@ -164,6 +164,22 @@ function _preserve_closed_area_fixed_corners!(nodes::Vector{SVector{2,T}},
     return nodes
 end
 
+# Normalize local differences before forming the cubic-length denominator.
+# The degeneracy threshold is dimensionless, so changing coordinate units does
+# not suppress curvature. Shared by contour, fixed-corner path, and KA code.
+@inline function _local_signed_curvature(ax::T, ay::T, bx::T, by::T,
+                                         cx::T, cy::T) where {T}
+    scale = max(abs(ax), abs(ay), abs(bx), abs(by), abs(cx), abs(cy))
+    iszero(scale) && return zero(T)
+    ax /= scale; ay /= scale
+    bx /= scale; by /= scale
+    cx /= scale; cy /= scale
+    denom = sqrt(ax * ax + ay * ay) * sqrt(bx * bx + by * by) *
+            sqrt(cx * cx + cy * cy)
+    denom <= eps(T) && return zero(T)
+    return (T(2) * (ax * by - ay * bx) / denom) / scale
+end
+
 @inline function _signed_node_curvature(c::PVContour{T}, i::Int) where {T}
     n = nnodes(c)
     n < 3 && return zero(T)
@@ -182,9 +198,7 @@ end
         a = curr - prev
         b = nxt - curr
         chord = nxt - prev
-        denom = _norm2(a) * _norm2(b) * _norm2(chord)
-        denom <= eps(T) && return zero(T)
-        return T(2) * _cross2(a, b) / denom
+        return _local_signed_curvature(a[1], a[2], b[1], b[2], chord[1], chord[2])
     end
 end
 
@@ -306,9 +320,7 @@ function _signed_path_curvatures(path::Vector{SVector{2,T}}, corners::AbstractVe
         a = path[i] - path[i - 1]
         b = path[i + 1] - path[i]
         chord = path[i + 1] - path[i - 1]
-        denom = _norm2(a) * _norm2(b) * _norm2(chord)
-        denom <= eps(T) && continue
-        κ[i] = T(2) * _cross2(a, b) / denom
+        κ[i] = _local_signed_curvature(a[1], a[2], b[1], b[2], chord[1], chord[2])
     end
     return κ
 end

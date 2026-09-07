@@ -17,20 +17,20 @@ struct PVContour{T<:AbstractFloat}
     pv::T
     wrap::SVector{2, T}
     corners::BitVector
+
+    function PVContour{T}(nodes::Vector{SVector{2,T}}, pv::Real,
+                          wrap::SVector{2,T},
+                          corners::AbstractVector{Bool}) where {T<:AbstractFloat}
+        length(corners) == length(nodes) || throw(DimensionMismatch(
+            "corners length ($(length(corners))) must match nodes length ($(length(nodes)))"))
+        flags = corners isa BitVector ? corners : BitVector(corners)
+        return new{T}(nodes, T(pv), wrap, flags)
+    end
 end
 
-function PVContour(nodes::Vector{SVector{2, T}}, pv::Real,
-                   wrap::SVector{2, T},
-                   corners::AbstractVector{Bool}) where {T<:AbstractFloat}
-    length(corners) == length(nodes) ||
-        throw(DimensionMismatch("corners length ($(length(corners))) must match nodes length ($(length(nodes)))"))
-    return PVContour{T}(nodes, T(pv), wrap, BitVector(corners))
-end
-
-PVContour{T}(nodes::Vector{SVector{2, T}}, pv::Real,
-             wrap::SVector{2, T},
-             corners::AbstractVector{Bool}) where {T<:AbstractFloat} =
-    PVContour(nodes, pv, wrap, corners)
+PVContour(nodes::Vector{SVector{2,T}}, pv::Real, wrap::SVector{2,T},
+          corners::AbstractVector{Bool}) where {T<:AbstractFloat} =
+    PVContour{T}(nodes, pv, wrap, corners)
 
 PVContour(nodes::Vector{SVector{2, T}}, pv::Real,
           wrap::SVector{2, T}) where {T<:AbstractFloat} =

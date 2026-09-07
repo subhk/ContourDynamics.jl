@@ -35,7 +35,9 @@ end
 
 @inline function _qg_modal_eigenvalue_tolerance(eigenvalues::SVector{N,T}) where {N,T}
     scale = maximum(abs, eigenvalues)
-    return scale * sqrt(eps(T)) * T(100)
+    # Symmetric eigensolver rounding scales with matrix size and machine
+    # precision; sqrt(eps) would discard resolved weak modes in Float32.
+    return scale * eps(T) * T(100) * T(N)
 end
 
 @inline _is_barotropic_mode(kernel, λ) =

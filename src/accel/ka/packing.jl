@@ -60,10 +60,7 @@ end
     by = next_y - curr_y
     chord_x = next_x - prev_x
     chord_y = next_y - prev_y
-    denom = _state_norm2(ax, ay) * _state_norm2(bx, by) *
-            _state_norm2(chord_x, chord_y)
-    denom <= eps(T) && return zero(T)
-    return T(2) * (ax * by - ay * bx) / denom
+    return _local_signed_curvature(ax, ay, bx, by, chord_x, chord_y)
 end
 
 @kernel function _state_segment_data_kernel!(ax, ay, bx, by, seg_pv, ka, kb,
