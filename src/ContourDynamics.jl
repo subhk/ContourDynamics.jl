@@ -17,6 +17,8 @@ using SpecialFunctions
 # Core object model and user-facing problem construction.
 include("core/device.jl")
 include("core/types.jl")
+include("numerics/interpolation.jl")
+include("numerics/contacts.jl")
 include("core/contours.jl")
 include("core/domains.jl")
 include("core/problem.jl")
@@ -24,6 +26,8 @@ include("core/surgery.jl")
 
 # Velocity evaluation and accelerators.
 include("velocity/common.jl")
+include("numerics/green_functions.jl")
+include("numerics/velocity_segments.jl")
 include("velocity/unbounded/single_layer.jl")
 include("velocity/periodic/cache.jl")
 include("velocity/periodic/single_layer.jl")
@@ -58,7 +62,8 @@ include("core/shapes.jl")
 export AbstractDevice, CPU, GPU, device_array, device_zeros, to_cpu, to_device
 export AbstractKernel, EulerKernel, QGKernel, BetaPlaneQGKernel, SQGKernel, MultiLayerQGKernel
 export PVContour, nnodes, is_corner, corner_indices, is_spanning, next_node, beta_staircase
-export DeviceContourState, materialize_contours
+export DeviceContourState, materialize_contours, snapshot_contours
+export ExecutionWorkspace, execution_workspace
 export AbstractDomain, UnboundedDomain, PeriodicDomain, wrap_nodes!
 export ContourProblem, MultiLayerContourProblem
 export SurgeryParams
@@ -92,7 +97,7 @@ function flatten_nodes end
 """
     unflatten_nodes!(prob::ContourProblem, u)
 
-Write a flat coordinate vector back into `prob.contours`, using the ordering
+Write a flat coordinate vector back into `_host_contours(prob)`, using the ordering
 created by [`flatten_nodes`](@ref). Implemented by the OrdinaryDiffEq extension.
 """
 function unflatten_nodes! end

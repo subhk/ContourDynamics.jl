@@ -1,0 +1,349 @@
+# Pure per-segment formulas shared by CPU adapters and KA kernels.
+# These functions accept scalars and return tuples; they allocate no arrays.
+
+@inline function _straight_euler_contribution_scalar(xi::T, yi::T,
+                                                     ax::T, ay::T, bx::T, by::T,
+                                                     pv::T, inv4pi::T) where {T}
+    # Rotate into segment-local tangent/normal coordinates and evaluate the
+    # analytic antiderivative of log(r^2) along the straight segment.
+    dsx = bx - ax
+    dsy = by - ay
+    ds_len_sq = dsx^2 + dsy^2
+    ds_len = sqrt(ds_len_sq)
+    ds_len < eps(T) && return zero(T), zero(T)
+
+    tx = dsx / ds_len
+    ty = dsy / ds_len
+    nx = -ty
+    ny = tx
+
+    r0x = xi - ax
+    r0y = yi - ay
+    u_a = r0x * tx + r0y * ty
+    h = r0x * nx + r0y * ny
+    integral = _euler_segment_log_integral(u_a, h, ds_len)
+    contrib = -inv4pi * pv * integral
+    return contrib * tx, contrib * ty
+end
+
+@inline function _curved_euler_contribution_scalar(xi::T, yi::T,
+                                                   ax::T, ay::T, bx::T, by::T,
+                                                   pv::T, κa::T, κb::T,
+                                                   inv4pi::T) where {T}
+    # Curved segments use Dritschel's cubic normal displacement. The straight
+    # analytic path is retained for nearly flat segments to avoid unnecessary
+    # quadrature and roundoff.
+    dsx = bx - ax
+    dsy = by - ay
+    ds_len = sqrt(dsx^2 + dsy^2)
+    ds_len < eps(T) && return zero(T), zero(T)
+
+    max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
+        return _straight_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, inv4pi)
+
+    vx, vy = _straight_euler_contribution_scalar(
+        xi, yi, ax, ay, bx, by, pv, inv4pi)
+    g_nodes, g_weights = _gl5_nodes_weights(T)
+
+    @inbounds for q in 1:5
+        p = (one(T) + g_nodes[q]) / T(2)
+        sx, sy, tangent_x, tangent_y = _cubic_point_tangent_scalar(
+            ax, ay, bx, by, κa, κb, p)
+        line_x = ax + p * dsx
+        line_y = ay + p * dsy
+        rx_curve = xi - sx
+        ry_curve = yi - sy
+        rx_line = xi - line_x
+        ry_line = yi - line_y
+        log_curve = log(max(rx_curve * rx_curve + ry_curve * ry_curve, eps(T)^2))
+        log_line = log(max(rx_line * rx_line + ry_line * ry_line, eps(T)^2))
+        coeff = -inv4pi * pv * (g_weights[q] / T(2))
+        vx += coeff * (log_curve * tangent_x - log_line * dsx)
+        vy += coeff * (log_curve * tangent_y - log_line * dsy)
+    end
+
+    return vx, vy
+end
+
+@inline function _qg_smooth_correction_scalar(rr::T, r::T, Ld::T) where {T}
+    # QG = Euler logarithmic kernel plus a smooth finite deformation-radius
+    # correction. The small-r branch uses the same regularized limit as CPU code.
+    if rr < T(0.5)
+        return _besselk0_correction(rr) + log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
+    end
+    return _besselk0_approx_scalar(rr) + log(r)
+end
+
+@inline function _curved_qg_contribution_scalar(xi::T, yi::T,
+                                                ax::T, ay::T, bx::T, by::T,
+                                                pv::T, κa::T, κb::T,
+                                                Ld::T, inv2pi::T, inv4pi::T) where {T}
+    # Reuse the Euler contribution and add only the QG smooth correction. This
+    # keeps singular handling identical between Euler and QG velocity paths.
+    dsx = bx - ax
+    dsy = by - ay
+    ds_len = sqrt(dsx^2 + dsy^2)
+    ds_len < eps(T) && return zero(T), zero(T)
+
+    if max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T))
+        r0x = xi - ax
+        r0y = yi - ay
+        p_near = clamp((r0x * dsx + r0y * dsy) / (ds_len * ds_len),
+                       zero(T), one(T))
+        near_x = r0x - p_near * dsx
+        near_y = r0y - p_near * dsy
+        min_r = sqrt(near_x * near_x + near_y * near_y)
+        if min_r > T(4) * max(Ld, ds_len)
+            g_nodes, g_weights = _gl5_nodes_weights(T)
+            half_dsx = dsx / T(2)
+            half_dsy = dsy / T(2)
+            direct = zero(T)
+            @inbounds for q in 1:5
+                sx = (ax + bx) / T(2) + g_nodes[q] * half_dsx
+                sy = (ay + by) / T(2) + g_nodes[q] * half_dsy
+                rx = sx - xi
+                ry = sy - yi
+                direct += g_weights[q] *
+                          _besselk0_approx_scalar(sqrt(rx * rx + ry * ry) / Ld)
+            end
+            coeff = inv2pi * pv * direct / T(2)
+            return coeff * dsx, coeff * dsy
+        end
+
+        vx, vy = _straight_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, inv4pi)
+        g_nodes, g_weights = _gl5_nodes_weights(T)
+        half_dsx = dsx / T(2)
+        half_dsy = dsy / T(2)
+        corr_integral = zero(T)
+        @inbounds for q in 1:5
+            sx = (ax + bx) / T(2) + g_nodes[q] * half_dsx
+            sy = (ay + by) / T(2) + g_nodes[q] * half_dsy
+            rx = sx - xi
+            ry = sy - yi
+            r2 = rx * rx + ry * ry
+            if r2 < eps(T)^2
+                corr_integral += g_weights[q] * (log(T(2) * Ld) - T(Base.MathConstants.eulergamma))
+            else
+                r = sqrt(r2)
+                corr_integral += g_weights[q] * _qg_smooth_correction_scalar(r / Ld, r, Ld)
+            end
+        end
+        corr = inv2pi * pv * T(0.5) * corr_integral
+        return vx + corr * dsx, vy + corr * dsy
+    end
+
+    evx, evy = _curved_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, κa, κb, inv4pi)
+    g_nodes, g_weights = _gl5_nodes_weights(T)
+    cvx = zero(T)
+    cvy = zero(T)
+    direct_x = zero(T)
+    direct_y = zero(T)
+    min_r = T(Inf)
+    @inbounds for q in 1:5
+        p = (one(T) + g_nodes[q]) / T(2)
+        sx, sy, tx, ty = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p)
+        rx = sx - xi
+        ry = sy - yi
+        r2 = rx * rx + ry * ry
+        r = sqrt(r2)
+        min_r = min(min_r, r)
+        if r2 > eps(T)^2
+            direct_coeff = inv2pi * pv * (g_weights[q] / T(2)) *
+                           _besselk0_approx_scalar(r / Ld)
+            direct_x += direct_coeff * tx
+            direct_y += direct_coeff * ty
+        end
+        val = if r2 < eps(T)^2
+            log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
+        else
+            _qg_smooth_correction_scalar(r / Ld, r, Ld)
+        end
+        coeff = inv2pi * pv * (g_weights[q] / T(2)) * val
+        cvx += coeff * tx
+        cvy += coeff * ty
+    end
+    min_r > T(4) * max(Ld, ds_len) && return direct_x, direct_y
+    return evx + cvx, evy + cvy
+end
+
+@inline function _curved_sqg_contribution_scalar(xi::T, yi::T,
+                                                 ax::T, ay::T, bx::T, by::T,
+                                                 pv::T, κa::T, κb::T,
+                                                 δ::T, inv2pi::T) where {T}
+    dsx = bx - ax
+    dsy = by - ay
+    ds_len = sqrt(dsx^2 + dsy^2)
+    ds_len < eps(T) && return zero(T), zero(T)
+    δ_sq = δ * δ
+
+    if max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T))
+        tx = dsx / ds_len
+        ty = dsy / ds_len
+        nx = -ty
+        ny = tx
+        r0x = xi - ax
+        r0y = yi - ay
+        u_a = r0x * tx + r0y * ty
+        h = r0x * nx + r0y * ny
+        u_b = u_a - ds_len
+        h_eff = sqrt(h * h + δ_sq)
+        F_diff = _sqg_asinh_difference(u_a, u_b, h_eff, ds_len)
+        contrib = inv2pi * pv * F_diff
+        return contrib * tx, contrib * ty
+    end
+
+    g_nodes, g_weights = _gl5_nodes_weights(T)
+    vx = zero(T)
+    vy = zero(T)
+    @inbounds for q in 1:5
+        p = (one(T) + g_nodes[q]) / T(2)
+        sx, sy, tx, ty = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p)
+        rx = xi - sx
+        ry = yi - sy
+        rreg = sqrt(rx * rx + ry * ry + δ_sq)
+        coeff = inv2pi * pv * (g_weights[q] / T(2)) / rreg
+        vx += coeff * tx
+        vy += coeff * ty
+    end
+    return vx, vy
+end
+
+@inline function _nearest_periodic_segment_image_scalar(xi::T, yi::T,
+                                                        ax::T, ay::T,
+                                                        bx::T, by::T,
+                                                        Lx::T, Ly::T) where {T}
+    Lx2 = T(2) * Lx
+    Ly2 = T(2) * Ly
+    midx = (ax + bx) / T(2)
+    midy = (ay + by) / T(2)
+    shiftx = round((xi - midx) / Lx2) * Lx2
+    shifty = round((yi - midy) / Ly2) * Ly2
+    return ax + shiftx, ay + shifty, bx + shiftx, by + shifty
+end
+
+@inline function _periodic_euler_zero_mode_scalar(α::T, Lx::T, Ly::T) where {T}
+    area = T(4) * Lx * Ly
+    return one(T) / (T(4) * α^2 * area)
+end
+
+@inline function _periodic_euler_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
+                                                         α::T, Lx::T, Ly::T,
+                                                         n_images::Int,
+                                                         kx, ky, fourier_coeffs,
+                                                         inv4pi::T,
+                                                         γ_euler::T) where {T}
+    r0x = xi - sx
+    r0y = yi - sy
+    G_corr = zero(T)
+
+    for px in -n_images:n_images
+        shiftx = T(2) * Lx * T(px)
+        for py in -n_images:n_images
+            shifty = T(2) * Ly * T(py)
+            rx = r0x - shiftx
+            ry = r0y - shifty
+            r2 = rx * rx + ry * ry
+
+            if px == 0 && py == 0
+                if r2 > eps(T)
+                    G_corr += inv4pi * (_expint_e1(α^2 * r2) + log(r2))
+                else
+                    G_corr += inv4pi * (-γ_euler - T(2) * log(α))
+                end
+            elseif r2 > eps(T)
+                G_corr += inv4pi * _expint_e1(α^2 * r2)
+            end
+        end
+    end
+
+    nkx = length(kx)
+    nky = length(ky)
+    for mi in 1:nkx
+        kxi = kx[mi]
+        cx = cos(kxi * r0x)
+        sx_trig = sin(kxi * r0x)
+        for ni in 1:nky
+            coeff = fourier_coeffs[mi, ni]
+            abs(coeff) < eps(T) && continue
+            kyi = ky[ni]
+            G_corr += coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
+        end
+    end
+
+    return G_corr - _periodic_euler_zero_mode_scalar(α, Lx, Ly)
+end
+
+@inline function _periodic_qg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
+                                                      kappa2::T, area::T,
+                                                      kx, ky, corr_coeffs=nothing) where {T}
+    rx = xi - sx
+    ry = yi - sy
+    G_corr = zero(T)
+    nkx = length(kx)
+    nky = length(ky)
+
+    for mi in 1:nkx
+        kxi = kx[mi]
+        cx = cos(kxi * rx)
+        sx_trig = sin(kxi * rx)
+        for ni in 1:nky
+            kyi = ky[ni]
+            coeff = if corr_coeffs === nothing
+                k2 = kxi^2 + kyi^2
+                k2 < eps(T) && continue
+                -kappa2 / (k2 * (k2 + kappa2) * area)
+            else
+                -corr_coeffs[mi, ni]
+            end
+            iszero(coeff) && continue
+            G_corr += coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry))
+        end
+    end
+
+    return G_corr
+end
+
+@inline function _periodic_sqg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
+                                                       α::T, δ_sq::T,
+                                                       Lx::T, Ly::T, n_images::Int,
+                                                       kx, ky, fourier_coeffs,
+                                                       inv2pi::T) where {T}
+    r0x = xi - sx
+    r0y = yi - sy
+    G_corr = zero(T)
+
+    for px in -n_images:n_images
+        shiftx = T(2) * Lx * T(px)
+        for py in -n_images:n_images
+            shifty = T(2) * Ly * T(py)
+            rx = r0x - shiftx
+            ry = r0y - shifty
+            r2 = rx * rx + ry * ry
+
+            if px == 0 && py == 0
+                G_corr -= inv2pi * _sqg_erf_over_r(α, r2)
+            elseif r2 > eps(T)
+                r = sqrt(r2)
+                r_reg = sqrt(r2 + δ_sq)
+                softening = -δ_sq / (r * r_reg * (r + r_reg))
+                G_corr += inv2pi * (erfc(α * r) / r + softening)
+            end
+        end
+    end
+
+    nkx = length(kx)
+    nky = length(ky)
+    for mi in 1:nkx
+        kxi = kx[mi]
+        cx = cos(kxi * r0x)
+        sx_trig = sin(kxi * r0x)
+        for ni in 1:nky
+            coeff = fourier_coeffs[mi, ni]
+            abs(coeff) < eps(T) && continue
+            kyi = ky[ni]
+            G_corr += inv2pi * coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
+        end
+    end
+
+    return G_corr
+end

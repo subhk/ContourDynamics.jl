@@ -129,7 +129,7 @@ Spanning contours are left untouched since their positions encode
 the cross-domain topology via the wrap vector.
 """
 function wrap_nodes!(prob::ContourProblem{K, PeriodicDomain{T}}) where {K, T}
-    _wrap_contours!(prob.contours, prob.domain)
+    _wrap_contours!(_host_contours(prob), prob.domain)
     return prob
 end
 
@@ -144,7 +144,7 @@ Wrap all non-spanning contours in every layer of a periodic multi-layer problem
 into the fundamental domain. Spanning contours are left untouched.
 """
 function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, CPU}) where {N, K, T}
-    for layer in prob.layers
+    for layer in _host_contours(prob)
         _wrap_contours!(layer, prob.domain)
     end
     return prob

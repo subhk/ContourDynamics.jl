@@ -2,7 +2,7 @@
 
 function energy(prob::ContourProblem{EulerKernel, UnboundedDomain, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
-    contours = prob.contours
+    contours = _host_contours(prob)
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
         E += ci.pv * cj.pv * _energy_contour_pair_euler(ci, cj; _partial=partial)
@@ -21,7 +21,7 @@ end
 
 function energy(prob::ContourProblem{SQGKernel{T}, UnboundedDomain, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
-    contours = prob.contours
+    contours = _host_contours(prob)
     δ = prob.kernel.δ
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
@@ -42,7 +42,7 @@ end
 
 function energy(prob::ContourProblem{QGKernel{T}, UnboundedDomain, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
-    contours = prob.contours
+    contours = _host_contours(prob)
     Ld = prob.kernel.Ld
     E = zero(T)
     @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin

@@ -31,13 +31,13 @@ end
 function timestep!(prob::ContourProblem{K, D, T, GPU},
                    stepper::RK4Stepper{T}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}},
                                                   D<:Union{UnboundedDomain,PeriodicDomain{T}}}
-    _rk4_state_step!(prob.device_state, prob.kernel, prob.domain, stepper, prob.dev)
+    _rk4_state_step!(_device_state(prob), prob.kernel, prob.domain, stepper, prob.dev; workspace=execution_workspace(prob))
     return prob
 end
 
 function timestep!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, D, T, GPU},
                    stepper::RK4Stepper{T}) where {N, T, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
-    _rk4_multilayer_state_step!(prob.device_state, prob.kernel, prob.domain, stepper, prob.dev)
+    _rk4_multilayer_state_step!(_device_state(prob), prob.kernel, prob.domain, stepper, prob.dev; workspace=execution_workspace(prob))
     return prob
 end
 
@@ -128,11 +128,10 @@ function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:A
     # are shared across layers. The shared `_surgery_pass!` driver lives in
     # surgery.jl so single- and multi-layer surgery cannot silently diverge.
     domain = prob.domain
-    remesh_buf = SVector{2, T}[]
-    arc_buf = T[]
-    vnodes_buf = SVector{2, T}[]
+    scratch = execution_workspace(prob).surgery
+    remesh_buf, arc_buf, vnodes_buf = scratch.nodes, scratch.arcs, scratch.virtual_nodes
     for i in 1:N
-        _surgery_pass!(prob.layers[i], domain, params, remesh_buf, arc_buf, vnodes_buf;
+        _surgery_pass!(_host_contours(prob)[i], domain, params, remesh_buf, arc_buf, vnodes_buf;
                        layer_label=" layer $i")
     end
     return prob
@@ -142,7 +141,7 @@ end
 _maybe_wrap_nodes!(::ContourProblem{<:AbstractKernel, UnboundedDomain}) = nothing
 _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = wrap_nodes!(prob)
 _maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T} =
-    _wrap_state_nodes!(prob.device_state, prob.domain, prob.dev)
+    _wrap_state_nodes!(_device_state(prob), prob.domain, prob.dev)
 # Device-agnostic: unbounded domains never wrap, on any device. A separate
 # GPU method here would be equally specific, not more specific, and the
 # resulting ambiguity would make wrapping unresolvable for GPU multi-layer
@@ -156,7 +155,7 @@ _maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLa
 _maybe_wrap_nodes!(prob, ::AbstractTimeStepper) = _maybe_wrap_nodes!(prob)
 
 function wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T}
-    _wrap_state_nodes!(prob.device_state, prob.domain, prob.dev)
+    _wrap_state_nodes!(_device_state(prob), prob.domain, prob.dev)
     return prob
 end
 
@@ -164,7 +163,7 @@ end
 # duplicating it for GPU here would be ambiguous rather than more specific.
 function wrap_nodes!(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, GPU}) where {N, K, T}
     for ℓ in 1:N
-        _wrap_state_nodes!(prob.device_state[ℓ], prob.domain, prob.dev)
+        _wrap_state_nodes!(_device_state(prob)[ℓ], prob.domain, prob.dev)
     end
     return prob
 end

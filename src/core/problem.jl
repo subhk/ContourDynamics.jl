@@ -157,4 +157,8 @@ function evolve!(prob::Problem; nsteps::Int, callbacks=nothing,
     return prob
 end
 
+snapshot_contours(prob::Problem) = snapshot_contours(prob.contour_problem)
+execution_workspace(prob::Problem) = execution_workspace(prob.contour_problem)
+clear_state_workspace_cache!(prob::Problem) = clear_state_workspace_cache!(prob.contour_problem)
+
 include("problem_factory.jl")

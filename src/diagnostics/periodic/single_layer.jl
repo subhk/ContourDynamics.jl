@@ -2,7 +2,7 @@
 
 function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
-    contours = prob.contours
+    contours = _host_contours(prob)
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     E = zero(T)
 
@@ -15,7 +15,7 @@ end
 
 function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
-    contours = prob.contours
+    contours = _host_contours(prob)
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     E = zero(T)
 
@@ -32,7 +32,7 @@ end
 
 function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
-    contours = prob.contours
+    contours = _host_contours(prob)
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     δ = prob.kernel.δ
     E = zero(T)

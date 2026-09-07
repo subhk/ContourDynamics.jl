@@ -433,14 +433,14 @@ end
 function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
                                        UnboundedDomain, T, GPU},
                   params::SurgeryParams) where {T}
-    _device_surgery_pipeline!(prob.device_state, params, prob.domain, prob.dev)
+    _device_surgery_pipeline!(_device_state(prob), params, prob.domain, prob.dev)
     return prob
 end
 
 function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel},
                                        <:PeriodicDomain, T, GPU},
                   params::SurgeryParams) where {T}
-    _device_surgery_pipeline!(prob.device_state, params, prob.domain, prob.dev)
+    _device_surgery_pipeline!(_device_state(prob), params, prob.domain, prob.dev)
     return prob
 end
 
@@ -470,12 +470,12 @@ end
 
 function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, UnboundedDomain, T, GPU},
                   params::SurgeryParams) where {N, T}
-    _device_multilayer_surgery!(prob.device_state, params, prob.domain, prob.dev)
+    _device_multilayer_surgery!(_device_state(prob), params, prob.domain, prob.dev)
     return prob
 end
 
 function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:PeriodicDomain, T, GPU},
                   params::SurgeryParams) where {N, T}
-    _device_multilayer_surgery!(prob.device_state, params, prob.domain, prob.dev)
+    _device_multilayer_surgery!(_device_state(prob), params, prob.domain, prob.dev)
     return prob
 end

@@ -111,7 +111,7 @@ end
 function _max_layer_node_count(prob::MultiLayerContourProblem{N}) where {N}
     max_nodes = 0
     @inbounds for i in 1:N
-        max_nodes = max(max_nodes, sum(nnodes(c) for c in prob.layers[i]; init=0))
+        max_nodes = max(max_nodes, sum(nnodes(c) for c in _host_contours(prob)[i]; init=0))
     end
     return max_nodes
 end
@@ -120,9 +120,10 @@ function _prepare_modal_transforms!(scratch::_VelocityScratch{T},
                                     kernel::MultiLayerQGKernel{N,M,T}) where {N, M, T}
     # The transforms are fixed at construction; materialize their dense scratch
     # copies only when this problem is first sized.
-    if size(scratch.to_physical) != (N, N)
+    if size(scratch.to_physical) != (N, N) || scratch.modal_kernel !== kernel
         scratch.to_physical = Matrix{T}(kernel.modal_to_physical)
         scratch.to_modal = Matrix{T}(kernel.physical_to_modal)
+        scratch.modal_kernel = kernel
     end
     return scratch.to_physical, scratch.to_modal
 end
@@ -177,7 +178,7 @@ end
 # serial path remains allocation-free.
 function _direct_velocity_loop!(vel::Vector{SVector{2,T}}, prob, N::Int,
                                 eval_node::F) where {T, F}
-    contours = prob.contours
+    contours = _host_contours(prob)
     # Thread over target nodes only once the workload is large enough to pay for it.
     if _should_thread_velocity(N)
         n_contours = length(contours)
@@ -211,7 +212,7 @@ results in `vel`. This is the brute-force reference implementation.
 function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) where {T}
     kernel = prob.kernel
     domain = prob.domain
-    contours = prob.contours
+    contours = _host_contours(prob)
     N = _validate_velocity_buffer!(vel, prob)
 
     # Pre-fetch Ewald cache once (returns `nothing` for unbounded domains)
@@ -236,7 +237,7 @@ end
 @inline function _validate_velocity_buffer!(vel::NTuple{N, Vector{SVector{2,T}}},
                                             prob::MultiLayerContourProblem{N}) where {N, T}
     for i in 1:N
-        n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
+        n_layer = sum(nnodes(c) for c in _host_contours(prob)[i]; init=0)
         length(vel[i]) >= n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must be >= layer $i nodes ($n_layer)"))
     end
     return total_nodes(prob)
@@ -295,8 +296,8 @@ end
 
 @inline function _small_multilayer_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                                              prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU}) where {N, T}
-    return _ka_multilayer_velocity_to_host!(vel, prob.device_state, prob.kernel,
-                                            prob.domain, prob.dev)
+    return _ka_multilayer_velocity_to_host!(vel, _device_state(prob), prob.kernel,
+                                            prob.domain, prob.dev; workspace=execution_workspace(prob))
 end
 
 function _multilayer_velocity_policy!(vel::NTuple{N, Vector{SVector{2,T}}},
@@ -331,7 +332,7 @@ function velocity(prob::ContourProblem{<:AbstractKernel,<:AbstractDomain,T,CPU},
     xT = SVector{2,T}(x)
     v = zero(SVector{2,T})
     ewald = _prefetch_ewald(prob.domain, prob.kernel)
-    for c in prob.contours
+    for c in _host_contours(prob)
         nc = nnodes(c)
         nc < 2 && continue
         for j in 1:nc
@@ -349,8 +350,8 @@ end
 
 function velocity(prob::ContourProblem{K,D,T,GPU},
                   x::SVector{2,S}) where {K,D,T,S}
-    return _ka_velocity_at_state(prob.device_state, prob.kernel,
-                                 prob.domain, SVector{2,T}(x), prob.dev)
+    return _ka_velocity_at_state(_device_state(prob), prob.kernel,
+                                 prob.domain, SVector{2,T}(x), prob.dev; workspace=execution_workspace(prob))
 end
 
 """
@@ -371,7 +372,7 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
     scratch = prob.velocity_scratch
     to_physical, to_modal = _prepare_modal_transforms!(scratch, kernel)
     source_curvatures = _prepare_layer_curvature_buffers!(
-        scratch.layer_curvatures, prob.layers)
+        scratch.layer_curvatures, _host_contours(prob))
 
     vel = resize!(scratch.mode_vel, N)
     fill!(vel, zero(SVector{2,T}))
@@ -383,7 +384,7 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
         # dispatch per segment). Each mode fetches its own cache: QG modes need
         # their Ld-specific correction coefficients, the Euler mode does not.
         v_mode = _dispatch_qg_mode(
-            _accumulate_mode_node_velocity, kernel, lam, domain, prob.layers,
+            _accumulate_mode_node_velocity, kernel, lam, domain, _host_contours(prob),
             source_curvatures, to_modal, mode, xT)
 
         # Project the completed modal velocity back onto each physical layer.
@@ -399,8 +400,8 @@ end
 
 function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
                   x::SVector{2,S}) where {N,K,D,T,S}
-    return _ka_multilayer_velocity_at_states(prob.device_state, prob.kernel,
-                                             prob.domain, SVector{2,T}(x), prob.dev)
+    return _ka_multilayer_velocity_at_states(_device_state(prob), prob.kernel,
+                                             prob.domain, SVector{2,T}(x), prob.dev; workspace=execution_workspace(prob))
 end
 
 # Sum the modal velocity at one target point `x` from every source layer/segment,
@@ -457,7 +458,7 @@ function _multilayer_mode_velocity!(mode_kernel::K,
     ewald = _prefetch_ewald(domain, mode_kernel)
 
     for target_layer in 1:N
-        target_contours = prob.layers[target_layer]
+        target_contours = _host_contours(prob)[target_layer]
         projection_weight = to_physical[target_layer, mode]
         abs(projection_weight) < eps(T) && continue
 
@@ -477,13 +478,13 @@ function _multilayer_mode_velocity!(mode_kernel::K,
         if _should_thread_velocity(n_target)
             @inbounds Threads.@threads for ti in 1:n_target
                 mode_vel[ti] = _accumulate_mode_node_velocity_cached(
-                    mode_kernel, domain, prob.layers, source_curvatures, ewald,
+                    mode_kernel, domain, _host_contours(prob), source_curvatures, ewald,
                     to_modal, mode, target_nodes[ti])
             end
         else
             @inbounds for ti in 1:n_target
                 mode_vel[ti] = _accumulate_mode_node_velocity_cached(
-                    mode_kernel, domain, prob.layers, source_curvatures, ewald,
+                    mode_kernel, domain, _host_contours(prob), source_curvatures, ewald,
                     to_modal, mode, target_nodes[ti])
             end
         end
@@ -506,7 +507,7 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     kernel = prob.kernel
 
     for i in 1:N
-        n_layer = sum(nnodes(c) for c in prob.layers[i]; init=0)
+        n_layer = sum(nnodes(c) for c in _host_contours(prob)[i]; init=0)
         length(vel[i]) >= n_layer || throw(DimensionMismatch("vel[$i] length ($(length(vel[i]))) must be >= layer $i nodes ($n_layer)"))
         fill!(vel[i], zero(SVector{2,T}))
     end
@@ -520,7 +521,7 @@ function _direct_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
     mode_vel = resize!(scratch.mode_vel, max_nodes)
 
     source_curvatures = _prepare_layer_curvature_buffers!(
-        scratch.layer_curvatures, prob.layers)
+        scratch.layer_curvatures, _host_contours(prob))
     for mode in 1:N
         lam = evals[mode]
 
@@ -572,7 +573,7 @@ end
 # GPU host-output adapter for multi-layer problems.
 function velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                    prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU}) where {N, T}
-    _validate_multilayer_state_velocity_buffer!(vel, prob.device_state)
-    return _ka_multilayer_velocity_to_host!(vel, prob.device_state, prob.kernel,
-                                            prob.domain, prob.dev)
+    _validate_multilayer_state_velocity_buffer!(vel, _device_state(prob))
+    return _ka_multilayer_velocity_to_host!(vel, _device_state(prob), prob.kernel,
+                                            prob.domain, prob.dev; workspace=execution_workspace(prob))
 end

@@ -9,8 +9,8 @@ using ContourDynamics
 using JLD2
 using StaticArrays
 
-_snapshot_contours(prob::ContourProblem) = materialize_contours(prob)
-_snapshot_layers(prob::MultiLayerContourProblem) = materialize_contours(prob)
+_snapshot_contours(prob::ContourProblem) = snapshot_contours(prob)
+_snapshot_layers(prob::MultiLayerContourProblem) = snapshot_contours(prob)
 
 function _save_contour!(g, c::PVContour, ci::Int)
     cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))

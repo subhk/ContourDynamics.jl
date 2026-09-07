@@ -266,18 +266,18 @@ Total circulation `Γ = ∑ qᵢ Aᵢ` of a `ContourProblem` or
 """
 function circulation(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
-    for c in prob.contours
+    for c in _host_contours(prob)
         s += c.pv * vortex_area(c)
     end
     return s
 end
 
 """Return signed areas for every contour in a single-layer problem."""
-vortex_area(prob::ContourProblem) = vortex_area.(prob.contours)
+vortex_area(prob::ContourProblem) = vortex_area.(_host_contours(prob))
 
 """Return one vector of signed contour areas per layer."""
 function vortex_area(prob::MultiLayerContourProblem{N}) where {N}
-    ntuple(i -> vortex_area.(prob.layers[i]), Val(N))
+    ntuple(i -> vortex_area.(_host_contours(prob)[i]), Val(N))
 end
 
 """
@@ -298,7 +298,7 @@ Spanning contours are excluded (see `circulation`).
 """
 function enstrophy(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
-    for c in prob.contours
+    for c in _host_contours(prob)
         s += c.pv^2 * vortex_area(c)
     end
     return s / 2
@@ -312,7 +312,7 @@ Angular momentum `∑ qᵢ ∫ r² dA` of a `ContourProblem` or
 """
 function angular_momentum(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
-    for c in prob.contours
+    for c in _host_contours(prob)
         s += c.pv * _second_moment_r2(c)
     end
     return s
@@ -441,36 +441,36 @@ _state_enstrophy(state::DeviceContourState, dev::AbstractDevice=CPU()) = _state_
 _state_angular_momentum(state::DeviceContourState, dev::AbstractDevice=CPU()) = _state_weighted_diagnostic(state, UInt8(3), dev)
 
 circulation(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_circulation(prob.device_state, prob.dev)
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_circulation(_device_state(prob), prob.dev)
 
 vortex_area(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = to_cpu(_state_vortex_area(prob.device_state, prob.dev))
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = to_cpu(_state_vortex_area(_device_state(prob), prob.dev))
 
 enstrophy(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_enstrophy(prob.device_state, prob.dev)
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_enstrophy(_device_state(prob), prob.dev)
 
 angular_momentum(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_angular_momentum(prob.device_state, prob.dev)
+    K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, S} = _state_angular_momentum(_device_state(prob), prob.dev)
 
 function circulation(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
     N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat,S}
     s = zero(T)
     for i in 1:N
-        s += _state_circulation(prob.device_state[i], prob.dev)
+        s += _state_circulation(_device_state(prob)[i], prob.dev)
     end
     return s
 end
 
 function vortex_area(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
     N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat,S}
-    ntuple(i -> to_cpu(_state_vortex_area(prob.device_state[i], prob.dev)), Val(N))
+    ntuple(i -> to_cpu(_state_vortex_area(_device_state(prob)[i], prob.dev)), Val(N))
 end
 
 function enstrophy(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
     N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, S}
     s = zero(T)
     for i in 1:N
-        s += _state_enstrophy(prob.device_state[i], prob.dev)
+        s += _state_enstrophy(_device_state(prob)[i], prob.dev)
     end
     return s
 end
@@ -479,7 +479,7 @@ function angular_momentum(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
     N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, S}
     s = zero(T)
     for i in 1:N
-        s += _state_angular_momentum(prob.device_state[i], prob.dev)
+        s += _state_angular_momentum(_device_state(prob)[i], prob.dev)
     end
     return s
 end
@@ -512,22 +512,22 @@ function energy(prob::MultiLayerContourProblem{N, K, D, T, GPU}) where {N, K, D,
 end
 
 function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T, GPU}) where {N, K, T}
-    return _ka_multilayer_energy_from_states(prob.device_state, prob.kernel,
-                                             prob.domain, prob.dev)
+    return _ka_multilayer_energy_from_states(_device_state(prob), prob.kernel,
+                                             prob.domain, prob.dev; workspace=execution_workspace(prob))
 end
 
 function energy(prob::MultiLayerContourProblem{N, K, PeriodicDomain{T}, T, GPU}) where {N, K, T}
-    return _ka_multilayer_energy_from_states(prob.device_state, prob.kernel,
-                                             prob.domain, prob.dev)
+    return _ka_multilayer_energy_from_states(_device_state(prob), prob.kernel,
+                                             prob.domain, prob.dev; workspace=execution_workspace(prob))
 end
 
 function circulation(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
     # Multi-layer scalar diagnostics are summed over all layers. Layer-resolved
     # values can be obtained by applying the single-contour diagnostics to
-    # `prob.layers[i]` directly.
+    # `_host_contours(prob)[i]` directly.
     s = zero(T)
     for i in 1:N
-        for c in prob.layers[i]
+        for c in _host_contours(prob)[i]
             s += c.pv * vortex_area(c)
         end
     end
@@ -537,7 +537,7 @@ end
 function enstrophy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
     s = zero(T)
     for i in 1:N
-        for c in prob.layers[i]
+        for c in _host_contours(prob)[i]
             s += c.pv^2 * vortex_area(c)
         end
     end
@@ -547,7 +547,7 @@ end
 function angular_momentum(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
     s = zero(T)
     for i in 1:N
-        for c in prob.layers[i]
+        for c in _host_contours(prob)[i]
             s += c.pv * _second_moment_r2(c)
         end
     end

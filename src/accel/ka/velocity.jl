@@ -227,8 +227,8 @@ end
 # `_state_velocity_with_ws!` restores concrete typing before the hot launches.
 const _STATE_WS_TLS_KEY = :contourdynamics_state_velocity_workspace
 
-function _get_state_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
-    store = task_local_storage()
+function _get_state_workspace(dev::AbstractDevice, ::Type{T}, N::Int; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    store = workspace.buffers
     key = (_STATE_WS_TLS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     # Rebuild when absent or when surgery changed the node count. The velocity
@@ -246,8 +246,8 @@ end
 # rebuilt when surgery changes the concatenated node count.
 const _MULTILAYER_WS_TLS_KEY = :contourdynamics_multilayer_velocity_workspace
 
-function _get_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int) where {T}
-    store = task_local_storage()
+function _get_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    store = workspace.buffers
     key = (_MULTILAYER_WS_TLS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing || (ws::_MultilayerWorkspace).n != total
@@ -255,28 +255,6 @@ function _get_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int) w
         store[key] = ws
     end
     return ws
-end
-
-"""
-    clear_state_workspace_cache!()
-
-Drop the calling task's cached device velocity and energy workspaces, freeing
-their buffers. Each path caches scratch in task-local storage and resizes it to
-the current topology; the buffers otherwise persist for the task's lifetime.
-
-This is the workspace counterpart to [`clear_ewald_cache!`](@ref). Caches are
-per-task, so this only releases workspaces allocated by the calling task.
-"""
-function clear_state_workspace_cache!()
-    store = task_local_storage()
-    for key in collect(keys(store))
-        key isa Tuple && length(key) == 3 &&
-            (key[1] === _STATE_WS_TLS_KEY || key[1] === _MULTILAYER_WS_TLS_KEY ||
-             key[1] === _BETA_WS_TLS_KEY || key[1] === _ENERGY_WS_TLS_KEY ||
-             key[1] === _MULTILAYER_ENERGY_WS_TLS_KEY) &&
-            delete!(store, key)
-    end
-    return nothing
 end
 
 # Concrete-typed barrier: `ws` is `Any` from the cache, so resolve it here once
@@ -296,12 +274,12 @@ function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
                                   state::DeviceContourState{T},
                                   kernel::Union{EulerKernel,QGKernel{T},SQGKernel{T}},
                                   domain::AbstractDomain,
-                                  dev::AbstractDevice) where {T}
+                                  dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     N = _device_state_nnodes(state)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
     N == 0 && return vel
 
-    ws = _get_state_workspace(dev, T, N)
+    ws = _get_state_workspace(dev, T, N; workspace=workspace)
     return _state_velocity_with_ws!(vel, ws, state, kernel, domain, dev, N)
 end
 
@@ -314,9 +292,9 @@ end
 function _ka_velocity_at_state(state::DeviceContourState{T},
                                kernel::Union{EulerKernel,QGKernel{T},SQGKernel{T}},
                                domain::AbstractDomain, x::SVector{2,T},
-                               dev::AbstractDevice) where {T}
+                               dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     N = _device_state_nnodes(state)
-    ws = _get_state_workspace(dev, T, N)
+    ws = _get_state_workspace(dev, T, N; workspace=workspace)
     seg = _state_segment_data!(ws, state, dev)
     target_x = to_device(dev, T[x[1]])
     target_y = to_device(dev, T[x[2]])
@@ -359,8 +337,8 @@ end
 function _ka_velocity!(vel::AbstractVector{SVector{2,T}},
                        prob::ContourProblem{K, D, T, GPU},
                        dev::GPU) where {K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel}, D<:AbstractDomain, T}
-    return _ka_velocity_from_state!(vel, prob.device_state, prob.kernel,
-                                    prob.domain, dev)
+    return _ka_velocity_from_state!(vel, _device_state(prob), prob.kernel,
+                                    prob.domain, dev; workspace=execution_workspace(prob))
 end
 
 """
@@ -376,7 +354,7 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
                                               states::NTuple{N, <:DeviceContourState},
                                               kernel::MultiLayerQGKernel{N},
                                               domain::AbstractDomain,
-                                              dev::AbstractDevice) where {N, T}
+                                              dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
     ranges = _layer_state_ranges(states)
     total = sum(length, ranges)
     length(vel) >= total || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($total)"))
@@ -385,7 +363,7 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
     # Reuse a task-local workspace across RK stages instead of allocating 13
     # device arrays per evaluation. `ws` is `Any` from the cache; the concrete-
     # typed barrier `_multilayer_velocity_with_ws!` restores typing for the hot launches.
-    ws = _get_multilayer_workspace(dev, T, total)
+    ws = _get_multilayer_workspace(dev, T, total; workspace=workspace)
     return _multilayer_velocity_with_ws!(vel, ws, states, kernel, domain, dev, ranges, total)
 end
 
@@ -428,7 +406,7 @@ function _ka_multilayer_velocity_to_host!(vel::NTuple{N,Vector{SVector{2,T}}},
                                           states::NTuple{N,<:DeviceContourState},
                                           kernel::MultiLayerQGKernel{N},
                                           domain::AbstractDomain,
-                                          dev::AbstractDevice) where {N,T}
+                                          dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N,T}
     ranges = _layer_state_ranges(states)
     for layer in 1:N
         required = length(ranges[layer])
@@ -438,7 +416,7 @@ function _ka_multilayer_velocity_to_host!(vel::NTuple{N,Vector{SVector{2,T}}},
 
     total = sum(length, ranges)
     total == 0 && return vel
-    ws = _get_multilayer_workspace(dev, T, total)
+    ws = _get_multilayer_workspace(dev, T, total; workspace=workspace)
     return _multilayer_velocity_to_host_with_ws!(vel, ws, states, kernel,
                                                  domain, dev, ranges, total)
 end
@@ -532,10 +510,10 @@ end
 function _ka_multilayer_velocity_at_states(
         states::NTuple{N,<:DeviceContourState{T}},
         kernel::MultiLayerQGKernel{N}, domain::AbstractDomain,
-        x::SVector{2,T}, dev::AbstractDevice) where {N,T}
+        x::SVector{2,T}, dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N,T}
     ranges = _layer_state_ranges(states)
     total = sum(length, ranges)
-    ws = _get_multilayer_workspace(dev, T, total)
+    ws = _get_multilayer_workspace(dev, T, total; workspace=workspace)
     target_x = to_device(dev, T[x[1]])
     target_y = to_device(dev, T[x[2]])
     point_x = device_zeros(dev, T, 1)
@@ -624,8 +602,8 @@ function _create_beta_plane_workspace(dev::AbstractDevice, ::Type{T}, live_n::In
 end
 
 function _get_beta_plane_workspace(dev::AbstractDevice, ::Type{T}, live_n::Int,
-                                   reference::Vector{PVContour{T}}) where {T}
-    store = task_local_storage()
+                                   reference::Vector{PVContour{T}}; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    store = workspace.buffers
     key = (_BETA_WS_TLS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing || (ws::_BetaPlaneWorkspace).live_n != live_n ||
@@ -664,22 +642,22 @@ function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
                                   state::DeviceContourState{T},
                                   kernel::BetaPlaneQGKernel{T},
                                   domain::PeriodicDomain{T},
-                                  dev::AbstractDevice) where {T}
+                                  dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     N = _device_state_nnodes(state)
     length(vel) >= N || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($N)"))
     N == 0 && return vel
-    gws = _get_state_workspace(dev, T, N)
-    bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours)
+    gws = _get_state_workspace(dev, T, N; workspace=workspace)
+    bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours; workspace=workspace)
     return _beta_plane_velocity_with_ws!(vel, gws, bws, state, kernel, domain, dev, N)
 end
 
 function _ka_velocity_at_state(state::DeviceContourState{T},
                                kernel::BetaPlaneQGKernel{T},
                                domain::PeriodicDomain{T}, x::SVector{2,T},
-                               dev::AbstractDevice) where {T}
+                               dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     N = _device_state_nnodes(state)
-    gws = _get_state_workspace(dev, T, N)
-    bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours)
+    gws = _get_state_workspace(dev, T, N; workspace=workspace)
+    bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours; workspace=workspace)
     if N > 0
         live = 1:N
         @_ka_launch dev N _state_segment_data_kernel!(

@@ -37,9 +37,9 @@ function _multilayer_mode_pair_energy(
             target_weight = to_modal[mode, target_layer]
             abs(target_weight) < eps(T) && continue
             modal_weight = source_weight * target_weight
-            for source in prob.layers[source_layer]
+            for source in _host_contours(prob)[source_layer]
                 _valid_energy_contour(source) || continue
-                for target in prob.layers[target_layer]
+                for target in _host_contours(prob)[target_layer]
                     _valid_energy_contour(target) || continue
                     pair_energy = _modal_pair_energy(
                         source, target, mode_kernel, prob.domain, cache, partial)

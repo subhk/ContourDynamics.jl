@@ -328,7 +328,7 @@ function _fill_segment_bufs!(ax, ay, bx, by, pv_vec, ka, kb, prob)
     # rich, while device kernels expect flat SoA arrays with one entry per
     # source segment.
     idx = 1
-    for c in prob.contours
+    for c in _host_contours(prob)
         nc = nnodes(c)
         if nc < 2
             # Single-node contours produce a degenerate zero-length segment.
@@ -365,7 +365,7 @@ function _fill_target_bufs!(tx, ty, prob)
     # Target nodes are packed in the same contour order used by velocity! copy
     # back, so the flat kernel output can be written directly into vel.
     idx = 1
-    for c in prob.contours
+    for c in _host_contours(prob)
         for j in 1:nnodes(c)
             tx[idx] = c.nodes[j][1]
             ty[idx] = c.nodes[j][2]

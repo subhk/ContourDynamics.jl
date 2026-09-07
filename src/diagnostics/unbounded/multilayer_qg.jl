@@ -4,7 +4,7 @@ function energy(prob::MultiLayerContourProblem{N, K, UnboundedDomain, T}) where 
     kernel = prob.kernel
     E = zero(T)
     partial = zeros(T, maximum(
-        nnodes(c) for layer in prob.layers for c in layer
+        nnodes(c) for layer in _host_contours(prob) for c in layer
         if _valid_energy_contour(c); init=0))
 
     for (mode, λ) in pairs(kernel.eigenvalues)

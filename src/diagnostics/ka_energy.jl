@@ -184,8 +184,8 @@ end
 const _ENERGY_WS_TLS_KEY = :contourdynamics_energy_workspace
 
 function _get_energy_workspace(dev::AbstractDevice, ::Type{T},
-                               ncontours::Int, total_nodes::Int) where {T}
-    store = task_local_storage()
+                               ncontours::Int, total_nodes::Int; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    store = workspace.buffers
     key = (_ENERGY_WS_TLS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing || (ws::_EnergyWorkspace).ncontours != ncontours ||
@@ -632,7 +632,7 @@ end
 Anything the energy path can pack into segments: a host contour vector or a
 flat device state. `_pack_energy_segments` has a method for each, so the
 kernel/domain implementations below are written once and serve both the
-CPU-device path (`prob.contours`) and the GPU path (`prob.device_state`).
+CPU-device path (`_host_contours(prob)`) and the GPU path (`_device_state(prob)`).
 """
 const _EnergySource{T} = Union{DeviceContourState{T}, Vector{PVContour{T}}}
 
@@ -666,8 +666,8 @@ end
 # GPU problems keep their nodes in `device_state`, CPU-device problems in the
 # host `contours` vector; both are valid `_EnergySource`s.
 function _ka_energy(prob::ContourProblem, dev::AbstractDevice)
-    prob.dev isa GPU && return _ka_energy_from_state(prob.device_state, prob.kernel, prob.domain, dev)
-    return _ka_energy_from_state(prob.contours, prob.kernel, prob.domain, dev)
+    return _ka_energy_from_state(_storage_data(_active_storage(prob)), prob.kernel,
+                                prob.domain, dev; workspace=execution_workspace(prob))
 end
 
 # The kernel/domain-specific pieces of the single-layer device energy live in
@@ -716,7 +716,7 @@ end
 
 function _ka_energy_from_state(src::Vector{PVContour{T}},
                                kernel::_PeriodicPointKernel{T},
-                               ::UnboundedDomain, dev::AbstractDevice) where {T}
+                               ::UnboundedDomain, dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     kernel!, args = _unbounded_energy_recipe(kernel)
     return _normalize_energy(_ka_energy_raw(kernel!, src, dev, T, args...))
 end
@@ -724,7 +724,7 @@ end
 function _ka_energy_from_state(src::Vector{PVContour{T}},
                                kernel::_PeriodicPointKernel{T},
                                domain::PeriodicDomain{T},
-                               dev::AbstractDevice) where {T}
+                               dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     cache = _get_ewald_cache(domain, kernel)
     data = _pack_energy_segments(src, dev, T)
     length(data.seg.ax) == 0 && return zero(T)
@@ -737,8 +737,8 @@ end
 
 function _ka_energy_from_state(state::DeviceContourState{T}, kernel,
                                domain::AbstractDomain,
-                               dev::AbstractDevice) where {T}
-    ws = _get_energy_workspace(dev, T, length(state.lengths), length(state.x))
+                               dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    ws = _get_energy_workspace(dev, T, length(state.lengths), length(state.x); workspace=workspace)
     return _ka_energy_state_with_ws(state, kernel, domain, dev, ws)
 end
 
@@ -786,10 +786,10 @@ function _create_multilayer_energy_workspace(dev::AbstractDevice, ::Type{T},
 end
 
 function _get_multilayer_energy_workspace(
-        states::NTuple{N, <:DeviceContourState{T}}, dev::AbstractDevice) where {N, T}
+        states::NTuple{N, <:DeviceContourState{T}}, dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
     max_contours = maximum(s -> length(s.lengths), states; init=0)
     total_nodes = sum(s -> length(s.x), states; init=0)
-    store = task_local_storage()
+    store = workspace.buffers
     key = (_MULTILAYER_ENERGY_WS_TLS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing ||
@@ -869,8 +869,8 @@ QG kernel with modal deformation radius 1/√|λ|.
 function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
                                            kernel::MultiLayerQGKernel{N},
                                            domain::UnboundedDomain,
-                                           dev::AbstractDevice) where {N, T}
-    ws = _get_multilayer_energy_workspace(states, dev)
+                                           dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
+    ws = _get_multilayer_energy_workspace(states, dev; workspace=workspace)
     return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
 end
 
@@ -909,8 +909,8 @@ end
 function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
                                            kernel::MultiLayerQGKernel{N},
                                            domain::PeriodicDomain{T},
-                                           dev::AbstractDevice) where {N, T}
-    ws = _get_multilayer_energy_workspace(states, dev)
+                                           dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
+    ws = _get_multilayer_energy_workspace(states, dev; workspace=workspace)
     return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
 end
 

@@ -46,3 +46,39 @@ function rankine_vortex(R, N::Int, Γ; cx=0.0, cy=0.0, T::Type{<:AbstractFloat}=
     pv = Γ / (T(π) * R^2)
     [circular_patch(R, N, pv; cx=cx, cy=cy, T=T)]
 end
+
+"""
+    beta_staircase(beta, domain::PeriodicDomain, n_beta; nodes_per_contour=64)
+
+Create spanning contours that discretize the background PV gradient `βy`
+into a PV staircase on a periodic domain.
+
+Returns a `Vector{PVContour{T}}` of `n_beta` horizontal spanning contours, each
+carrying PV jump `Δq = β * Δy` where `Δy = 2*Ly / n_beta`. Nodes run
+left-to-right at the mid-step y-levels `-Ly + (k - 1/2)Δy`.
+
+The `wrap` field is set to `(2*Lx, 0)` so the closing segment connects the
+rightmost node back to the leftmost node shifted by one period.
+"""
+function beta_staircase(beta::T, domain::PeriodicDomain{T}, n_beta::Int;
+                        nodes_per_contour::Int=64) where {T}
+    isfinite(beta) || throw(ArgumentError("beta must be finite, got $beta"))
+    nodes_per_contour >= 3 || throw(ArgumentError("nodes_per_contour must be >= 3, got $nodes_per_contour"))
+    n_beta >= 2 || throw(ArgumentError("n_beta must be >= 2, got $n_beta"))
+    Lx, Ly = domain.Lx, domain.Ly
+    dy = 2 * Ly / n_beta
+    dq = beta * dy  # PV jump per contour
+
+    contours = PVContour{T}[]
+    wrap = SVector{2,T}(2 * Lx, zero(T))
+
+    for k in 1:n_beta
+        y_k = -Ly + (T(k) - T(0.5)) * dy
+        # Nodes evenly spaced from -Lx to +Lx (not including +Lx, which is the wrap image of -Lx)
+        nodes = [SVector{2,T}(-Lx + (2 * Lx) * T(i - 1) / T(nodes_per_contour), y_k)
+                 for i in 1:nodes_per_contour]
+        push!(contours, PVContour(nodes, dq, wrap))
+    end
+
+    return contours
+end

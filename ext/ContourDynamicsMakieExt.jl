@@ -24,7 +24,7 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
 
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
-    initial_contours = materialize_contours(prob)
+    initial_contours = snapshot_contours(prob)
 
     # Fix colorrange from initial PV values so colors are consistent across frames.
     pv_vals = [c.pv for c in initial_contours]
@@ -55,7 +55,7 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
             end
         end
         Makie.empty!(ax)
-        for c in materialize_contours(prob)
+        for c in snapshot_contours(prob)
             # Spanning contours represent periodic interfaces and should not be
             # closed visually; ordinary patches repeat the first node at the end.
             nodes = c.nodes
@@ -95,7 +95,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
 
     fig = Makie.Figure()
     ax = Makie.Axis(fig[1, 1]; aspect=Makie.DataAspect())
-    initial_layers = materialize_contours(prob)
+    initial_layers = snapshot_contours(prob)
 
     # Fix colorrange from initial PV values across all layers.
     pv_vals = [c.pv for layer in initial_layers for c in layer]
@@ -127,7 +127,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
             end
         end
         Makie.empty!(ax)
-        for (li, layer) in enumerate(materialize_contours(prob))
+        for (li, layer) in enumerate(snapshot_contours(prob))
             style = layer_styles[mod1(li, length(layer_styles))]
             first_in_layer = true
             for c in layer

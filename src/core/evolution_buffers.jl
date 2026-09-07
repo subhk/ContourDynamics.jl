@@ -86,7 +86,7 @@ end
 @inline _layer_node_count(contours) = sum(nnodes(c) for c in contours; init=0)
 
 function _build_prob_ranges(prob::ContourProblem)
-    [_flat_contour_ranges(prob.contours)]
+    [_flat_contour_ranges(_host_contours(prob))]
 end
 
 function _build_prob_ranges(prob::MultiLayerContourProblem{N}) where {N}
@@ -95,7 +95,7 @@ function _build_prob_ranges(prob::MultiLayerContourProblem{N}) where {N}
     all_ranges = Vector{Vector{UnitRange{Int}}}(undef, N)
     offset = 0
     for i in 1:N
-        all_ranges[i] = _flat_contour_ranges(prob.layers[i], offset)
+        all_ranges[i] = _flat_contour_ranges(_host_contours(prob)[i], offset)
         offset = isempty(all_ranges[i]) ? offset : last(all_ranges[i][end])
     end
     return all_ranges
@@ -116,7 +116,7 @@ const _NodeRanges = Union{Vector{UnitRange{Int}}, Vector{Vector{UnitRange{Int}}}
 
 # Ranges matching a problem's current layout, for callers that don't hold a
 # cached set. Multi-layer ranges come pre-offset from `_build_prob_ranges`.
-@inline _default_ranges(prob::ContourProblem) = _flat_contour_ranges(prob.contours)
+@inline _default_ranges(prob::ContourProblem) = _flat_contour_ranges(_host_contours(prob))
 @inline _default_ranges(prob::MultiLayerContourProblem) = _build_prob_ranges(prob)
 
 function _contour_ranges_match(ranges::Vector{UnitRange{Int}}, contours, offset::Int=0)
@@ -133,15 +133,15 @@ end
 
 function _node_ranges_match(cached::Vector{Vector{UnitRange{Int}}}, prob::ContourProblem)
     length(cached) == 1 || return false
-    return _contour_ranges_match(cached[1], prob.contours)
+    return _contour_ranges_match(cached[1], _host_contours(prob))
 end
 
 function _node_ranges_match(cached::Vector{Vector{UnitRange{Int}}}, prob::MultiLayerContourProblem{N}) where {N}
     length(cached) == N || return false
     offset = 0
     for i in 1:N
-        _contour_ranges_match(cached[i], prob.layers[i], offset) || return false
-        offset += _layer_node_count(prob.layers[i])
+        _contour_ranges_match(cached[i], _host_contours(prob)[i], offset) || return false
+        offset += _layer_node_count(_host_contours(prob)[i])
     end
     return true
 end
@@ -167,7 +167,7 @@ end
 end
 
 function _for_each_contour_range!(f, prob::ContourProblem, ranges::Vector{UnitRange{Int}})
-    for (c, r) in zip(prob.contours, ranges)
+    for (c, r) in zip(_host_contours(prob), ranges)
         f(c, r)
     end
     return nothing
@@ -183,7 +183,7 @@ end
 function _for_each_contour_range!(f, prob::MultiLayerContourProblem{N},
                                   all_ranges::Vector{Vector{UnitRange{Int}}}) where {N}
     for i in 1:N
-        for (c, r) in zip(prob.layers[i], all_ranges[i])
+        for (c, r) in zip(_host_contours(prob)[i], all_ranges[i])
             f(c, r)
         end
     end
@@ -274,9 +274,9 @@ _wrap_state_nodes!(state::DeviceContourState, ::UnboundedDomain, ::AbstractDevic
 
 @inline function _rk4_state_stage!(k, state::DeviceContourState{T}, kernel, domain,
                                    nodes_orig, increment, scale::T,
-                                   dev::AbstractDevice) where {T}
+                                   dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     _scatter_state_shifted!(state, nodes_orig, increment, scale, dev)
-    _ka_velocity_from_state!(k, state, kernel, domain, dev)
+    _ka_velocity_from_state!(k, state, kernel, domain, dev; workspace=workspace)
     return k
 end
 
@@ -292,17 +292,17 @@ end
 
 function _rk4_state_step!(state::DeviceContourState{T}, kernel, domain,
                           stepper::RK4Stepper{T},
-                          dev::AbstractDevice) where {T}
+                          dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     dt = stepper.dt
     N = _device_state_nnodes(state)
     length(stepper.k1) >= N || throw(DimensionMismatch("Stepper buffer size ($(length(stepper.k1))) < total nodes ($N). Call resize_buffers! first."))
     nodes_orig = stepper.nodes_buf
 
     _collect_state_nodes!(nodes_orig, state, dev)
-    _ka_velocity_from_state!(stepper.k1, state, kernel, domain, dev)
-    _rk4_state_stage!(stepper.k2, state, kernel, domain, nodes_orig, stepper.k1, dt / 2, dev)
-    _rk4_state_stage!(stepper.k3, state, kernel, domain, nodes_orig, stepper.k2, dt / 2, dev)
-    _rk4_state_stage!(stepper.k4, state, kernel, domain, nodes_orig, stepper.k3, dt, dev)
+    _ka_velocity_from_state!(stepper.k1, state, kernel, domain, dev; workspace=workspace)
+    _rk4_state_stage!(stepper.k2, state, kernel, domain, nodes_orig, stepper.k1, dt / 2, dev; workspace=workspace)
+    _rk4_state_stage!(stepper.k3, state, kernel, domain, nodes_orig, stepper.k2, dt / 2, dev; workspace=workspace)
+    _rk4_state_stage!(stepper.k4, state, kernel, domain, nodes_orig, stepper.k3, dt, dev; workspace=workspace)
 
     return _finish_rk4_state_step!(state, nodes_orig, stepper.k1, stepper.k2,
                                    stepper.k3, stepper.k4, dt, dev)
@@ -316,20 +316,20 @@ end
 @inline function _ml_rk4_stage!(k, states::NTuple{N, <:DeviceContourState}, kernel, domain,
                                 nodes_orig, increment, scale::T,
                                 ranges::NTuple{N, UnitRange{Int}},
-                                dev::AbstractDevice) where {N, T}
+                                dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
     for ℓ in 1:N
         r = ranges[ℓ]
         isempty(r) && continue
         _scatter_state_shifted!(states[ℓ], view(nodes_orig, r), view(increment, r), scale, dev)
     end
-    _ka_multilayer_velocity_from_states!(k, states, kernel, domain, dev)
+    _ka_multilayer_velocity_from_states!(k, states, kernel, domain, dev; workspace=workspace)
     return k
 end
 
 # Multi-layer twin of _rk4_state_step! — keep the two in lockstep.
 function _rk4_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, kernel, domain,
                                      stepper::RK4Stepper{T},
-                                     dev::AbstractDevice) where {N, T}
+                                     dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
     dt = stepper.dt
     ranges = _layer_state_ranges(states)
     Ntot = sum(length, ranges)
@@ -342,10 +342,10 @@ function _rk4_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, ke
         isempty(r) && continue
         _collect_state_nodes!(view(nodes_orig, r), states[ℓ], dev)
     end
-    _ka_multilayer_velocity_from_states!(stepper.k1, states, kernel, domain, dev)
-    _ml_rk4_stage!(stepper.k2, states, kernel, domain, nodes_orig, stepper.k1, dt / 2, ranges, dev)
-    _ml_rk4_stage!(stepper.k3, states, kernel, domain, nodes_orig, stepper.k2, dt / 2, ranges, dev)
-    _ml_rk4_stage!(stepper.k4, states, kernel, domain, nodes_orig, stepper.k3, dt, ranges, dev)
+    _ka_multilayer_velocity_from_states!(stepper.k1, states, kernel, domain, dev; workspace=workspace)
+    _ml_rk4_stage!(stepper.k2, states, kernel, domain, nodes_orig, stepper.k1, dt / 2, ranges, dev; workspace=workspace)
+    _ml_rk4_stage!(stepper.k3, states, kernel, domain, nodes_orig, stepper.k2, dt / 2, ranges, dev; workspace=workspace)
+    _ml_rk4_stage!(stepper.k4, states, kernel, domain, nodes_orig, stepper.k3, dt, ranges, dev; workspace=workspace)
 
     for ℓ in 1:N
         r = ranges[ℓ]
@@ -441,7 +441,7 @@ function _collect_velocities!(flat::Vector{SVector{2,T}}, vel::NTuple{N, Vector{
 end
 
 function _make_vel_tuple(prob::MultiLayerContourProblem{N, <:Any, <:Any, T}) where {N, T}
-    ntuple(i -> zeros(SVector{2,T}, _layer_node_count(prob.layers[i])), Val(N))
+    ntuple(i -> zeros(SVector{2,T}, _layer_node_count(_host_contours(prob)[i])), Val(N))
 end
 
 function _ensure_vel_bufs!(vel_bufs::Vector{Vector{SVector{2, T}}},
@@ -451,7 +451,7 @@ function _ensure_vel_bufs!(vel_bufs::Vector{Vector{SVector{2, T}}},
         push!(vel_bufs, SVector{2, T}[])
     end
     for i in 1:N
-        n_layer = _layer_node_count(prob.layers[i])
+        n_layer = _layer_node_count(_host_contours(prob)[i])
         resize!(vel_bufs[i], n_layer)
         fill!(vel_bufs[i], z)
     end

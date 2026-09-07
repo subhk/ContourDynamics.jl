@@ -1,29 +1,5 @@
 # ── Problem Structs ──────────────────────────────────────
 
-mutable struct _VelocityScratch{T<:AbstractFloat}
-    contour_curvatures::Vector{Vector{T}}
-    reference_curvatures::Vector{Vector{T}}
-    layer_curvatures::Vector{Vector{Vector{T}}}
-    offsets::Vector{Int}
-    target_nodes::Vector{SVector{2,T}}
-    mode_vel::Vector{SVector{2,T}}
-    to_physical::Matrix{T}
-    to_modal::Matrix{T}
-    energy_partial::Vector{T}
-end
-
-function _VelocityScratch{T}() where {T<:AbstractFloat}
-    return _VelocityScratch{T}(Vector{T}[],
-                               Vector{T}[],
-                               Vector{Vector{T}}[],
-                               Int[],
-                               SVector{2,T}[],
-                               SVector{2,T}[],
-                               Matrix{T}(undef, 0, 0),
-                               Matrix{T}(undef, 0, 0),
-                               T[])
-end
-
 """
     ContourProblem{K,D,T,Dev}(kernel, domain, contours; dev=CPU())
 
@@ -34,41 +10,19 @@ A single-layer contour-dynamics problem with a velocity `kernel`, computational
 struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice, S}
     kernel::K
     domain::D
-    contours::Vector{PVContour{T}}
+    storage::S
     dev::Dev
-    device_state::S
-    velocity_scratch::_VelocityScratch{T}
+    workspace::ExecutionWorkspace{T}
     function ContourProblem(kernel::K, domain::D, contours::Vector{PVContour{T}};
-                            dev::Dev=CPU()) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
+                            dev::Dev=CPU(), workspace::ExecutionWorkspace{T}=ExecutionWorkspace(T)) where {K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
         _check_kernel_domain(kernel, domain)
         _check_gpu_support(kernel, domain, dev)
-        state = _build_device_state(contours, dev)
-        new{K, D, T, Dev, typeof(state)}(kernel, domain, contours, dev, state,
-                                          _VelocityScratch{T}())
+        storage = _storage(contours, dev)
+        new{K, D, T, Dev, typeof(storage)}(kernel, domain, storage, dev, workspace)
     end
 end
-
-"""Return the single-layer contour vector stored in a CPU problem."""
-contours(prob::ContourProblem{K,D,T,CPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} = prob.contours
-contours(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} = error(
-    "GPU() problems keep contours in device state. Use materialize_contours(prob) " *
-    "only at output, animation, plotting, or host-inspection boundaries.")
-contours(prob::ContourProblem) = prob.contours
-
-"""Materialize contours on CPU for output, animation, plotting, or inspection."""
-materialize_contours(prob::ContourProblem{K,D,T,CPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} = prob.contours
-materialize_contours(prob::ContourProblem{K,D,T,GPU,S}) where {
-    K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
-} =
-    materialize_contours(prob.device_state)
 
 # Validation helpers keep constructor errors close to the user input. They are
 # intentionally small single-dispatch functions so adding a new kernel/domain or
@@ -114,39 +68,17 @@ target device ([`CPU`](@ref) or [`GPU`](@ref)) for buffer allocation.
 struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice, S}
     kernel::K
     domain::D
-    layers::NTuple{N, Vector{PVContour{T}}}
+    storage::S
     dev::Dev
-    device_state::S
-    velocity_scratch::_VelocityScratch{T}
+    workspace::ExecutionWorkspace{T}
     function MultiLayerContourProblem(kernel::K, domain::D, layers::NTuple{N, Vector{PVContour{T}}};
-                                      dev::Dev=CPU()) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
+                                      dev::Dev=CPU(), workspace::ExecutionWorkspace{T}=ExecutionWorkspace(T)) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
-        state = _build_layer_device_state(layers, dev)
-        new{N, K, D, T, Dev, typeof(state)}(kernel, domain, layers, dev, state,
-                                             _VelocityScratch{T}())
+        storage = _storage(layers, dev)
+        new{N, K, D, T, Dev, typeof(storage)}(kernel, domain, storage, dev, workspace)
     end
 end
-
-"""Return the per-layer contour tuple stored in a CPU problem."""
-contours(prob::MultiLayerContourProblem{N,K,D,T,CPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-} = prob.layers
-contours(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-} = error(
-    "GPU() problems keep contours in device state. Use materialize_contours(prob) " *
-    "only at output, animation, plotting, or host-inspection boundaries.")
-contours(prob::MultiLayerContourProblem) = prob.layers
-
-"""Materialize per-layer contours on CPU for output, animation, plotting, or inspection."""
-materialize_contours(prob::MultiLayerContourProblem{N,K,D,T,CPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-} = prob.layers
-materialize_contours(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
-    N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-} =
-    ntuple(i -> materialize_contours(prob.device_state[i]), N)
 
 """Return the number of layers in a multi-layer contour problem."""
 nlayers(::MultiLayerContourProblem{N}) where {N} = N
@@ -159,7 +91,7 @@ Total number of nodes across all contours in a [`ContourProblem`](@ref) or
 """
 @inline function total_nodes(prob::ContourProblem)
     s = 0
-    for c in prob.contours
+    for c in _host_contours(prob)
         s += nnodes(c)
     end
     return s
@@ -168,12 +100,12 @@ end
 @inline total_nodes(prob::ContourProblem{K,D,T,GPU,S}) where {
     K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
 } =
-    _device_state_nnodes(prob.device_state)
+    _device_state_nnodes(_device_state(prob))
 
 @inline function total_nodes(prob::MultiLayerContourProblem{N}) where {N}
     s = 0
     for i in 1:N
-        for c in prob.layers[i]
+        for c in _host_contours(prob)[i]
             s += nnodes(c)
         end
     end
@@ -185,7 +117,54 @@ end
 }
     s = 0
     for i in 1:N
-        s += _device_state_nnodes(prob.device_state[i])
+        s += _device_state_nnodes(_device_state(prob)[i])
     end
     return s
 end
+
+const _ContourProblemTypes = Union{ContourProblem,MultiLayerContourProblem}
+_active_storage(prob::_ContourProblemTypes) = getfield(prob, :storage)
+_host_contours(prob::_ContourProblemTypes) = _borrow_contours(_active_storage(prob))
+_device_state(prob::_ContourProblemTypes) = _device_storage(_active_storage(prob))
+
+"""Borrow live CPU contours (or layer tuple). Mutations affect the problem."""
+contours(prob::_ContourProblemTypes) = _host_contours(prob)
+
+"""
+    snapshot_contours(prob)
+
+Return an owned CPU copy of current contours, including nodes and corner flags.
+The result never aliases the live state, on either backend. Multi-layer problems
+return a tuple of vectors. Use `contours(prob)` to explicitly borrow CPU state.
+"""
+snapshot_contours(prob::_ContourProblemTypes) = _snapshot_storage(_active_storage(prob))
+
+"""
+    materialize_contours(prob)
+
+Legacy output accessor: borrows CPU contours and copies GPU contours. Use
+`contours` for an explicit borrow or `snapshot_contours` for a stable owned copy.
+"""
+materialize_contours(prob::_ContourProblemTypes) = _materialize_storage(_active_storage(prob))
+execution_workspace(prob::_ContourProblemTypes) = getfield(prob, :workspace)
+clear_state_workspace_cache!(prob::_ContourProblemTypes) = clear_state_workspace_cache!(execution_workspace(prob))
+
+# Preserve field-style inspection without keeping a stale host mirror on GPU.
+# GPU .contours/.layers reads now materialize the active state; internal host
+# algorithms use _host_contours and therefore reject accidental device access.
+@inline function Base.getproperty(prob::ContourProblem, name::Symbol)
+    name === :contours && return materialize_contours(prob)
+    name === :device_state && return _device_state(prob)
+    name === :velocity_scratch && return getfield(prob, :workspace).cpu
+    return getfield(prob, name)
+end
+@inline function Base.getproperty(prob::MultiLayerContourProblem, name::Symbol)
+    name === :layers && return materialize_contours(prob)
+    name === :device_state && return _device_state(prob)
+    name === :velocity_scratch && return getfield(prob, :workspace).cpu
+    return getfield(prob, name)
+end
+Base.propertynames(::ContourProblem, private::Bool=false) =
+    (:kernel, :domain, :contours, :dev, :device_state, :velocity_scratch, :storage, :workspace)
+Base.propertynames(::MultiLayerContourProblem, private::Bool=false) =
+    (:kernel, :domain, :layers, :dev, :device_state, :velocity_scratch, :storage, :workspace)

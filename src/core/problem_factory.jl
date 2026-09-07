@@ -116,16 +116,16 @@ function _build_device(dev)
 end
 
 Base.@constprop :aggressive function _build_contour_problem(is_multilayer::Bool, kernel,
-                                                            domain, contours, layers, dev)
+                                                            domain, contours, layers, dev, workspace)
     if is_multilayer
-        return MultiLayerContourProblem(kernel, domain, layers; dev=dev)
+        return MultiLayerContourProblem(kernel, domain, layers; dev=dev, workspace=workspace)
     elseif kernel isa BetaPlaneQGKernel
         domain isa PeriodicDomain || throw(ArgumentError(
             "kernel=:beta_plane_qg currently requires domain=:periodic."))
         return ContourProblem(_attach_beta_plane_reference(kernel, contours),
-                              domain, contours; dev=dev)
+                              domain, contours; dev=dev, workspace=workspace)
     else
-        return ContourProblem(kernel, domain, contours; dev=dev)
+        return ContourProblem(kernel, domain, contours; dev=dev, workspace=workspace)
     end
 end
 
@@ -192,6 +192,7 @@ Base.@constprop :aggressive function Problem(;
     stepper::Symbol=:RK4,
     surgery=:standard,
     dev=CPU(),
+    workspace=nothing,
     T::Type{<:AbstractFloat}=Float64,
     ra_coeff::Union{Nothing,Real}=nothing,
 )
@@ -213,7 +214,8 @@ Base.@constprop :aggressive function Problem(;
     built_domain = _build_domain(T, domain, Lx, Ly)
     device = _build_device(dev)
     contour_problem = _build_contour_problem(is_multilayer, built_kernel, built_domain,
-                                             typed_contours, typed_layers, device)
+                                             typed_contours, typed_layers, device,
+                                             workspace === nothing ? ExecutionWorkspace(T) : workspace)
     time_stepper = _build_stepper(T, stepper, dt, contour_problem, device)
     surgery_params = _build_surgery(surgery, T)
     return Problem(contour_problem, time_stepper, surgery_params)

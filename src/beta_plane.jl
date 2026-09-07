@@ -67,7 +67,7 @@ function _direct_velocity!(vel::Vector{SVector{2,T}},
                            prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU}) where {T, D<:PeriodicDomain{T}}
     kernel = prob.kernel
     domain = prob.domain
-    contours = prob.contours
+    contours = _host_contours(prob)
     N = _validate_velocity_buffer!(vel, prob)
 
     ewald = _prefetch_ewald(domain, kernel)
@@ -88,10 +88,10 @@ function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},
     ewald = _prefetch_ewald(prob.domain, kernel)
     scratch = prob.velocity_scratch
     contour_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures,
-                                                     prob.contours)
+                                                     _host_contours(prob))
     reference_curvatures = _prepare_curvature_buffers!(scratch.reference_curvatures,
                                                        kernel.reference_contours)
-    return _beta_plane_velocity_at(kernel, prob.domain, x, prob.contours,
+    return _beta_plane_velocity_at(kernel, prob.domain, x, _host_contours(prob),
                                    contour_curvatures, reference_curvatures, ewald)
 end
 

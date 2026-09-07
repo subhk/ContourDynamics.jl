@@ -89,7 +89,7 @@ end
 function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem{K, D, T}) where {K, D, T}
     # The expanded view mirrors the fields users most often inspect while
     # keeping contour details behind a capped nested list.
-    _show_contour_problem(io, prob, prob.contours)
+    _show_contour_problem(io, prob, _host_contours(prob))
 end
 
 function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
@@ -135,7 +135,7 @@ function Base.show(io::IO, prob::MultiLayerContourProblem{N, K, D, T}) where {N,
 end
 
 function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
-    _show_multilayer_problem(io, prob, prob.layers)
+    _show_multilayer_problem(io, prob, _host_contours(prob))
 end
 
 function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem{N, K, D, T, GPU}) where {N, K, D, T}
