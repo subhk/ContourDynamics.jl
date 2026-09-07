@@ -1,6 +1,24 @@
 using Test, ContourDynamics, StaticArrays, Logging
 
 @testset "Surgery" begin
+    @testset "Translated contour orientation helpers" begin
+        base_nodes = SVector{2,Float64}[
+            SVector(0.0, 0.0),
+            SVector(2.0, 0.0),
+            SVector(1.0, 1.0),
+            SVector(0.0, 1.0),
+        ]
+        shift = SVector(1.0e8, -1.0e8)
+        shifted_nodes = [point + shift for point in base_nodes]
+
+        # Split orientation uses the raw-node helper, while merge orientation
+        # uses the contour scale to decide whether the sign is trustworthy.
+        @test ContourDynamics._shoelace_area(shifted_nodes) ≈
+              ContourDynamics._shoelace_area(base_nodes) rtol=0 atol=10eps(Float64)
+        @test ContourDynamics._shoelace_noise_scale(PVContour(shifted_nodes, 1.0)) ≈
+              ContourDynamics._shoelace_noise_scale(PVContour(base_nodes, 1.0))
+    end
+
     @testset "Filament Removal" begin
         # Create a tiny contour (area < area_min) and a normal one
         tiny = PVContour([

@@ -21,5 +21,10 @@ using Test, ContourDynamics, RecordedArrays
     @test hasproperty(rec, :callback)
     rec.callback(prob, 0)
     rec.callback(prob, 1)
-    @test length(getentries(rec.energy)) == 2
+    entries = record(rec.energy)
+    @test length(entries) == 2
+    @test getts(entries[1]) == [0.0, 0.01]
+    @test getts(entries[2]) == [0.01, 0.01]
+    @test only(unique(getvs(entries[1]))) == energy(prob)
+    @test only(unique(getvs(entries[2]))) == energy(prob)
 end

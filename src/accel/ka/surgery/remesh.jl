@@ -122,11 +122,11 @@ end
 
 @kernel function _remesh_input_geometry_kernel!(seg_lengths, signed_curvatures,
                                                 abs_curvatures, perimeters,
-                                                target_area, x, y, pv, wrapx,
-                                                wrapy, offsets, lengths,
-                                                contour_of_node, local_index,
-                                                corners, total_nodes,
-                                                ncontours)
+                                                target_area, target_area_tolerance,
+                                                x, y, pv, wrapx, wrapy, offsets,
+                                                lengths, contour_of_node,
+                                                local_index, corners,
+                                                total_nodes, ncontours)
     g = @index(Global)
     if g <= total_nodes
         ci = contour_of_node[g]
@@ -149,8 +149,12 @@ end
         ci = g
         off = offsets[ci]
         n = lengths[ci]
-        perimeter = zero(eltype(perimeters))
-        area2 = zero(eltype(perimeters))
+        T = eltype(perimeters)
+        ox = x[off]
+        oy = y[off]
+        perimeter = zero(T)
+        area2 = zero(T)
+        scale = max(abs(wrapx[ci]), abs(wrapy[ci]))
         @inbounds for li in 1:n
             gi = off + li - 1
             nx = li < n ? x[gi + 1] : x[off] + wrapx[ci]
@@ -158,10 +162,16 @@ end
             dx = nx - x[gi]
             dy = ny - y[gi]
             perimeter += sqrt(dx * dx + dy * dy)
-            area2 += x[gi] * ny - nx * y[gi]
+            px = x[gi] - ox
+            py = y[gi] - oy
+            next_x = nx - ox
+            next_y = ny - oy
+            area2 += px * next_y - next_x * py
+            scale = max(scale, abs(px), abs(py))
         end
         perimeters[ci] = perimeter
         target_area[ci] = area2 / 2
+        target_area_tolerance[ci] = eps(T) * T(n) * scale * scale
     end
 end
 
@@ -521,38 +531,49 @@ end
 end
 
 @kernel function _remesh_output_moments_kernel!(out_area, out_centroid_x,
-                                                out_centroid_y, out_x, out_y,
-                                                out_offsets, out_lengths,
-                                                ncontours)
+                                                out_centroid_y, out_area_tolerance,
+                                                out_x, out_y, out_offsets,
+                                                out_lengths, ncontours)
     ci = @index(Global)
     if ci <= ncontours
         off = out_offsets[ci]
         n = out_lengths[ci]
-        area2 = zero(eltype(out_area))
-        cx_num = zero(eltype(out_area))
-        cy_num = zero(eltype(out_area))
-        sx = zero(eltype(out_area))
-        sy = zero(eltype(out_area))
+        T = eltype(out_area)
+        ox = out_x[off]
+        oy = out_y[off]
+        area2 = zero(T)
+        cx_num = zero(T)
+        cy_num = zero(T)
+        sx = zero(T)
+        sy = zero(T)
+        scale = zero(T)
         @inbounds for li in 1:n
             g = off + li - 1
             ng = li < n ? g + 1 : off
-            cross = out_x[g] * out_y[ng] - out_x[ng] * out_y[g]
+            px = out_x[g] - ox
+            py = out_y[g] - oy
+            next_x = out_x[ng] - ox
+            next_y = out_y[ng] - oy
+            cross = px * next_y - next_x * py
             area2 += cross
-            cx_num += (out_x[g] + out_x[ng]) * cross
-            cy_num += (out_y[g] + out_y[ng]) * cross
-            sx += out_x[g]
-            sy += out_y[g]
+            cx_num += (px + next_x) * cross
+            cy_num += (py + next_y) * cross
+            sx += px
+            sy += py
+            scale = max(scale, abs(px), abs(py))
         end
 
         area = area2 / 2
+        area_tolerance = eps(T) * T(n) * scale * scale
         out_area[ci] = area
-        if abs(area) <= eps(typeof(area))
-            out_centroid_x[ci] = sx / n
-            out_centroid_y[ci] = sy / n
+        out_area_tolerance[ci] = area_tolerance
+        if abs(area) <= area_tolerance
+            out_centroid_x[ci] = ox + sx / n
+            out_centroid_y[ci] = oy + sy / n
         else
             inv6A = one(area) / (6 * area)
-            out_centroid_x[ci] = cx_num * inv6A
-            out_centroid_y[ci] = cy_num * inv6A
+            out_centroid_x[ci] = ox + cx_num * inv6A
+            out_centroid_y[ci] = oy + cy_num * inv6A
         end
     end
 end
@@ -560,15 +581,17 @@ end
 @kernel function _preserve_remesh_area_kernel!(out_x, out_y, out_node_contour,
                                                out_area, out_centroid_x,
                                                out_centroid_y, target_area,
-                                               wrapx, wrapy, remesh_mode,
-                                               total_out_nodes)
+                                               target_area_tolerance,
+                                               out_area_tolerance, wrapx, wrapy,
+                                               remesh_mode, total_out_nodes)
     g = @index(Global)
     if g <= total_out_nodes
         ci = out_node_contour[g]
         if remesh_mode[ci] == UInt8(0) && iszero(wrapx[ci]) && iszero(wrapy[ci])
             target = target_area[ci]
             current = out_area[ci]
-            if abs(target) > eps(typeof(target)) && abs(current) > eps(typeof(current)) &&
+            if abs(target) > target_area_tolerance[ci] &&
+               abs(current) > out_area_tolerance[ci] &&
                ((target > zero(target)) == (current > zero(current)))
                 scale = sqrt(abs(target / current))
                 if abs(scale - one(scale)) > sqrt(eps(typeof(scale)))
@@ -585,6 +608,11 @@ end
 # Smallest-magnitude real root of a t² + b t + c = 0, device-friendly twin of
 # `_smallest_quadratic_root`. Returns `(t, ok)`; `ok=false` means no usable root.
 @inline function _device_smallest_quadratic_root(a::T, b::T, c::T) where {T}
+    coefficient_scale = max(abs(a), abs(b), abs(c))
+    iszero(coefficient_scale) && return (zero(T), false)
+    a /= coefficient_scale
+    b /= coefficient_scale
+    c /= coefficient_scale
     if abs(a) <= eps(T)
         abs(b) <= eps(T) && return (zero(T), false)
         return (-c / b, true)
@@ -606,6 +634,8 @@ end
 # the scalar step `t`. This kernel computes that `t` per contour (corners pinned),
 # mirroring the CPU `_preserve_closed_area_fixed_corners!`.
 @kernel function _remesh_corner_area_step_kernel!(step, target_area, out_area,
+                                                  target_area_tolerance,
+                                                  out_area_tolerance,
                                                   out_centroid_x, out_centroid_y,
                                                   out_x, out_y, out_corners,
                                                   out_offsets, out_lengths,
@@ -619,7 +649,8 @@ end
            iszero(wrapx[ci]) && iszero(wrapy[ci])
             target = target_area[ci]
             A0 = out_area[ci]
-            if abs(target) > eps(T) && abs(A0) > eps(T) &&
+            if abs(target) > target_area_tolerance[ci] &&
+               abs(A0) > out_area_tolerance[ci] &&
                ((target > zero(target)) == (A0 > zero(A0)))
                 rhs = target - A0
                 if abs(rhs) > sqrt(eps(T)) * abs(target)
@@ -640,7 +671,12 @@ end
                         diy = iszero(out_corners[g]) ? piy - cy : zero(T)
                         djx = iszero(out_corners[ng]) ? pjx - cx : zero(T)
                         djy = iszero(out_corners[ng]) ? pjy - cy : zero(T)
-                        B += (pix * djy - djx * piy) + (dix * pjy - pjx * diy)
+                        local_pix = pix - cx
+                        local_piy = piy - cy
+                        local_pjx = pjx - cx
+                        local_pjy = pjy - cy
+                        B += (local_pix * djy - djx * local_piy) +
+                             (dix * local_pjy - local_pjx * diy)
                         C += dix * djy - djx * diy
                     end
                     B /= 2
@@ -696,9 +732,11 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
     abs_curvatures = device_zeros(dev, T, total_nodes)
     perimeters = device_zeros(dev, T, ncontours)
     target_area = device_zeros(dev, T, ncontours)
+    target_area_tolerance = device_zeros(dev, T, ncontours)
     @_ka_launch dev max(total_nodes, ncontours) _remesh_input_geometry_kernel!(
         seg_lengths, signed_curvatures, abs_curvatures, perimeters,
-        target_area, flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy,
+        target_area, target_area_tolerance,
+        flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy,
         flat.offsets, flat.lengths, flat.contour_of_node, flat.local_index,
         flat.corners, total_nodes, ncontours)
 
@@ -757,18 +795,20 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
     out_area = device_zeros(dev, T, ncontours)
     out_centroid_x = device_zeros(dev, T, ncontours)
     out_centroid_y = device_zeros(dev, T, ncontours)
+    out_area_tolerance = device_zeros(dev, T, ncontours)
     @_ka_launch dev ncontours _remesh_output_moments_kernel!(
-        out_area, out_centroid_x, out_centroid_y, out_x, out_y,
-        out_offsets, out_lengths, ncontours)
+        out_area, out_centroid_x, out_centroid_y, out_area_tolerance,
+        out_x, out_y, out_offsets, out_lengths, ncontours)
     @_ka_launch dev total_out_nodes _preserve_remesh_area_kernel!(
         out_x, out_y, out_node_contour, out_area, out_centroid_x,
-        out_centroid_y, target_area, out_wrapx, out_wrapy, remesh_mode,
-        total_out_nodes)
+        out_centroid_y, target_area, target_area_tolerance,
+        out_area_tolerance, out_wrapx, out_wrapy, remesh_mode, total_out_nodes)
 
     # Fixed-corner modes (1, 2) preserve area by moving only free nodes.
     corner_area_step = device_zeros(dev, T, ncontours)
     @_ka_launch dev ncontours _remesh_corner_area_step_kernel!(
-        corner_area_step, target_area, out_area, out_centroid_x, out_centroid_y,
+        corner_area_step, target_area, out_area, target_area_tolerance,
+        out_area_tolerance, out_centroid_x, out_centroid_y,
         out_x, out_y, out_corners, out_offsets, out_lengths,
         out_wrapx, out_wrapy, remesh_mode, ncontours)
     @_ka_launch dev total_out_nodes _apply_corner_area_step_kernel!(
@@ -799,4 +839,3 @@ function _device_remesh_contours(contours::Vector{PVContour{T}},
     outputs === nothing && return nothing
     return _unpack_rewrite_outputs(outputs)
 end
-

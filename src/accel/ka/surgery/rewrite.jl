@@ -25,7 +25,10 @@ end
 
 @inline function _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
     n = lengths[ci]
+    n < 3 && return zero(eltype(x))
     off = offsets[ci]
+    ox = x[off]
+    oy = y[off]
     area2 = zero(eltype(x))
     @inbounds for li in 1:n
         g = off + li - 1
@@ -36,20 +39,27 @@ end
             nx = x[off] + wrapx[ci]
             ny = y[off] + wrapy[ci]
         end
-        area2 += x[g] * ny - nx * y[g]
+        px = x[g] - ox
+        py = y[g] - oy
+        next_x = nx - ox
+        next_y = ny - oy
+        area2 += px * next_y - next_x * py
     end
     return area2
 end
 
-# Device twin of `_shoelace_noise_scale`: squared coordinate magnitude of a
-# contour, the relative floor for sign decisions on shoelace areas.
+# Device twin of `_shoelace_noise_scale`: squared local contour extent, used as
+# the relative floor for sign decisions on translation-stable shoelace areas.
 @inline function _flat_shoelace_noise_scale(x, y, offsets, lengths, ci)
     n = lengths[ci]
+    iszero(n) && return zero(eltype(x))
     off = offsets[ci]
+    ox = x[off]
+    oy = y[off]
     s = zero(eltype(x))
     @inbounds for li in 1:n
         g = off + li - 1
-        s = max(s, abs(x[g]), abs(y[g]))
+        s = max(s, abs(x[g] - ox), abs(y[g] - oy))
     end
     return s * s
 end
@@ -57,6 +67,9 @@ end
 @inline function _flat_split_part_area2(x, y, offsets, ci, inserted_idx,
                                         stitch_x, stitch_y, start_idx, len)
     area2 = zero(eltype(x))
+    iszero(len) && return area2
+    ox, oy = _flat_inserted_contour_node_xy(x, y, offsets, ci, inserted_idx,
+                                            stitch_x, stitch_y, start_idx)
     @inbounds for m in 1:len
         local_idx = start_idx + m - 1
         next_idx = m == len ? start_idx : local_idx + 1
@@ -66,7 +79,11 @@ end
         x2, y2 = _flat_inserted_contour_node_xy(x, y, offsets, ci,
                                                 inserted_idx, stitch_x,
                                                 stitch_y, next_idx)
-        area2 += x1 * y2 - x2 * y1
+        px1 = x1 - ox
+        py1 = y1 - oy
+        px2 = x2 - ox
+        py2 = y2 - oy
+        area2 += px1 * py2 - px2 * py1
     end
     return area2
 end
@@ -75,6 +92,9 @@ end
                                                 stitch_x, stitch_y, hi, lo,
                                                 nc, len)
     area2 = zero(eltype(x))
+    iszero(len) && return area2
+    ox, oy = _flat_inserted_contour_node_xy(x, y, offsets, ci, inserted_idx,
+                                            stitch_x, stitch_y, hi)
     @inbounds for m in 1:len
         pos = m <= nc - hi + 1 ? hi + m - 1 : m - (nc - hi + 1)
         next_m = m == len ? 1 : m + 1
@@ -85,7 +105,11 @@ end
         x2, y2 = _flat_inserted_contour_node_xy(x, y, offsets, ci,
                                                 inserted_idx, stitch_x,
                                                 stitch_y, next_pos)
-        area2 += x1 * y2 - x2 * y1
+        px1 = x1 - ox
+        py1 = y1 - oy
+        px2 = x2 - ox
+        py2 = y2 - oy
+        area2 += px1 * py2 - px2 * py1
     end
     return area2
 end
@@ -127,7 +151,7 @@ end
             area1_2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
             area2_2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, cj)
             # Scale-relative floors matching the CPU `_reconnect_merge!` gate:
-            # shoelace sign noise grows with the squared coordinate magnitude.
+            # shoelace sign noise grows with the squared local contour extent.
             # The `area*_2` values carry a factor 2, hence 2000 vs the CPU 1000.
             tol1 = eps(one(area1_2)) * 2000 *
                    _flat_shoelace_noise_scale(x, y, offsets, lengths, ci)

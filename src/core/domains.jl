@@ -65,30 +65,33 @@ end
     cy = zero(T)
     sx = zero(T)
     sy = zero(T)
+    scale = zero(T)
     
     @inbounds for i in 1:n
         xi, yi = getnode(i)
         xj, yj = getnode(i < n ? i + 1 : 1)
         dxi = xi - p0x
         dyi = yi - p0y
-        uix = p0x + dxi - Lx2 * round(dxi / Lx2)
-        uiy = p0y + dyi - Ly2 * round(dyi / Ly2)
+        uix = dxi - Lx2 * round(dxi / Lx2)
+        uiy = dyi - Ly2 * round(dyi / Ly2)
         dxj = xj - p0x
         dyj = yj - p0y
-        ujx = p0x + dxj - Lx2 * round(dxj / Lx2)
-        ujy = p0y + dyj - Ly2 * round(dyj / Ly2)
+        ujx = dxj - Lx2 * round(dxj / Lx2)
+        ujy = dyj - Ly2 * round(dyj / Ly2)
         cross = uix * ujy - ujx * uiy
         area2 += cross
         cx += (uix + ujx) * cross
         cy += (uiy + ujy) * cross
         sx += uix
         sy += uiy
+        scale = max(scale, abs(uix), abs(uiy))
     end
-    if n < 3 || abs(area2) <= T(2) * eps(T)
-        return sx / n, sy / n
+    area2_tolerance = T(2) * eps(T) * T(n) * scale * scale
+    if n < 3 || abs(area2) <= area2_tolerance
+        return p0x + sx / n, p0y + sy / n
     end
     inv3A2 = one(T) / (T(3) * area2)
-    return cx * inv3A2, cy * inv3A2
+    return p0x + cx * inv3A2, p0y + cy * inv3A2
 end
 
 """

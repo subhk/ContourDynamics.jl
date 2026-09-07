@@ -212,7 +212,7 @@ end
         h = r0x * nx + r0y * ny
         u_b = u_a - ds_len
         h_eff = sqrt(h * h + δ_sq)
-        F_diff = asinh(u_a / h_eff) - asinh(u_b / h_eff)
+        F_diff = _sqg_asinh_difference(u_a, u_b, h_eff, ds_len)
         contrib = inv2pi * pv * F_diff
         return contrib * tx, contrib * ty
     end
@@ -621,7 +621,7 @@ end
         u_b = u_a - ds_len
 
         h_eff = sqrt(h * h + δ_sq)
-        F_diff = asinh(u_a / h_eff) - asinh(u_b / h_eff)
+        F_diff = _sqg_asinh_difference(u_a, u_b, h_eff, ds_len)
         contrib = inv2pi * seg_pv[j] * F_diff
         vx += contrib * tx
         vy += contrib * ty

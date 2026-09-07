@@ -98,12 +98,12 @@ function _warn_if_adaptive(integrator)
 end
 
 # Callback `initialize` hook: warn on adaptive stepping, then restore the
-# `u_modified!(integrator, false)` that the default initializer performs. A
-# custom `initialize` replaces that default, and omitting the reset leaves the
+# unmodified-state reset that the default initializer performs. A custom
+# `initialize` replaces that default, and omitting the reset leaves the
 # integrator's modified flag set at t0 — forcing a spurious save of a duplicate
 # initial point into the solution.
 _guard_initialize(c, u, t, integrator) =
-    (_warn_if_adaptive(integrator); u_modified!(integrator, false))
+    (_warn_if_adaptive(integrator); OrdinaryDiffEq.SciMLBase.u_modified!(integrator, false))
 
 # A callback that never triggers an effect; it exists only to run the
 # adaptive-solver guard at initialization for the no-surgery code path.
@@ -124,7 +124,7 @@ provided, returns a `NamedTuple` `(ode_prob, callback)` — pass the callback to
 
 ```julia
 result = to_ode_problem(prob, tspan; surgery_params=sp)
-sol = solve(result.ode_prob, RK4(); dt=0.01, adaptive=false, callback=result.callback)
+sol = solve(result.ode_prob, Tsit5(); dt=0.01, adaptive=false, callback=result.callback)
 ```
 
 The surgery interval is determined by:
@@ -136,10 +136,10 @@ The surgery interval is determined by:
 !!! warning "Solver compatibility"
     This bridge is CPU-only because the RHS closure mutates `prob.contours`
     in-place on every evaluation.  It is **only safe** with fixed-step,
-    non-adaptive solvers (e.g. `RK4()`, `Euler()` with `adaptive=false`).
-    Adaptive solvers (e.g. `Tsit5()`) evaluate the RHS at multiple trial points
-    with step rejection, causing rejected-step state to overwrite accepted-step
-    state.  Always use `adaptive=false` or a fixed-step solver.
+    non-adaptive integration (e.g. `Tsit5()` with `adaptive=false`).  With
+    adaptivity enabled, solvers evaluate the RHS at multiple trial points with
+    step rejection, causing rejected-step state to overwrite accepted-step
+    state.  Always pass `adaptive=false`.
 
 !!! warning "Thread safety"
     The returned `ODEProblem` captures a pre-allocated velocity buffer in its

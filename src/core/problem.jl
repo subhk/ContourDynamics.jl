@@ -119,7 +119,9 @@ Apply contour surgery to the wrapped contour problem. Without an explicit
 construction and none here is an error.
 """
 function surgery!(prob::Problem, params::SurgeryParams)
+    old_N = total_nodes(prob.contour_problem)
     surgery!(prob.contour_problem, params)
+    _handle_post_surgery!(prob.contour_problem, prob.stepper, old_N)
     return prob
 end
 

@@ -63,6 +63,66 @@ function _periodic_sqg_fourier_energy(domain, contours, δ, modes)
 end
 
 @testset "Surface quasi-geostrophic verification" begin
+    @testset "far-field straight panels retain relative accuracy" begin
+        x = SVector(1.0e14, 0.0)
+        a = SVector(0.0, 0.0)
+        b = SVector(1.0, 0.0)
+        δ = 0.1
+        reference = setprecision(256) do
+            xb = BigFloat("1e14")
+            δb = BigFloat("0.1")
+            Float64((asinh(xb / δb) - asinh((xb - 1) / δb)) /
+                    (2 * big(π)))
+        end
+
+        direct = segment_velocity(SQGKernel(δ), UnboundedDomain(), x, a, b)
+        @test direct[1] ≈ reference rtol=1e-12
+        @test iszero(direct[2])
+
+        device_x, device_y = ContourDynamics._curved_sqg_contribution_scalar(
+            x[1], x[2], a[1], a[2], b[1], b[2], 1.0, 0.0, 0.0,
+            δ, 1 / (2π))
+        @test device_x ≈ reference rtol=1e-12
+        @test iszero(device_y)
+
+        # Exercise the distinct straight-panel branch in the periodic KA
+        # kernel. A zero-splitting, empty-mode cache isolates its free-space
+        # contribution from the periodic correction.
+        segment = ContourDynamics.SegmentData(
+            [a[1]], [a[2]], [b[1]], [b[2]], [1.0], [0.0], [0.0])
+        cache = EwaldCache(0.0, Float64[], Float64[], zeros(0, 0), 0,
+                           zeros(0, 0))
+        periodic_x = zeros(1)
+        periodic_y = zeros(1)
+        ContourDynamics._ka_periodic_sqg_velocity!(
+            periodic_x, periodic_y, [x[1]], [x[2]], segment,
+            PeriodicDomain(1.0e15, 1.0e15), cache, δ, CPU())
+        @test periodic_x[1] ≈ reference rtol=1e-12
+        @test iszero(periodic_y[1])
+    end
+
+    @testset "regularized panel endpoints remain finite and accurate" begin
+        x = SVector(1.0, 0.0)
+        a = SVector(0.0, 0.0)
+        b = SVector(1.0, 0.0)
+
+        for δ in (1.0e-12, 1.0e-16)
+            reference = asinh(inv(δ)) / (2π)
+
+            direct = segment_velocity(SQGKernel(δ), UnboundedDomain(), x, a, b)
+            @test isfinite(direct[1])
+            @test direct[1] ≈ reference rtol=10eps(Float64)
+            @test iszero(direct[2])
+
+            device_x, device_y = ContourDynamics._curved_sqg_contribution_scalar(
+                x[1], x[2], a[1], a[2], b[1], b[2], 1.0, 0.0, 0.0,
+                δ, 1 / (2π))
+            @test isfinite(device_x)
+            @test device_x ≈ reference rtol=10eps(Float64)
+            @test iszero(device_y)
+        end
+    end
+
     @testset "regularized Rankine patch" begin
         R, jump, δ = 0.8, 1.2, 0.3
         exact_energy = _sqg_rankine_energy(R, jump, δ)

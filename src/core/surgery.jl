@@ -743,16 +743,8 @@ function reconnect!(contours::Vector{PVContour{T}},
 end
 
 # Signed area of a raw node vector (shoelace formula, no PVContour needed).
-function _shoelace_area(nodes::AbstractVector{SVector{2,T}}) where {T}
-    n = length(nodes)
-    n < 3 && return zero(T)
-    s = zero(T)
-    @inbounds for i in 1:n
-        j = mod1(i + 1, n)
-        s += nodes[i][1] * nodes[j][2] - nodes[j][1] * nodes[i][2]
-    end
-    return s / 2
-end
+_shoelace_area(nodes::AbstractVector{SVector{2,T}}) where {T} =
+    _raw_polygon_area(nodes)
 
 function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int,
                         domain::AbstractDomain=UnboundedDomain()) where {T}
@@ -806,17 +798,9 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
     end
 end
 
-# Squared coordinate scale of a contour: the relative floor for sign decisions
-# on shoelace areas. The shoelace sum accumulates cross products of absolute
-# coordinates, so its rounding noise is proportional to the squared coordinate
-# magnitude, not to machine eps alone.
-@inline function _shoelace_noise_scale(c::PVContour{T}) where {T}
-    s = zero(T)
-    @inbounds for p in c.nodes
-        s = max(s, abs(p[1]), abs(p[2]))
-    end
-    return s * s
-end
+# Squared local extent of a contour: the relative floor for sign decisions on
+# the translation-stable shoelace area.
+@inline _shoelace_noise_scale(c::PVContour) = _raw_polygon_scale2(c.nodes, c.wrap)
 
 function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::Int, j::Int,
                            domain::AbstractDomain=UnboundedDomain()) where {T}

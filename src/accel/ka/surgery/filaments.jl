@@ -14,6 +14,8 @@
             drop = true
         else
             off = offsets[ci]
+            ox = x[off]
+            oy = y[off]
             area2 = zero(area_min)
             perimeter = zero(area_min)
             has_corner = false
@@ -26,7 +28,11 @@
                     nx = x[off] + wrapx[ci]
                     ny = y[off] + wrapy[ci]
                 end
-                area2 += x[g] * ny - nx * y[g]
+                px = x[g] - ox
+                py = y[g] - oy
+                next_x = nx - ox
+                next_y = ny - oy
+                area2 += px * next_y - next_x * py
                 dx = nx - x[g]
                 dy = ny - y[g]
                 perimeter += sqrt(dx * dx + dy * dy)
@@ -194,4 +200,3 @@ function _device_remove_filaments!(state::DeviceContourState{T},
     outputs = _device_compact_kept_contours_outputs(flat, keep, dev)
     return _replace_device_state!(state, outputs, dev)
 end
-

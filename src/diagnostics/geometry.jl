@@ -174,12 +174,7 @@ function vortex_area(c::PVContour{T}) where {T}
     n = length(nodes)
     n < 3 && return zero(T)
     is_spanning(c) && return zero(T)  # area undefined for spanning contours
-    A = zero(T)
-    @inbounds for i in 1:n
-        nxt = next_node(c, i)
-        A += nodes[i][1] * nxt[2] - nxt[1] * nodes[i][2]
-    end
-    return A / 2
+    return _raw_polygon_area(nodes)
 end
 
 """
@@ -191,19 +186,8 @@ function centroid(c::PVContour{T}) where {T}
     nodes = c.nodes
     n = length(nodes)
     n < 3 && return zero(SVector{2, T})
-    A = vortex_area(c)
-    abs(A) < eps(T) && return sum(nodes) / n
-
-    cx = zero(T)
-    cy = zero(T)
-    @inbounds for i in 1:n
-        nxt = next_node(c, i)
-        cross = nodes[i][1] * nxt[2] - nxt[1] * nodes[i][2]
-        cx += (nodes[i][1] + nxt[1]) * cross
-        cy += (nodes[i][2] + nxt[2]) * cross
-    end
-    inv6A = one(T) / (6 * A)
-    return SVector{2, T}(cx * inv6A, cy * inv6A)
+    is_spanning(c) && return _raw_polygon_mean(nodes)
+    return _raw_polygon_centroid(nodes)
 end
 
 """
@@ -216,10 +200,10 @@ function ellipse_moments(c::PVContour{T}) where {T}
     n = length(nodes)
     A = vortex_area(c)
 
-    # Guard against degenerate contours: area at or below the shoelace rounding
-    # noise, which scales with the squared coordinate magnitude. An absolute
-    # eps floor would misclassify well-resolved but physically small vortices.
-    if n < 3 || abs(A) <= eps(T) * _shoelace_noise_scale(c)
+    # Guard against degenerate contours using the local-coordinate shoelace
+    # rounding scale. An absolute eps floor would misclassify well-resolved but
+    # physically small vortices.
+    if n < 3 || abs(A) <= _raw_polygon_area_tolerance(nodes)
         return (one(T), zero(T))
     end
 
@@ -341,16 +325,27 @@ function _second_moment_r2(c::PVContour{T}) where {T}
     n = length(nodes)
     n < 3 && return zero(T)
     is_spanning(c) && return zero(T)  # moment undefined for spanning contours
-    s = zero(T)
+    origin = nodes[1]
+    area2 = zero(T)
+    first_moment_x6 = zero(T)
+    first_moment_y6 = zero(T)
+    local_moment12 = zero(T)
     @inbounds for i in 1:n
-        nxt = next_node(c, i)
-        xi, yi = nodes[i][1], nodes[i][2]
+        point = nodes[i] - origin
+        nxt = next_node(c, i) - origin
+        xi, yi = point[1], point[2]
         xj, yj = nxt[1], nxt[2]
         cross = xi * yj - xj * yi
-        s += (xi^2 + xi * xj + xj^2) * cross
-        s += (yi^2 + yi * yj + yj^2) * cross
+        area2 += cross
+        first_moment_x6 += (xi + xj) * cross
+        first_moment_y6 += (yi + yj) * cross
+        local_moment12 += (xi^2 + xi * xj + xj^2) * cross
+        local_moment12 += (yi^2 + yi * yj + yj^2) * cross
     end
-    return s / 12
+    ox, oy = origin
+    return local_moment12 / T(12) +
+           (ox * first_moment_x6 + oy * first_moment_y6) / T(3) +
+           (ox * ox + oy * oy) * area2 / T(2)
 end
 
 @kernel function _state_area_moment_kernel!(area, moment, x, y, wrapx, wrapy,
@@ -364,26 +359,34 @@ end
             moment[ci] = zero(T)
         else
             off = offsets[ci]
+            ox = x[off]
+            oy = y[off]
             area2 = zero(T)
-            m = zero(T)
+            first_moment_x6 = zero(T)
+            first_moment_y6 = zero(T)
+            local_moment12 = zero(T)
             @inbounds for li in 1:n
                 g = off + li - 1
-                xi = x[g]
-                yi = y[g]
+                xi = x[g] - ox
+                yi = y[g] - oy
                 if li < n
-                    xj = x[g + 1]
-                    yj = y[g + 1]
+                    xj = x[g + 1] - ox
+                    yj = y[g + 1] - oy
                 else
-                    xj = x[off] + wrapx[ci]
-                    yj = y[off] + wrapy[ci]
+                    xj = x[off] + wrapx[ci] - ox
+                    yj = y[off] + wrapy[ci] - oy
                 end
                 cross = xi * yj - xj * yi
                 area2 += cross
-                m += (xi * xi + xi * xj + xj * xj) * cross
-                m += (yi * yi + yi * yj + yj * yj) * cross
+                first_moment_x6 += (xi + xj) * cross
+                first_moment_y6 += (yi + yj) * cross
+                local_moment12 += (xi * xi + xi * xj + xj * xj) * cross
+                local_moment12 += (yi * yi + yi * yj + yj * yj) * cross
             end
             area[ci] = area2 / T(2)
-            moment[ci] = m / T(12)
+            moment[ci] = local_moment12 / T(12) +
+                         (ox * first_moment_x6 + oy * first_moment_y6) / T(3) +
+                         (ox * ox + oy * oy) * area2 / T(2)
         end
     end
 end

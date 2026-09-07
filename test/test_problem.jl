@@ -101,6 +101,18 @@ end
         @test isapprox(circ_before, circ_after; rtol=1e-6)
     end
 
+    @testset "Problem surgery synchronizes bundled stepper buffers" begin
+        sp = SurgeryParams(0.001, 0.01, 0.1, 1e-8, 1)
+        prob = Problem(; contours=[circular_patch(1.0, 8, 1.0)], dt=0.01,
+                       surgery=sp)
+
+        surgery!(prob)
+
+        @test total_nodes(prob) > 8
+        @test length(prob.stepper.k1) == total_nodes(prob)
+        @test timestep!(prob) === prob
+    end
+
     @testset "Problem evolve! without surgery" begin
         c = circular_patch(1.0, 64, 1.0)
         cp = ContourProblem(EulerKernel(), UnboundedDomain(), [c])

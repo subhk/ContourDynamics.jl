@@ -14,12 +14,41 @@ function _raw_polygon_area(nodes::AbstractVector{SVector{2,T}},
                            wrap::SVector{2,T}=zero(SVector{2,T})) where {T}
     n = length(nodes)
     n < 3 && return zero(T)
+    origin = nodes[1]
     area = zero(T)
     @inbounds for i in 1:n
-        nxt = i < n ? nodes[i + 1] : nodes[1] + wrap
-        area += nodes[i][1] * nxt[2] - nxt[1] * nodes[i][2]
+        point = nodes[i] - origin
+        nxt = (i < n ? nodes[i + 1] : nodes[1] + wrap) - origin
+        area += point[1] * nxt[2] - nxt[1] * point[2]
     end
     return area / 2
+end
+
+function _raw_polygon_scale2(nodes::AbstractVector{SVector{2,T}},
+                             wrap::SVector{2,T}=zero(SVector{2,T})) where {T}
+    isempty(nodes) && return zero(T)
+    origin = nodes[1]
+    scale = max(abs(wrap[1]), abs(wrap[2]))
+    @inbounds for point in nodes
+        relative = point - origin
+        scale = max(scale, abs(relative[1]), abs(relative[2]))
+    end
+    return scale * scale
+end
+
+@inline function _raw_polygon_area_tolerance(nodes::AbstractVector{SVector{2,T}},
+                                             wrap::SVector{2,T}=zero(SVector{2,T})) where {T}
+    return eps(T) * T(max(length(nodes), 1)) * _raw_polygon_scale2(nodes, wrap)
+end
+
+function _raw_polygon_mean(nodes::AbstractVector{SVector{2,T}}) where {T}
+    isempty(nodes) && return zero(SVector{2,T})
+    origin = nodes[1]
+    relative_sum = zero(SVector{2,T})
+    @inbounds for point in nodes
+        relative_sum += point - origin
+    end
+    return origin + relative_sum / length(nodes)
 end
 
 function _raw_polygon_centroid(nodes::AbstractVector{SVector{2,T}},
@@ -27,27 +56,28 @@ function _raw_polygon_centroid(nodes::AbstractVector{SVector{2,T}},
     n = length(nodes)
     n == 0 && return zero(SVector{2,T})
     area = _raw_polygon_area(nodes, wrap)
-    if abs(area) <= eps(T)
-        return sum(nodes) / n
+    if abs(area) <= _raw_polygon_area_tolerance(nodes, wrap)
+        return _raw_polygon_mean(nodes)
     end
 
-    cx = zero(T)
-    cy = zero(T)
+    origin = nodes[1]
+    relative_moment = zero(SVector{2,T})
     @inbounds for i in 1:n
-        nxt = i < n ? nodes[i + 1] : nodes[1] + wrap
-        cross = nodes[i][1] * nxt[2] - nxt[1] * nodes[i][2]
-        cx += (nodes[i][1] + nxt[1]) * cross
-        cy += (nodes[i][2] + nxt[2]) * cross
+        point = nodes[i] - origin
+        nxt = (i < n ? nodes[i + 1] : nodes[1] + wrap) - origin
+        cross = point[1] * nxt[2] - nxt[1] * point[2]
+        relative_moment += (point + nxt) * cross
     end
     inv6A = one(T) / (6 * area)
-    return SVector{2,T}(cx * inv6A, cy * inv6A)
+    return origin + relative_moment * inv6A
 end
 
 function _preserve_closed_area!(nodes::Vector{SVector{2,T}}, target_area::T) where {T}
     # Remeshing changes node locations slightly. For closed contours, apply a
     # uniform centroid-centered rescale so the signed polygon area is preserved.
     new_area = _raw_polygon_area(nodes)
-    (abs(target_area) <= eps(T) || abs(new_area) <= eps(T)) && return nodes
+    area_tolerance = _raw_polygon_area_tolerance(nodes)
+    (abs(target_area) <= area_tolerance || abs(new_area) <= area_tolerance) && return nodes
     sign(target_area) == sign(new_area) || return nodes
 
     scale = sqrt(abs(target_area / new_area))
@@ -67,6 +97,11 @@ end
 # the standard formula, the small one via c/q) so the near-zero root we want is
 # not lost to cancellation when c is small.
 @inline function _smallest_quadratic_root(a::T, b::T, c::T) where {T}
+    coefficient_scale = max(abs(a), abs(b), abs(c))
+    iszero(coefficient_scale) && return nothing
+    a /= coefficient_scale
+    b /= coefficient_scale
+    c /= coefficient_scale
     if abs(a) <= eps(T)
         abs(b) <= eps(T) && return nothing
         return -c / b
@@ -93,9 +128,10 @@ function _preserve_closed_area_fixed_corners!(nodes::Vector{SVector{2,T}},
     # keep d_i = 0 and therefore do not move at all.
     n = length(nodes)
     n < 3 && return nodes
-    (abs(target_area) <= eps(T)) && return nodes
     A0 = _raw_polygon_area(nodes)
-    abs(A0) <= eps(T) && return nodes
+    area_tolerance = _raw_polygon_area_tolerance(nodes)
+    abs(target_area) <= area_tolerance && return nodes
+    abs(A0) <= area_tolerance && return nodes
     sign(target_area) == sign(A0) || return nodes
 
     rhs = target_area - A0
@@ -110,7 +146,7 @@ function _preserve_closed_area_fixed_corners!(nodes::Vector{SVector{2,T}},
         pj = nodes[j]
         di = corners[i] ? zero(SVector{2,T}) : pi - ctr
         dj = corners[j] ? zero(SVector{2,T}) : pj - ctr
-        B += _cross2(pi, dj) + _cross2(di, pj)
+        B += _cross2(pi - ctr, dj) + _cross2(di, pj - ctr)
         C += _cross2(di, dj)
     end
     B /= 2

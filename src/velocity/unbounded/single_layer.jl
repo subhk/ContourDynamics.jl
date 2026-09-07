@@ -406,12 +406,31 @@ function segment_velocity(kernel::SQGKernel{T}, ::UnboundedDomain,
     h_eff_sq = h * h + kernel.δ^2
     h_eff = sqrt(h_eff_sq)
 
-    # Antiderivative F(u) = arcsinh(u / h_eff)
-    # Numerically stable form of log(u + √(u² + h_eff²)) — avoids
-    # catastrophic cancellation when u is large negative.
-    F_a = asinh(u_a / h_eff)
-    F_b = asinh(u_b / h_eff)
-
     inv2pi = one(T) / (2 * T(π))
-    return inv2pi * t_hat * (F_a - F_b)
+    return inv2pi * t_hat * _sqg_asinh_difference(u_a, u_b, h_eff, ds_len)
+end
+
+# Evaluate asinh(u_a/h) - asinh(u_b/h) without subtracting nearly equal
+# antiderivatives when the whole panel is far to one side of the target.  The
+# half-difference identity
+#
+#   tanh((asinh(x) - asinh(y))/2) = (x-y)/(√(1+x²) + √(1+y²))
+#
+# reduces that case to a small, well-resolved atanh argument.  When the panel
+# straddles the target, the direct subtraction is already well-conditioned and
+# avoids rounding the atanh argument to one for extremely small regularization.
+@inline function _sqg_asinh_difference(u_a::T, u_b::T, h_eff::T,
+                                       ds_len::T) where {T}
+    signbit(u_a) != signbit(u_b) &&
+        return asinh(u_a / h_eff) - asinh(u_b / h_eff)
+
+    radius_a = hypot(u_a, h_eff)
+    radius_b = hypot(u_b, h_eff)
+    scale = max(radius_a, radius_b)
+    ratio = (ds_len / scale) / (radius_a / scale + radius_b / scale)
+    # Near an endpoint the ratio approaches one, where rounding can make
+    # `atanh(ratio)` inaccurate or infinite.  In that regime the two asinh
+    # values are well separated, so direct subtraction is the stable form.
+    ratio < T(0.5) && return T(2) * atanh(ratio)
+    return asinh(u_a / h_eff) - asinh(u_b / h_eff)
 end

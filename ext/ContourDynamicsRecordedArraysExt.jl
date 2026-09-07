@@ -31,7 +31,7 @@ Returns a NamedTuple with `energy`, `enstrophy`, `circulation`,
 `angular_momentum` (recorded arrays), `clock` (the shared `ContinuousClock`),
 and `callback` (for use with `evolve!`).
 
-After the simulation, retrieve the full history via `getentries`, `getts`, `getvs`
+After the simulation, retrieve the full history via `record`, `getts`, and `getvs`
 from RecordedArrays.
 
 # Example
@@ -41,7 +41,7 @@ rec = recorded_diagnostics(prob; dt=0.01, nsteps=10000, record_every=10)
 evolve!(prob, stepper, params; nsteps=10000, callbacks=[rec.callback])
 
 # Access history:
-e = getentries(rec.energy)
+e = record(rec.energy)
 ```
 """
 function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
@@ -51,10 +51,10 @@ function ContourDynamics.recorded_diagnostics(prob::ContourProblem{K,D,T};
     dt_T, tmax = _recording_schedule(T, dt, nsteps, record_every)
     clock = ContinuousClock(tmax)
 
-    energy_rec = recorded(StaticEntry, clock, T[])
-    enstrophy_rec = recorded(StaticEntry, clock, T[])
-    circulation_rec = recorded(StaticEntry, clock, T[])
-    angmom_rec = recorded(StaticEntry, clock, T[])
+    energy_rec = StaticRArray(clock, T[])
+    enstrophy_rec = StaticRArray(clock, T[])
+    circulation_rec = StaticRArray(clock, T[])
+    angmom_rec = StaticRArray(clock, T[])
 
     last_time = Ref(zero(T))
 
@@ -103,10 +103,10 @@ function ContourDynamics.recorded_diagnostics(prob::MultiLayerContourProblem{N,K
     dt_T, tmax = _recording_schedule(T, dt, nsteps, record_every)
     clock = ContinuousClock(tmax)
 
-    energy_rec = recorded(StaticEntry, clock, T[])
-    enstrophy_rec = recorded(StaticEntry, clock, T[])
-    circulation_rec = recorded(StaticEntry, clock, T[])
-    angmom_rec = recorded(StaticEntry, clock, T[])
+    energy_rec = StaticRArray(clock, T[])
+    enstrophy_rec = StaticRArray(clock, T[])
+    circulation_rec = StaticRArray(clock, T[])
+    angmom_rec = StaticRArray(clock, T[])
 
     last_time = Ref(zero(T))
 
