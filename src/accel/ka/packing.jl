@@ -198,8 +198,7 @@ end
 # Mirrors `_GPUWorkspace`/`_get_state_workspace` but is sized to the concatenated
 # node count `total` and carries the extra per-mode velocity scratch
 # (`mode_vx`/`mode_vy`). Reusing it across RK stages avoids reallocating 13 device
-# arrays every modal-velocity evaluation (≥4×/RK4 step). Held in TASK-LOCAL
-# storage by `_get_multilayer_workspace`, like the single-layer workspace.
+# arrays every modal-velocity evaluation (≥4×/RK4 step). Owned by ExecutionWorkspace and retrieved by `_get_multilayer_workspace`.
 mutable struct _MultilayerWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatrix{T},
                                     VDA<:AbstractVector{SVector{2,T}}}
     ax::DA; ay::DA; bx::DA; by::DA; pv::DA; ka::DA; kb::DA  # 7 segment buffers

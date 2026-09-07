@@ -58,12 +58,13 @@ end
         state_type = ContourDynamics.DeviceContourState{
             Float64,Vector{Float64},Vector{Int},Vector{UInt8}}
         gpu_problem_type = ContourProblem{
-            EulerKernel,UnboundedDomain,Float64,GPU,state_type}
+            EulerKernel,UnboundedDomain,Float64,GPU,ContourDynamics._DeviceContourStorage{state_type}}
 
         @test which(total_nodes, Tuple{gpu_problem_type}) !==
               which(total_nodes, Tuple{ContourProblem})
-        @test which(contours, Tuple{gpu_problem_type}) !==
-              which(contours, Tuple{ContourProblem})
+        state = DeviceContourState([circular_patch(.5, 8, 1.)], CPU())
+        @test_throws ErrorException ContourDynamics._borrow_contours(
+            ContourDynamics._DeviceContourStorage(state))
         @test which(vortex_area, Tuple{gpu_problem_type}) !==
               which(vortex_area, Tuple{ContourProblem})
     end

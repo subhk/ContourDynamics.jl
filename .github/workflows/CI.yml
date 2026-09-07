@@ -10,13 +10,14 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.group }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         version: ['1.10', '1.11', '1.12']
         os: [ubuntu-latest, macos-latest]
+        group: [core, numerical, device, performance]
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
@@ -24,9 +25,11 @@ jobs:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
+      - name: Run selected test group
         env:
           JULIA_NUM_THREADS: 2
+          TEST_GROUP: ${{ matrix.group }}
+        run: julia --project=. -e 'using Pkg; Pkg.test(; test_args=[ENV["TEST_GROUP"]])'
 
   extensions:
     name: Julia ${{ matrix.version }} - ${{ matrix.extension.dependency }} extension
@@ -36,10 +39,12 @@ jobs:
       matrix:
         version: ['1.10', '1.11', '1.12']
         extension:
+          - dependency: JLD2
+            group: jld2
           - dependency: OrdinaryDiffEq
-            test_file: test/test_diffeq.jl
+            group: diffeq
           - dependency: RecordedArrays
-            test_file: test/test_recorded_arrays.jl
+            group: recorded
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
@@ -49,11 +54,12 @@ jobs:
       - name: Test optional extension
         env:
           EXTENSION_DEPENDENCY: ${{ matrix.extension.dependency }}
-          EXTENSION_TEST_FILE: ${{ matrix.extension.test_file }}
+          TEST_GROUP: ${{ matrix.extension.group }}
         run: >-
           julia --color=yes -e '
             using Pkg;
             Pkg.activate(; temp=true);
             Pkg.develop(path=pwd());
             Pkg.add(ENV["EXTENSION_DEPENDENCY"]);
-            include(joinpath(pwd(), ENV["EXTENSION_TEST_FILE"]));'
+            push!(ARGS, ENV["TEST_GROUP"]);
+            include(joinpath(pwd(), "test", "runtests.jl"));'

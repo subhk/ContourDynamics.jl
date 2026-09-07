@@ -47,6 +47,26 @@ After the environment is instantiated:
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
+For a shorter feedback loop, select a group:
+
+```bash
+julia --project=. --threads=2 test/runtests.jl core
+julia --project=. --threads=2 test/runtests.jl numerical device performance
+julia --project=. test/runtests.jl jld2
+julia --project=. test/runtests.jl hardware
+```
+
+`core` covers types, ownership, stepping, geometry, and surgery. `numerical`
+contains analytical and independent Fourier/image-sum oracles. `device` runs KA
+kernels on CPU; `hardware` requires a functional CUDA device. `performance`
+contains allocation checks. Extension groups are `jld2`, `diffeq`, and `recorded`;
+`extensions` requests all three and fails if dependencies are missing.
+
+With no arguments (or `all`), the runner executes all CPU groups and installed
+extensions. Missing optional dependencies are reported as skips. An installed
+extension that fails to load, or any failing test, fails the run. CUDA hardware
+is opt-in. CI runs CPU groups separately and provisions each extension explicitly.
+
 The test suite checks conservation invariants (circulation, energy, enstrophy)
 and validates surgery operations, so all tests should pass before opening a PR.
 

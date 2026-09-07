@@ -146,6 +146,7 @@ Legacy output accessor: borrows CPU contours and copies GPU contours. Use
 `contours` for an explicit borrow or `snapshot_contours` for a stable owned copy.
 """
 materialize_contours(prob::_ContourProblemTypes) = _materialize_storage(_active_storage(prob))
+"""Return the problem-owned reusable computational workspace."""
 execution_workspace(prob::_ContourProblemTypes) = getfield(prob, :workspace)
 clear_state_workspace_cache!(prob::_ContourProblemTypes) = clear_state_workspace_cache!(execution_workspace(prob))
 

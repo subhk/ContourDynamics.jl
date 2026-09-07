@@ -219,17 +219,14 @@ end
 # `_ka_apply_velocity!` — keeps the periodic Ewald tables on-device across
 # stages (via `_ensure_device_ewald!`) instead of re-uploading them each call.
 #
-# Held in TASK-LOCAL storage (not a process-global) so concurrent velocity
-# evaluation of independent problems on separate tasks/threads each get their
-# own workspace and cannot race on the shared device buffers; within one task
-# the RK stages reuse it. Returned as `Any` because the device array type is
-# only known once an array backend (e.g. CUDA) is loaded; the function barrier
-# `_state_velocity_with_ws!` restores concrete typing before the hot launches.
-const _STATE_WS_TLS_KEY = :contourdynamics_state_velocity_workspace
+# The caller's ExecutionWorkspace owns these buffers. A task-local owner is
+# used only by standalone internal calls that omit the workspace keyword.
+# The concrete workspace type is resolved at the launch function barrier.
+const _STATE_WS_KEY = :contourdynamics_state_velocity_workspace
 
 function _get_state_workspace(dev::AbstractDevice, ::Type{T}, N::Int; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     store = workspace.buffers
-    key = (_STATE_WS_TLS_KEY, T, typeof(dev))
+    key = (_STATE_WS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     # Rebuild when absent or when surgery changed the node count. The velocity
     # kernels derive their segment count from the buffer length, so the
@@ -241,14 +238,13 @@ function _get_state_workspace(dev::AbstractDevice, ::Type{T}, N::Int; workspace:
     return ws
 end
 
-# Task-local cache for the multi-layer modal velocity workspace. Same rationale
-# and lifetime as `_get_state_workspace`: one workspace per (task, T, device),
+# Multi-layer buffers share the explicit execution workspace lifetime,
 # rebuilt when surgery changes the concatenated node count.
-const _MULTILAYER_WS_TLS_KEY = :contourdynamics_multilayer_velocity_workspace
+const _MULTILAYER_WS_KEY = :contourdynamics_multilayer_velocity_workspace
 
 function _get_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     store = workspace.buffers
-    key = (_MULTILAYER_WS_TLS_KEY, T, typeof(dev))
+    key = (_MULTILAYER_WS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing || (ws::_MultilayerWorkspace).n != total
         ws = _create_multilayer_workspace(dev, T, total)
@@ -360,7 +356,7 @@ function _ka_multilayer_velocity_from_states!(vel::AbstractVector{SVector{2,T}},
     length(vel) >= total || throw(DimensionMismatch("vel length ($(length(vel))) must be >= total nodes ($total)"))
     total == 0 && return vel
 
-    # Reuse a task-local workspace across RK stages instead of allocating 13
+    # Reuse the execution workspace across RK stages instead of allocating 13
     # device arrays per evaluation. `ws` is `Any` from the cache; the concrete-
     # typed barrier `_multilayer_velocity_with_ws!` restores typing for the hot launches.
     ws = _get_multilayer_workspace(dev, T, total; workspace=workspace)
@@ -399,7 +395,7 @@ end
 
 Evaluate device-resident multilayer velocity and scatter it into one host
 vector per layer. Both the flat device result and its host transfer target live
-in the task-local multilayer workspace, so repeated calls allocate no buffers
+in the execution workspace, so repeated calls allocate no buffers
 proportional to the node count.
 """
 function _ka_multilayer_velocity_to_host!(vel::NTuple{N,Vector{SVector{2,T}}},
@@ -421,7 +417,7 @@ function _ka_multilayer_velocity_to_host!(vel::NTuple{N,Vector{SVector{2,T}}},
                                                  domain, dev, ranges, total)
 end
 
-# The task-local cache is `Any`-typed. Keep workspace field access and the host
+# The workspace buffer dictionary is `Any`-typed. Keep workspace field access and the host
 # scatter behind this concrete barrier; otherwise dynamic `copyto!` dispatch
 # boxes every `SVector` element on the CPU backend.
 function _multilayer_velocity_to_host_with_ws!(
@@ -557,7 +553,7 @@ mutable struct _BetaPlaneWorkspace{T, DA<:AbstractVector{T}}
     last_reference::Union{Nothing, Vector{PVContour{T}}}
 end
 
-const _BETA_WS_TLS_KEY = :contourdynamics_beta_plane_velocity_workspace
+const _BETA_WS_KEY = :contourdynamics_beta_plane_velocity_workspace
 
 function _pack_reference_segments(contours::Vector{PVContour{T}}) where {T}
     n = sum(c -> nnodes(c) >= 2 ? nnodes(c) : 0, contours; init=0)
@@ -604,7 +600,7 @@ end
 function _get_beta_plane_workspace(dev::AbstractDevice, ::Type{T}, live_n::Int,
                                    reference::Vector{PVContour{T}}; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     store = workspace.buffers
-    key = (_BETA_WS_TLS_KEY, T, typeof(dev))
+    key = (_BETA_WS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing || (ws::_BetaPlaneWorkspace).live_n != live_n ||
        (ws::_BetaPlaneWorkspace).last_reference !== reference

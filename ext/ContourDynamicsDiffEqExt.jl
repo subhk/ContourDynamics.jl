@@ -9,7 +9,7 @@ using ContourDynamics
 using OrdinaryDiffEq
 using StaticArrays
 
-const _GPU_ODE_MSG = "OrdinaryDiffEq integration uses a CPU vector state and mutates ContourDynamics._host_contours(prob). Construct the problem with dev=CPU(), or use ContourDynamics timesteppers for GPU() problems."
+const _GPU_ODE_MSG = "OrdinaryDiffEq integration uses a CPU vector state and mutates live CPU contours. Construct the problem with dev=CPU(), or use ContourDynamics timesteppers for GPU() problems."
 
 """
     flatten_nodes(prob::ContourProblem)
@@ -86,7 +86,7 @@ function _make_rhs(prob::ContourProblem{K,D,T}) where {K,D,T}
 end
 
 # Warn (once) if the integrator uses adaptive stepping. The mutation-based RHS is
-# unsafe with step rejection: a rejected trial step's mutations to ContourDynamics._host_contours(prob)
+# unsafe with step rejection: a rejected trial step's mutations to CPU contours
 # survive into the next attempt. Checked at solver initialization so the warning
 # fires even when no surgery callback is attached.
 function _warn_if_adaptive(integrator)
@@ -134,7 +134,7 @@ The surgery interval is determined by:
   `surgery_dt` explicitly to match your step size.
 
 !!! warning "Solver compatibility"
-    This bridge is CPU-only because the RHS closure mutates `ContourDynamics._host_contours(prob)`
+    This bridge is CPU-only because the RHS closure mutates live CPU contours
     in-place on every evaluation.  It is **only safe** with fixed-step,
     non-adaptive integration (e.g. `Tsit5()` with `adaptive=false`).  With
     adaptivity enabled, solvers evaluate the RHS at multiple trial points with

@@ -14,25 +14,34 @@ The velocity direction is along `ds = b - a`, not rotated.
 """
 function segment_velocity(::EulerKernel, ::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    return SVector{2,T}(_straight_euler_contribution_scalar(x[1], x[2], a[1], a[2], b[1], b[2], one(T), one(T) / (T(4) * T(π))))
+    return SVector{2,T}(_straight_euler_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2],
+        one(T), one(T) / (T(4) * T(π))))
 end
 
 function curved_segment_velocity(::EulerKernel, ::UnboundedDomain,
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T) where {T}
-    return SVector{2,T}(_curved_euler_contribution_scalar(x[1], x[2], a[1], a[2], b[1], b[2], one(T), κa, κb, one(T) / (T(4) * T(π))))
+    return SVector{2,T}(_curved_euler_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2],
+        one(T), κa, κb, one(T) / (T(4) * T(π))))
 end
 
 function curved_segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T) where {T}
-    return SVector{2,T}(_curved_qg_contribution_scalar(x[1], x[2], a[1], a[2], b[1], b[2], one(T), κa, κb, kernel.Ld, one(T) / (T(2) * T(π)), one(T) / (T(4) * T(π))))
+    return SVector{2,T}(_curved_qg_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2],
+        one(T), κa, κb, kernel.Ld,
+        one(T) / (T(2) * T(π)), one(T) / (T(4) * T(π))))
 end
 
 function curved_segment_velocity(kernel::SQGKernel{T}, domain::UnboundedDomain,
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T) where {T}
-    return SVector{2,T}(_curved_sqg_contribution_scalar(x[1], x[2], a[1], a[2], b[1], b[2], one(T), κa, κb, kernel.δ, one(T) / (T(2) * T(π))))
+    return SVector{2,T}(_curved_sqg_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2],
+        one(T), κa, κb, kernel.δ, one(T) / (T(2) * T(π))))
 end
 
 @inline curved_segment_velocity(k::AbstractKernel, d::AbstractDomain,
@@ -63,7 +72,10 @@ is integrated with 5-point Gauss-Legendre quadrature.
 """
 function segment_velocity(kernel::QGKernel{T}, domain::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    return SVector{2,T}(_curved_qg_contribution_scalar(x[1], x[2], a[1], a[2], b[1], b[2], one(T), zero(T), zero(T), kernel.Ld, one(T) / (T(2) * T(π)), one(T) / (T(4) * T(π))))
+    return SVector{2,T}(_curved_qg_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2],
+        one(T), zero(T), zero(T), kernel.Ld,
+        one(T) / (T(2) * T(π)), one(T) / (T(4) * T(π))))
 end
 
 """
@@ -83,5 +95,7 @@ normalisation: SQG uses `1/(2πr)` while Euler uses `log(r²)/(4π)`.
 """
 function segment_velocity(kernel::SQGKernel{T}, ::UnboundedDomain,
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T}) where {T}
-    return SVector{2,T}(_curved_sqg_contribution_scalar(x[1], x[2], a[1], a[2], b[1], b[2], one(T), zero(T), zero(T), kernel.δ, one(T) / (T(2) * T(π))))
+    return SVector{2,T}(_curved_sqg_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2],
+        one(T), zero(T), zero(T), kernel.δ, one(T) / (T(2) * T(π))))
 end

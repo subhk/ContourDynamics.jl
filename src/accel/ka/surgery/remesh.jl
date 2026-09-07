@@ -359,13 +359,8 @@ end
     ty = by - ay
     e = sqrt(tx * tx + ty * ty)
     e <= eps(typeof(e)) && return ax, ay
-    nx = -ty
-    ny = tx
-    α = -e * (2 * κa + κb) / 6
-    β = e * κa / 2
-    γ = e * (κb - κa) / 6
-    η = p * (α + p * (β + p * γ))
-    return ax + p * tx + η * nx, ay + p * ty + η * ny
+    sx, sy, _, _ = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p)
+    return sx, sy
 end
 
 @kernel function _materialize_remesh_outputs_kernel!(out_x, out_y, out_corners,

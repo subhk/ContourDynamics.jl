@@ -132,7 +132,7 @@ end
     end
 end
 
-# Task-local buffers for repeated energy diagnostics on device-resident state.
+# ExecutionWorkspace-owned buffers for repeated device energy diagnostics.
 # The workspace is rebuilt only when surgery changes the number of contours or
 # nodes; validity, compacted topology, segment geometry, reduction storage, and
 # periodic Ewald tables are otherwise refilled/reused in place.
@@ -181,12 +181,12 @@ function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
         ncontours, total_nodes)
 end
 
-const _ENERGY_WS_TLS_KEY = :contourdynamics_energy_workspace
+const _ENERGY_WS_KEY = :contourdynamics_energy_workspace
 
 function _get_energy_workspace(dev::AbstractDevice, ::Type{T},
                                ncontours::Int, total_nodes::Int; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     store = workspace.buffers
-    key = (_ENERGY_WS_TLS_KEY, T, typeof(dev))
+    key = (_ENERGY_WS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing || (ws::_EnergyWorkspace).ncontours != ncontours ||
        ws.total_nodes != total_nodes
@@ -774,7 +774,7 @@ mutable struct _MultilayerEnergyWorkspace{
     base_pv::DA
 end
 
-const _MULTILAYER_ENERGY_WS_TLS_KEY = :contourdynamics_multilayer_energy_workspace
+const _MULTILAYER_ENERGY_WS_KEY = :contourdynamics_multilayer_energy_workspace
 
 function _create_multilayer_energy_workspace(dev::AbstractDevice, ::Type{T},
                                              max_contours::Int,
@@ -790,7 +790,7 @@ function _get_multilayer_energy_workspace(
     max_contours = maximum(s -> length(s.lengths), states; init=0)
     total_nodes = sum(s -> length(s.x), states; init=0)
     store = workspace.buffers
-    key = (_MULTILAYER_ENERGY_WS_TLS_KEY, T, typeof(dev))
+    key = (_MULTILAYER_ENERGY_WS_KEY, T, typeof(dev))
     ws = get(store, key, nothing)
     if ws === nothing ||
        (ws::_MultilayerEnergyWorkspace).energy.ncontours != max_contours ||

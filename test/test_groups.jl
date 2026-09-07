@@ -55,7 +55,7 @@ function run_test_groups(requested)
             run_extension_tests(name; required=!("all" in requested) || group in requested || "extensions" in requested)
         else
             Base.eval(Main, :(using CUDA))
-            CUDA.functional() || error("hardware tests require a functional CUDA device")
+            Base.invokelatest(CUDA.functional) || error("hardware tests require a functional CUDA device")
             include("test_cuda_surgery.jl")
         end
     end

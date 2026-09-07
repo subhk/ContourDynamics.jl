@@ -3,9 +3,9 @@
 `CPU()` keeps contour state in ordinary Julia arrays and all simulation work
 uses CPU implementations. `GPU()` keeps the active contour state in
 device-resident buffers for supported velocity, timestepping, surgery, and
-diagnostic paths. Host contour containers on a GPU problem are initialization
-shadows; use `materialize_contours(prob)` only when you intentionally need a CPU
-copy for output, plotting, file writing, or interactive inspection.
+diagnostic paths. GPU problems retain only the active device representation;
+use `snapshot_contours(prob)` when you need an owned CPU copy for output,
+plotting, file writing, or interactive inspection.
 
 Single-layer Euler, QG, and SQG (unbounded or periodic), beta-plane QG
 (periodic), and multi-layer QG all support device-resident velocity,
@@ -27,11 +27,10 @@ copies occur only at explicit output boundaries such as `materialize_contours`,
 snapshots, plotting, and animation. The CPU-vector OrdinaryDiffEq bridge rejects
 GPU problems instead of falling back.
 
-The device velocity and energy paths cache scratch workspaces in task-local
-storage and size them to the current topology, so repeated calls reuse segment,
-copy-back, scan, and reduction buffers. Those buffers live as long as the task; call
-`clear_state_workspace_cache!` to release them — the workspace counterpart to
-[`clear_ewald_cache!`](@ref).
+The device velocity and energy paths reuse buffers owned by the problem's
+`ExecutionWorkspace`, sized to the current topology. Call
+`clear_state_workspace_cache!(prob)` to release segment, copy-back, scan, and
+reduction buffers without changing the physical state.
 
 ```@docs
 AbstractDevice
@@ -45,3 +44,24 @@ to_cpu
 to_device
 clear_state_workspace_cache!
 ```
+
+## State and workspace ownership
+
+`contours(prob)` borrows live CPU contours and rejects GPU storage.
+`snapshot_contours(prob)` returns an independent CPU copy on either backend.
+The legacy `materialize_contours(prob)` retains its CPU-borrow/GPU-copy behavior.
+GPU field-style reads (`prob.contours` or `prob.layers`) now materialize current
+state rather than exposing an obsolete host mirror; modifying that copy does
+not update the device.
+
+```@docs
+snapshot_contours
+ExecutionWorkspace
+execution_workspace
+```
+
+A workspace belongs to one computation at a time. Independent problems receive
+independent workspaces by default. Call `clear_state_workspace_cache!(prob)` to
+release a problem's computational buffers; this preserves physical state and
+stepper stage arrays. The zero-argument form clears only task-local compatibility
+workspaces used by standalone internal state operations.

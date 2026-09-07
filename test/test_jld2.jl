@@ -18,12 +18,16 @@ end
             "unused.jld2"; save_dt=1.0e308, dt=1.0e-308)
     end
 
-    @testset "Snapshot helpers use materialized output boundary" begin
+    @testset "Snapshot helpers own their output" begin
         ext = Base.get_extension(ContourDynamics, :ContourDynamicsJLD2Ext)
 
         c = circular_patch(1.0, 16, 2.0)
         prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
-        @test ext._snapshot_contours(prob) === materialize_contours(prob)
+        snapshot = ext._snapshot_contours(prob)
+        @test snapshot !== contours(prob)
+        @test _jld2_contour_equal(snapshot[1], c)
+        c.nodes[1] += SVector(1., 0.)
+        @test snapshot[1].nodes[1] != c.nodes[1]
 
         Ld = SVector(1.0)
         F = 1.0 / (2 * Ld[1]^2)
@@ -31,7 +35,9 @@ end
         kernel = MultiLayerQGKernel(Ld, coupling)
         layers = ([circular_patch(0.5, 12, 1.0)], [circular_patch(0.3, 8, -0.5)])
         mlprob = MultiLayerContourProblem(kernel, UnboundedDomain(), layers)
-        @test ext._snapshot_layers(mlprob) === materialize_contours(mlprob)
+        snapshot = ext._snapshot_layers(mlprob)
+        @test snapshot[1] !== contours(mlprob)[1]
+        @test _jld2_contour_equal(snapshot[1][1], layers[1][1])
     end
 
     @testset "Single-Layer Round-Trip" begin
