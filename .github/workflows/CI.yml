@@ -60,6 +60,6 @@ jobs:
             using Pkg;
             Pkg.activate(; temp=true);
             Pkg.develop(path=pwd());
-            Pkg.add(ENV["EXTENSION_DEPENDENCY"]);
+            Pkg.add([ENV["EXTENSION_DEPENDENCY"], "StaticArrays"]);
             push!(ARGS, ENV["TEST_GROUP"]);
             include(joinpath(pwd(), "test", "runtests.jl"));'
