@@ -67,10 +67,10 @@ geometric cleanup and topology update between time steps.
 
 The main implementation points are:
 
-| Dritschel (1988) step | Code path |
+| Surgery step | Code path |
 |-----------------------|-----------|
 | Cubic contour representation and curvature suppression at corners | `_signed_node_curvatures`, `_cubic_segment_point`, `curved_segment_velocity` |
-| Nonlocal node redistribution, Eqs. (2a)--(2d), with fixed corner spans | `_dritschel_segment_densities`, `remesh`, `_remesh_with_fixed_corners` |
+| Adapted nonlocal node redistribution with fixed corner spans | `_dritschel_segment_densities`, `remesh`, `_remesh_with_fixed_corners` |
 | Search for new high-curvature acute corners | `_promote_high_curvature_corners!` |
 | Find close node-to-segment contacts within ``\delta`` | `build_spatial_index`, `find_close_segments`, `_surgery_contact_distance2` |
 | Split one contour or merge compatible contours | `reconnect!`, `_reconnect_split!`, `_reconnect_merge!` |
@@ -131,51 +131,71 @@ pass; ``\ell_i`` and ``\kappa_i`` are their length and signed curvature, while
 ``d_{ij}`` is the distance from target node ``j`` to source midpoint ``i``.
 Absolute values make the density depend on curvature and PV-jump magnitudes.
 
-The raw segment density is then built from the transformed curvature scale and
-saturated near the surgery cutoff ``\delta``:
+The curvature scale is transformed at each node, then averaged over the two
+endpoints of segment ``j`` before saturation near the surgery cutoff ``\delta``:
 
 ```math
-\tilde{\rho}_j
-=
-\frac{\tilde{\kappa}_j}
-     {1 + \delta \tilde{\kappa}_j/\sqrt{2}},
-\qquad
+\begin{aligned}
+\mu_{\mathrm d} &= \frac{\mu}{L}, \\
 \tilde{\kappa}_j
-=
-\frac{1}{\mu L}(K_j L)^{2/3} + \sqrt{2}\,K_j .
+&= \frac{1}{\mu_{\mathrm d} L}(K_j L)^{2/3} + \sqrt{2}\,K_j
+ = \frac{1}{\mu}(K_j L)^{2/3} + \sqrt{2}\,K_j, \\
+\bar{\kappa}_j &= \frac{\tilde{\kappa}_j+\tilde{\kappa}_{j+1}}{2}, \\
+\tilde{\rho}_j
+&= \frac{\bar{\kappa}_j}{1 + \delta \bar{\kappa}_j/\sqrt{2}}.
+\end{aligned}
 ```
 
-Here ``L`` is estimated from the contour perimeter, ``\mu`` is the minimum
-target segment length, and ``\delta`` is the surgery cutoff. The transformed
-curvature ``\tilde\kappa_j`` has inverse-length units and
-combines nonlocal curvature ``K_j`` with the large-scale length ``L``. The raw
-density ``\tilde\rho_j`` is its cutoff-saturated form; the final density
-``\rho`` below is the rescaled and spacing-clamped version. After the raw
-density is formed, it is rescaled and clamped so that the effective spacing
+Here ``L=\max(L_c/(2\pi),\Delta_{\max})`` is estimated from the contour
+perimeter, ``\mu`` is the public minimum target segment **length**, and
+``\delta`` is the surgery cutoff. The dimensionless density parameter
+``\mu_{\mathrm d}=\mu/L`` is a package choice that adapts the literature's
+density construction to this length-based API. The literature's dimensionless
+parameter must not be substituted directly for `SurgeryParams.μ`.
+Both terms of the transformed curvature ``\tilde\kappa_j`` have inverse-length
+units. It combines nonlocal curvature ``K_j`` with the large-scale length ``L``.
+The segment value ``\bar\kappa_j`` averages the transformed endpoint values
+before the nonlinear saturation. The raw segment density ``\tilde\rho_j``
+is then rescaled and spacing-clamped to give ``\rho_j``, so the target spacing
 stays in the interval
 
 ```math
 \mu \le \Delta s_j \le \Delta_{\max}.
 ```
 
-Here ``\Delta s_j`` is the target arclength of redistributed segment ``j`` and
-``\Delta_{\max}`` is the maximum allowed target length.
+Here ``\Delta s_j`` is the target spacing and ``\Delta_{\max}`` is the
+maximum allowed target length. These bounds constrain the density and interval
+counts. Cubic interpolation and subsequent area correction can change the final
+chord lengths. Scaling all coordinate lengths and length-valued parameters
+together scales the density inversely, preserving the relative node distribution.
 
-New nodes are placed by equal increments of the weighted arclength measure:
+The implementation forms a discrete weighted measure from **chord lengths**.
+For a closed contour with ``N`` input nodes, its polygonal perimeter is
+``L_c=\sum_{j=1}^N\ell_j`` and its cumulative measure is
 
 ```math
-M(s) = \int_0^s \rho(\sigma)\,d\sigma,
+M_1=0,\qquad M_{j+1}=M_j+\ell_j\rho_j,
 \qquad
-M(s_k) = \frac{k}{N_{\mathrm{seg}}} M(L_c),
+m_k=\frac{k}{N_{\mathrm{seg}}}M_{N+1},
+\quad k=0,\ldots,N_{\mathrm{seg}}-1.
 ```
 
-In this equation ``s\in[0,L_c]`` is arclength, ``\sigma`` is the dummy
-integration coordinate, ``\rho(\sigma)`` is node density,
-``M(s)`` is cumulative weighted arclength, ``N_{\mathrm{seg}}`` is the chosen
-number of output segments, ``L_c`` is contour perimeter, and ``s_k`` is the
-position of output node ``k``. Instead of placing these nodes on straight
-chords, the implementation uses the same cubic interpolation arc used for
-curved-segment velocity quadrature:
+Here ``\rho_j`` is constant on input segment ``j``, ``N_{\mathrm{seg}}`` is
+the chosen number of output segments, and ``m_k`` is the target measure for
+output node ``k``. On the segment satisfying ``M_j\le m_k<M_{j+1}``, the
+interpolation parameter is
+
+```math
+p_k=\frac{m_k-M_j}{\ell_j\rho_j}.
+```
+
+The node is evaluated at ``\mathbf X_j(p_k)`` on the cubic arc below. This
+procedure approximates density-weighted redistribution using chord lengths;
+it does not integrate the cubic arclength element ``|\mathbf X'_j(p)|\,dp``.
+Labelled corners divide the contour into spans to which the same construction
+is applied with fixed endpoints. Subsequent area correction can move the free
+nodes. The interpolation arc is also used for curved-segment velocity
+quadrature:
 
 ```math
 \mathbf{X}(p)
@@ -200,12 +220,16 @@ p\left[
 \right],
 ```
 
-where ``e=|\mathbf{b}-\mathbf{a}|`` and ``\mathbf{n}`` is the left normal to
-the chord. If both endpoint curvatures are numerically zero, the segment reduces
+where ``e=|\mathbf{b}-\mathbf{a}|`` and
+``\mathbf{n}=(-(b_y-a_y),b_x-a_x)`` is the chord rotated to the left, with
+``|\mathbf n|=e``. Thus ``\eta`` is dimensionless and the signed displacement
+along the unit normal is ``e\eta``. This is the cubic representation in
+Crowdy & Surana (2007), Eqs. (3.9)--(3.11), following Dritschel.
+If both endpoint curvatures are numerically zero, the segment reduces
 to the straight-line formula.
 Here ``\mathbf a`` and ``\mathbf b`` are chord endpoints, ``p`` is the local
 coordinate from ``\mathbf a`` to ``\mathbf b``, ``\mathbf X(p)`` is the cubic
-arc position, ``\eta(p)`` is its signed normal displacement, and
+arc position, ``\eta(p)`` is its dimensionless normal coefficient, and
 ``\kappa_a,\kappa_b`` are endpoint curvatures.
 
 For reconnection, two segment parts are considered close when the node-to-segment
@@ -240,26 +264,29 @@ are excluded from this cleanup.
 
 ## Node Redistribution (Remeshing)
 
-After each surgery pass, nodes are redistributed along each contour using the
-node-density construction from Dritschel (1988), Eqs. (2a)--(2d). The density is
+After each surgery pass, nodes are redistributed along each contour using an
+adaptation of Dritschel's nonlocal node-density construction. The density is
 larger where the contour has larger curvature and is also increased by nearby
 high-curvature parts of all contours participating in the same surgery pass,
 weighted by vorticity jump and inverse squared distance.
 
 Since the public surgery parameters intentionally stay compact, the
-implementation uses Dritschel's standard curvature exponent ``2/3``, uses
+implementation fixes the curvature exponent at ``2/3``, uses
 ``\delta`` as the cutoff scale, estimates the large-scale length from the
-contour perimeter, and rescales the resulting density so the final spacing stays
-between ``\mu`` and ``\Delta_{\max}``.
+contour perimeter, derives ``\mu_{\mathrm d}=\mu/L``, and rescales and clamps
+the resulting density to the target spacing interval
+``[\mu,\Delta_{\max}]``. The parameter mapping and node-budget normalization
+are package adaptations; this is not an exact implementation of the paper's
+node-density parameterization.
 
 1. Estimate node curvature by the circle through each triplet of adjacent nodes
 2. Set curvature to zero at labelled corners and their immediate neighbours
 3. Form Dritschel's nonlocal curvature ``K_j`` from all same-pass source contours
-4. Build the saturated segment density from Eqs. (2a)--(2c), limiting the implied
-   spacing near the cutoff scale
+4. Average adjacent transformed node curvatures, then saturate the segment
+   density to limit the implied spacing near the cutoff scale
 5. Rescale the density to keep the existing node budget unless spacing bounds require adding or removing nodes
-6. Redistribute nodes by equal increments of the density integral, placing new
-   nodes on cubic Dritschel interpolation arcs rather than straight chords
+6. Redistribute nodes by equal increments of the chord-weighted measure,
+   mapping each target to a cubic Dritschel interpolation arc
 7. Keep labelled surgery corners fixed and remesh only the spans between them
 
 Here:
@@ -352,8 +379,8 @@ resolution of the contour description.
 | Field (ASCII alias) | Symbol | Description |
 |-----------|--------|-------------|
 | `δ` (`delta`) | ``\delta`` | Proximity threshold for detecting close segments |
-| `μ` (`mu`) | ``\mu`` | Minimum segment length after remeshing |
-| `Δ_max` (`Delta_max`) | ``\Delta_{\max}`` | Maximum segment length after remeshing |
+| `μ` (`mu`) | ``\mu`` | Minimum target segment length for remeshing |
+| `Δ_max` (`Delta_max`) | ``\Delta_{\max}`` | Maximum target segment length for remeshing |
 | `area_min` | ``A_{\min}`` | Minimum contour area; smaller contours are removed |
 | `n_surgery` | — | Number of time steps between surgery passes |
 
@@ -377,6 +404,7 @@ or overly frequent cleanup.
 
 ## References and Further Reading
 
+- Crowdy, D. & Surana, A. (2007). *Contour dynamics in complex domains.* J. Fluid Mech. **593**, 235--254. [doi:10.1017/S002211200700866X](https://doi.org/10.1017/S002211200700866X)
 - Dritschel, D.G. (1988). *Contour surgery: a topological reconnection scheme for extended integrations using contour dynamics.* J. Comput. Phys. **77**(1), 240--266. [doi:10.1016/0021-9991(88)90165-9](https://doi.org/10.1016/0021-9991(88)90165-9)
 - Dritschel, D.G. (1989). *Contour dynamics and contour surgery: numerical algorithms for extended, high-resolution modelling of vortex dynamics in two-dimensional, inviscid, incompressible flows.* Comput. Phys. Rep. **10**(3), 77--146. [doi:10.1016/0167-7977(89)90004-X](https://doi.org/10.1016/0167-7977(89)90004-X)
 

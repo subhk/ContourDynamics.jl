@@ -1,9 +1,8 @@
 using ContourDynamics
 using Documenter
 
-# On PRs, skip execution of @repl / @example / @setup / @eval blocks so the
-# preview build is fast; full evaluation runs on push to main / tags.
-const DRAFT = get(ENV, "GITHUB_EVENT_NAME", "") == "pull_request"
+# Execute examples on every build, including pull requests. Runnable snippets
+# use @example so exceptions fail the build instead of becoming REPL output.
 const BUILD_DIR = get(ENV, "DOCUMENTER_BUILD_DIR", "build")
 
 makedocs(;
@@ -11,8 +10,8 @@ makedocs(;
     authors = "Subhajit Kar",
     repo = "https://github.com/subhk/ContourDynamics.jl/blob/{commit}{path}#{line}",
     sitename = "ContourDynamics.jl",
-    doctest = false,
-    draft = DRAFT,
+    doctest = true,
+    draft = false,
     build = BUILD_DIR,
     checkdocs = :exports,
     format = Documenter.HTML(
@@ -65,11 +64,13 @@ makedocs(;
         ],
         "Contributing" => "contributing.md",
     ],
-    warnonly = true,
+    warnonly = false,
 )
 
-deploydocs(;
-    repo = "github.com/subhk/ContourDynamics.jl",
-    devbranch = "main",
-    push_preview = true,
-)
+if get(ENV, "DOCUMENTER_DEPLOY", "false") == "true"
+    deploydocs(;
+        repo = "github.com/subhk/ContourDynamics.jl",
+        devbranch = "main",
+        push_preview = true,
+    )
+end

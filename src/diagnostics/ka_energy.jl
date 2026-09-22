@@ -3,24 +3,8 @@
 # Energy diagnostics are double contour integrals. The accelerated path packs
 # every valid contour segment into structure-of-arrays buffers, evaluates the
 # pairwise Green's-function contribution on the selected backend, and reduces
-# the result back to a scalar. Segment identity metadata is kept alongside the
-# geometry so kernels can handle same-segment singular limits correctly.
-
-"""
-    EnergySegmentData
-
-Packed segment geometry and identity metadata for KernelAbstractions energy
-reductions. `seg` holds endpoint/PV arrays; `contour_id` and `local_index`
-allow device kernels to detect self-segment singular cases without consulting
-the original contour objects.
-"""
-struct EnergySegmentData{A<:AbstractVector, I<:AbstractVector}
-    seg::SegmentData{A}
-    # `contour_id` is compacted over energy-valid contours only; `local_index`
-    # is the original segment index within that contour.
-    contour_id::I
-    local_index::I
-end
+# the result back to a scalar. The smooth energy potentials only need segment
+# endpoints and PV jumps, including at coincident quadrature points.
 
 function _valid_energy_segment_count(contours)
     # Spanning contours are excluded from scalar energy diagnostics; they have
@@ -33,12 +17,10 @@ function _valid_energy_segment_count(contours)
     return n
 end
 
-function _fill_energy_segment_bufs!(ax, ay, bx, by, pv, contour_id, local_index, contours)
+function _fill_energy_segment_bufs!(ax, ay, bx, by, pv, contours)
     idx = 1
-    cid = 0
     for c in contours
         _valid_energy_contour(c) || continue
-        cid += 1
         nc = nnodes(c)
         @inbounds for j in 1:nc
             a = c.nodes[j]
@@ -48,8 +30,6 @@ function _fill_energy_segment_bufs!(ax, ay, bx, by, pv, contour_id, local_index,
             bx[idx] = b[1]
             by[idx] = b[2]
             pv[idx] = c.pv
-            contour_id[idx] = cid
-            local_index[idx] = j
             idx += 1
         end
     end
@@ -65,18 +45,9 @@ function _pack_energy_segments(contours, dev::AbstractDevice, ::Type{T}) where {
     bx = Vector{T}(undef, n)
     by = Vector{T}(undef, n)
     pv = Vector{T}(undef, n)
-    ka = zeros(T, n)
-    kb = zeros(T, n)
-    contour_id = Vector{Int}(undef, n)
-    local_index = Vector{Int}(undef, n)
-    _fill_energy_segment_bufs!(ax, ay, bx, by, pv, contour_id, local_index, contours)
-    return EnergySegmentData(
-        SegmentData(to_device(dev, ax), to_device(dev, ay), to_device(dev, bx),
-                    to_device(dev, by), to_device(dev, pv),
-                    to_device(dev, ka), to_device(dev, kb)),
-        to_device(dev, contour_id),
-        to_device(dev, local_index),
-    )
+    _fill_energy_segment_bufs!(ax, ay, bx, by, pv, contours)
+    return (; ax=to_device(dev, ax), ay=to_device(dev, ay),
+              bx=to_device(dev, bx), by=to_device(dev, by), pv=to_device(dev, pv))
 end
 
 @kernel function _state_energy_valid_kernel!(valid, lengths, wrapx, wrapy, ncontours)
@@ -98,13 +69,11 @@ end
     end
 end
 
-@kernel function _state_energy_segments_kernel!(ax, ay, bx, by, out_pv, ka, kb,
-                                                contour_id, local_index,
+@kernel function _state_energy_segments_kernel!(ax, ay, bx, by, out_pv,
                                                 out_offsets, source_contour,
                                                 x, y, pv, wrapx, wrapy,
                                                 in_offsets, in_lengths,
-                                                output_offset, contour_offset,
-                                                nvalid)
+                                                output_offset, nvalid)
     out_ci = @index(Global)
     if out_ci <= nvalid
         ci = source_contour[out_ci]
@@ -124,10 +93,6 @@ end
                 by[out_g] = y[in_off] + wrapy[ci]
             end
             out_pv[out_g] = pv[ci]
-            ka[out_g] = zero(eltype(ka))
-            kb[out_g] = zero(eltype(kb))
-            contour_id[out_g] = contour_offset + out_ci
-            local_index[out_g] = li
         end
     end
 end
@@ -146,10 +111,8 @@ mutable struct _EnergyWorkspace{T, DA<:AbstractVector{T}, IA<:AbstractVector{Int
     out_lengths::IA
     out_offsets::IA
     source_contour::IA
-    contour_id::IA
-    local_index::IA
     total_store::IA
-    ax::DA; ay::DA; bx::DA; by::DA; pv::DA; ka::DA; kb::DA
+    ax::DA; ay::DA; bx::DA; by::DA; pv::DA
     partial::DA
     host_count::Vector{Int}
     host_partial::Vector{T}
@@ -170,12 +133,11 @@ function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
     DA, IA, BA, DMA = typeof(da), typeof(ia), typeof(ba), typeof(dma)
     mk_t() = device_zeros(dev, T, total_nodes)
     mk_i_contours() = device_zeros(dev, Int, ncontours)
-    mk_i_nodes() = device_zeros(dev, Int, total_nodes)
     _EnergyWorkspace{T,DA,IA,BA,DMA}(
         ba, ia, device_zeros(dev, Int, 1), mk_i_contours(), mk_i_contours(),
         mk_i_contours(), mk_i_contours(), mk_i_contours(),
-        mk_i_nodes(), mk_i_nodes(), device_zeros(dev, Int, 1),
-        da, mk_t(), mk_t(), mk_t(), mk_t(), mk_t(), mk_t(), mk_t(),
+        device_zeros(dev, Int, 1),
+        da, mk_t(), mk_t(), mk_t(), mk_t(), mk_t(),
         zeros(Int, 1), Vector{T}(undef, total_nodes),
         device_zeros(dev, T, 0), device_zeros(dev, T, 0), dma, nothing,
         ncontours, total_nodes)
@@ -199,8 +161,7 @@ end
 function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
                                  state::DeviceContourState{T},
                                  dev::AbstractDevice;
-                                 output_offset::Int=0,
-                                 contour_offset::Int=0) where {T}
+                                 output_offset::Int=0) where {T}
     ncontours = length(state.lengths)
     ncontours <= ws.ncontours || throw(DimensionMismatch(
         "energy workspace contour capacity ($(ws.ncontours)) < state contours ($ncontours)"))
@@ -225,10 +186,9 @@ function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
     n == 0 && return 0
 
     @_ka_launch dev nvalid _state_energy_segments_kernel!(
-        ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.ka, ws.kb,
-        ws.contour_id, ws.local_index, ws.out_offsets, ws.source_contour,
+        ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.out_offsets, ws.source_contour,
         state.x, state.y, state.pv, state.wrapx, state.wrapy,
-        state.offsets, state.lengths, output_offset, contour_offset, nvalid)
+        state.offsets, state.lengths, output_offset, nvalid)
     return n
 end
 
@@ -241,56 +201,6 @@ function _ensure_energy_ewald!(ws::_EnergyWorkspace{T}, cache::EwaldCache{T},
         ws.last_ewald = cache
     end
     return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier
-end
-
-function _pack_energy_segments(state::DeviceContourState{T}, dev::AbstractDevice,
-                               ::Type{T}) where {T}
-    ncontours = length(state.lengths)
-    valid = device_zeros(dev, UInt8, ncontours)
-    valid_slots = device_zeros(dev, Int, ncontours)
-    valid_count = device_zeros(dev, Int, 1)
-    if ncontours > 0
-        @_ka_launch dev ncontours _state_energy_valid_kernel!(
-            valid, state.lengths, state.wrapx, state.wrapy, ncontours)
-        _device_compact_scan!(valid_slots, valid_count, valid, ncontours, dev)
-    end
-    nvalid = ncontours == 0 ? 0 : to_cpu(valid_count)[1]
-
-    out_lengths = device_zeros(dev, Int, nvalid)
-    out_offsets = device_zeros(dev, Int, nvalid)
-    source_contour = device_zeros(dev, Int, nvalid)
-    if nvalid > 0
-        @_ka_launch dev ncontours _state_energy_lengths_kernel!(
-            out_lengths, source_contour, valid_slots, valid, state.lengths,
-            ncontours)
-    end
-
-    total_store = device_zeros(dev, Int, 1)
-    if nvalid > 0
-        @_ka_launch dev nvalid _prefix_lengths_kernel!(
-            out_offsets, total_store, out_lengths, nvalid)
-    end
-    n = nvalid == 0 ? 0 : to_cpu(total_store)[1]
-
-    ax = device_zeros(dev, T, n)
-    ay = device_zeros(dev, T, n)
-    bx = device_zeros(dev, T, n)
-    by = device_zeros(dev, T, n)
-    pv = device_zeros(dev, T, n)
-    ka = device_zeros(dev, T, n)
-    kb = device_zeros(dev, T, n)
-    contour_id = device_zeros(dev, Int, n)
-    local_index = device_zeros(dev, Int, n)
-    if nvalid > 0 && n > 0
-        @_ka_launch dev nvalid _state_energy_segments_kernel!(
-            ax, ay, bx, by, pv, ka, kb, contour_id, local_index,
-            out_offsets, source_contour, state.x, state.y, state.pv,
-            state.wrapx, state.wrapy, state.offsets, state.lengths,
-            0, 0, nvalid)
-    end
-
-    return EnergySegmentData(SegmentData(ax, ay, bx, by, pv, ka, kb),
-                             contour_id, local_index)
 end
 
 @inline function _energy_segment_geometry(ax, ay, bx, by, i, ::Type{T}) where {T}
@@ -345,9 +255,9 @@ end
         for ni in 1:nky
             kyi = ky[ni]
             k2 = kxi * kxi + kyi * kyi
-            k2 < eps(T) && continue
+            iszero(k2) && continue
             coeff = fourier_coeffs[mi, ni]
-            abs(coeff) < eps(T) && continue
+            iszero(coeff) && continue
             phi -= T(2) * coeff *
                    (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry)) / k2
         end
@@ -356,11 +266,10 @@ end
     return phi
 end
 
-@kernel function _euler_energy_ka!(partial, ax, ay, bx, by, pv, contour_id, local_index, n_seg)
-    # Smooth contour form of the unbounded Euler Hamiltonian.  No self-panel
-    # special case is needed because r²(2-log(r²))/4 tends to zero at r=0.
-    i = @index(Global)
-    T = eltype(partial)
+# All six kernels use the same straight-segment 3×3 Gauss–Legendre rule.
+@inline function _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg,
+                                      potential::F) where {F}
+    T = eltype(pv)
     dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
         _energy_segment_geometry(ax, ay, bx, by, i, T)
     g_nodes, g_weights = _gl3_nodes_weights(T)
@@ -381,238 +290,103 @@ end
                 dx = pix - pjx
                 dy = piy - pjy
                 quad += g_weights[qi] * g_weights[qj] *
-                        _euler_energy_potential_scalar(dx * dx + dy * dy)
+                        potential(dx, dy)
             end
         end
         local_s += pv[j] * quad * dot_ds / T(4)
     end
 
-    partial[i] = pv[i] * local_s
+    return pv[i] * local_s
 end
 
-@kernel function _sqg_energy_ka!(partial, ax, ay, bx, by, pv, contour_id, local_index,
-                                 δ, n_seg)
+@kernel function _euler_energy_ka!(partial, ax, ay, bx, by, pv, n_seg)
     i = @index(Global)
-    T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
-    δ_sq = δ * δ
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    local_s = zero(T)
-
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
-
-        for qi in 1:3
-            pix = midix + g_nodes[qi] * half_dsix
-            piy = midiy + g_nodes[qi] * half_dsiy
-            for qj in 1:3
-                pjx = midjx + g_nodes[qj] * half_dsjx
-                pjy = midjy + g_nodes[qj] * half_dsjy
-                dx = pix - pjx
-                dy = piy - pjy
-                quad += g_weights[qi] * g_weights[qj] *
-                    _sqg_regularized_energy_potential_scalar(dx * dx + dy * dy, δ)
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
-    end
-
-    partial[i] = pv[i] * local_s
+    potential = (dx, dy) -> _euler_energy_potential_scalar(dx * dx + dy * dy)
+    partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
-@kernel function _qg_energy_ka!(partial, ax, ay, bx, by, pv, contour_id, local_index,
-                                Ld, n_seg)
+@kernel function _sqg_energy_ka!(partial, ax, ay, bx, by, pv, δ, n_seg)
     i = @index(Global)
-    T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    local_s = zero(T)
+    potential = (dx, dy) ->
+        _sqg_regularized_energy_potential_scalar(dx * dx + dy * dy, δ)
+    partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
+end
 
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
+@kernel function _qg_energy_ka!(partial, ax, ay, bx, by, pv, Ld, n_seg)
+    i = @index(Global)
+    potential = (dx, dy) -> _qg_energy_potential_scalar(dx * dx + dy * dy, Ld)
+    partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
+end
 
-        for qi in 1:3
-            pix = midix + g_nodes[qi] * half_dsix
-            piy = midiy + g_nodes[qi] * half_dsiy
-            for qj in 1:3
-                pjx = midjx + g_nodes[qj] * half_dsjx
-                pjy = midjy + g_nodes[qj] * half_dsjy
-                dx = pix - pjx
-                dy = piy - pjy
-                quad += g_weights[qi] * g_weights[qj] *
-                        _qg_energy_potential_scalar(dx * dx + dy * dy, Ld)
-            end
+# For G_k = 1/[A(k²+κ²)], the shared contour-energy normalization needs
+# -4π cos(k·r)/[A k²(k²+κ²)]. Euler is the κ²=0 case. The k=0 energy,
+# when present, is added by the problem-level caller.
+@inline function _periodic_energy_potential_scalar(dx::T, dy::T, kappa2::T,
+                                                   area::T, kx, ky) where {T}
+    phi = zero(T)
+    for mi in eachindex(kx)
+        kxi = kx[mi]
+        cx = cos(kxi * dx)
+        sx = sin(kxi * dx)
+        for ni in eachindex(ky)
+            kyi = ky[ni]
+            k2 = kxi * kxi + kyi * kyi
+            iszero(k2) && continue
+            phase_cos = cx * cos(kyi * dy) - sx * sin(kyi * dy)
+            phi -= T(4) * T(pi) * phase_cos / (area * k2 * (k2 + kappa2))
         end
-        local_s += pv[j] * quad * dot_ds / T(4)
     end
-
-    partial[i] = pv[i] * local_s
+    return phi
 end
 
 @kernel function _periodic_euler_energy_ka!(partial, ax, ay, bx, by, pv,
-                                            contour_id, local_index,
                                             Lx, Ly, kx, ky, n_seg)
-    # Periodic Euler Hamiltonian in contour form.  For G_k=1/(A|k|²), the
-    # smooth contour potential required by the shared normalization is
-    # -4π cos(k·r)/(A|k|⁴).
     i = @index(Global)
     T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
     area = T(4) * Lx * Ly
-    local_s = zero(T)
-
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
-
-        for qi in 1:3
-            pix = midix + g_nodes[qi] * half_dsix
-            piy = midiy + g_nodes[qi] * half_dsiy
-            for qj in 1:3
-                pjx = midjx + g_nodes[qj] * half_dsjx
-                pjy = midjy + g_nodes[qj] * half_dsjy
-                dx = pix - pjx
-                dy = piy - pjy
-                phi = zero(T)
-                for mi in 1:length(kx)
-                    kxi = kx[mi]
-                    cx = cos(kxi * dx)
-                    sx = sin(kxi * dx)
-                    for ni in 1:length(ky)
-                        kyi = ky[ni]
-                        k2 = kxi * kxi + kyi * kyi
-                        k2 < eps(T) && continue
-                        phase_cos = cx * cos(kyi * dy) - sx * sin(kyi * dy)
-                        phi -= T(4) * T(pi) * phase_cos / (area * k2 * k2)
-                    end
-                end
-                quad += g_weights[qi] * g_weights[qj] * phi
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
-    end
-
-    partial[i] = pv[i] * local_s
+    potential = (dx, dy) ->
+        _periodic_energy_potential_scalar(dx, dy, zero(T), area, kx, ky)
+    partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
 @kernel function _periodic_qg_energy_ka!(partial, ax, ay, bx, by, pv,
-                                         contour_id, local_index,
                                          kappa2, area, kx, ky, n_seg)
     i = @index(Global)
-    T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    local_s = zero(T)
-
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
-
-        for qi in 1:3
-            pix = midix + g_nodes[qi] * half_dsix
-            piy = midiy + g_nodes[qi] * half_dsiy
-            for qj in 1:3
-                pjx = midjx + g_nodes[qj] * half_dsjx
-                pjy = midjy + g_nodes[qj] * half_dsjy
-                dx = pix - pjx
-                dy = piy - pjy
-                phi = zero(T)
-                nkx = length(kx)
-                nky = length(ky)
-                for mi in 1:nkx
-                    kxi = kx[mi]
-                    cx = cos(kxi * dx)
-                    sx_trig = sin(kxi * dx)
-                    for ni in 1:nky
-                        kyi = ky[ni]
-                        k2 = kxi * kxi + kyi * kyi
-                        k2 < eps(T) && continue
-                        phase_cos = cx * cos(kyi * dy) - sx_trig * sin(kyi * dy)
-                        phi -= T(4) * T(pi) * phase_cos /
-                               (area * k2 * (k2 + kappa2))
-                    end
-                end
-                quad += g_weights[qi] * g_weights[qj] * phi
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
-    end
-
-    partial[i] = pv[i] * local_s
+    potential = (dx, dy) ->
+        _periodic_energy_potential_scalar(dx, dy, kappa2, area, kx, ky)
+    partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
 @kernel function _periodic_sqg_energy_ka!(partial, ax, ay, bx, by, pv,
-                                          contour_id, local_index,
                                           α, δ, Lx, Ly, n_images,
                                           kx, ky, fourier_coeffs, n_seg)
     i = @index(Global)
-    T = eltype(partial)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
     Lx2, Ly2 = _period_lengths(Lx, Ly)
-    g_nodes, g_weights = _gl3_nodes_weights(T)
-    local_s = zero(T)
-
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-        quad = zero(T)
-
-        for qi in 1:3
-            pix = midix + g_nodes[qi] * half_dsix
-            piy = midiy + g_nodes[qi] * half_dsiy
-            for qj in 1:3
-                pjx = midjx + g_nodes[qj] * half_dsjx
-                pjy = midjy + g_nodes[qj] * half_dsjy
-                rx_raw = pix - pjx
-                ry_raw = piy - pjy
-                rx = rx_raw - round(rx_raw / Lx2) * Lx2
-                ry = ry_raw - round(ry_raw / Ly2) * Ly2
-                phi = _sqg_periodic_energy_potential_scalar(rx, ry, α, Lx, Ly, δ,
-                                                            n_images, kx, ky, fourier_coeffs)
-                quad += g_weights[qi] * g_weights[qj] * phi
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
+    potential = (dx, dy) -> begin
+        rx = dx - round(dx / Lx2) * Lx2
+        ry = dy - round(dy / Ly2) * Ly2
+        _sqg_periodic_energy_potential_scalar(rx, ry, α, Lx, Ly, δ,
+                                               n_images, kx, ky, fourier_coeffs)
     end
-
-    partial[i] = pv[i] * local_s
+    partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
-function _ka_energy_raw_with_segments!(kernel!, data::EnergySegmentData, dev::AbstractDevice,
+function _ka_energy_raw_with_segments!(kernel!, data::NamedTuple, dev::AbstractDevice,
                                        ::Type{T}, args...) where {T}
     # Launch one contribution per packed segment, then reduce on the host. This
     # avoids assuming a portable parallel reduction primitive across KA backends.
-    n = length(data.seg.ax)
+    n = length(data.ax)
     n == 0 && return zero(T)
     partial = device_zeros(dev, T, n)
-    @_ka_launch dev n kernel!(partial, data.seg.ax, data.seg.ay, data.seg.bx,
-                              data.seg.by, data.seg.pv, data.contour_id,
-                              data.local_index, args..., n)
+    @_ka_launch dev n kernel!(partial, data.ax, data.ay, data.bx,
+                              data.by, data.pv, args..., n)
     return sum(to_cpu(partial))
 end
 
 function _ka_energy_raw_with_workspace!(kernel!, ws::_EnergyWorkspace{T}, n::Int,
                                         dev::AbstractDevice, args...) where {T}
     n == 0 && return zero(T)
-    @_ka_launch dev n kernel!(ws.partial, ws.ax, ws.ay, ws.bx, ws.by, ws.pv,
-                              ws.contour_id, ws.local_index, args..., n)
+    @_ka_launch dev n kernel!(ws.partial, ws.ax, ws.ay, ws.bx, ws.by, ws.pv, args..., n)
     copyto!(ws.host_partial, 1, ws.partial, 1, n)
     total = zero(T)
     @inbounds for i in 1:n
@@ -625,16 +399,6 @@ function _ka_energy_raw(kernel!, contours, dev::AbstractDevice, ::Type{T}, args.
     data = _pack_energy_segments(contours, dev, T)
     return _ka_energy_raw_with_segments!(kernel!, data, dev, T, args...)
 end
-
-"""
-    _EnergySource{T}
-
-Anything the energy path can pack into segments: a host contour vector or a
-flat device state. `_pack_energy_segments` has a method for each, so the
-kernel/domain implementations below are written once and serve both the
-CPU-device path (`_host_contours(prob)`) and the GPU path (`_device_state(prob)`).
-"""
-const _EnergySource{T} = Union{DeviceContourState{T}, Vector{PVContour{T}}}
 
 @inline function _energy_contour_circulation(contours::Vector{PVContour{T}}) where {T}
     γ = zero(T)
@@ -664,7 +428,7 @@ end
 end
 
 # GPU problems keep their nodes in `device_state`, CPU-device problems in the
-# host `contours` vector; both are valid `_EnergySource`s.
+# host `contours` vector. Each uses its corresponding packing path.
 function _ka_energy(prob::ContourProblem, dev::AbstractDevice)
     return _ka_energy_from_state(_storage_data(_active_storage(prob)), prob.kernel,
                                 prob.domain, dev; workspace=execution_workspace(prob))
@@ -727,7 +491,7 @@ function _ka_energy_from_state(src::Vector{PVContour{T}},
                                dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     cache = _get_ewald_cache(domain, kernel)
     data = _pack_energy_segments(src, dev, T)
-    length(data.seg.ax) == 0 && return zero(T)
+    length(data.ax) == 0 && return zero(T)
     tables = _device_ewald_tables(cache, dev)
     kernel!, args = _periodic_energy_recipe(kernel, domain, cache, tables)
     raw = _ka_energy_raw_with_segments!(kernel!, data, dev, T, args...)
@@ -825,20 +589,17 @@ function _pack_multilayer_energy_workspace!(
         dev::AbstractDevice) where {N, T}
     layer_lengths = MVector{N,Int}(undef)
     output_offset = 0
-    contour_offset = 0
     for layer in 1:N
         state = states[layer]
         n = _pack_energy_workspace!(
             ws.energy, state, dev;
-            output_offset, contour_offset)
+            output_offset)
         layer_lengths[layer] = n
         if n > 0
             @_ka_launch dev n _copy_multilayer_base_pv_kernel!(
                 ws.base_pv, ws.energy.pv, output_offset, n)
         end
         output_offset += n
-        # Full layer contour counts keep compacted ids distinct across layers.
-        contour_offset += length(state.lengths)
     end
     return SVector{N,Int}(layer_lengths), output_offset
 end
@@ -868,22 +629,15 @@ QG kernel with modal deformation radius 1/√|λ|.
 """
 function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
                                            kernel::MultiLayerQGKernel{N},
-                                           domain::UnboundedDomain,
+                                           domain::Union{UnboundedDomain,PeriodicDomain{T}},
                                            dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
     ws = _get_multilayer_energy_workspace(states, dev; workspace=workspace)
     return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
 end
 
-@inline function _ka_unbounded_modal_energy(
-        ::EulerKernel, energy_ws, total, dev)
-    return _ka_energy_raw_with_workspace!(
-        _euler_energy_ka!, energy_ws, total, dev)
-end
-
-@inline function _ka_unbounded_modal_energy(
-        mode_kernel::QGKernel, energy_ws, total, dev)
-    return _ka_energy_raw_with_workspace!(
-        _qg_energy_ka!, energy_ws, total, dev, mode_kernel.Ld)
+@inline function _ka_unbounded_modal_energy(mode_kernel, energy_ws, total, dev)
+    kernel!, args = _unbounded_energy_recipe(mode_kernel)
+    return _ka_energy_raw_with_workspace!(kernel!, energy_ws, total, dev, args...)
 end
 
 function _ka_multilayer_energy_with_ws(
@@ -904,14 +658,6 @@ function _ka_multilayer_energy_with_ws(
             _ka_unbounded_modal_energy, kernel, lam, energy_ws, total, dev)
     end
     return _normalize_energy(raw)
-end
-
-function _ka_multilayer_energy_from_states(states::NTuple{N, <:DeviceContourState{T}},
-                                           kernel::MultiLayerQGKernel{N},
-                                           domain::PeriodicDomain{T},
-                                           dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N, T}
-    ws = _get_multilayer_energy_workspace(states, dev; workspace=workspace)
-    return _ka_multilayer_energy_with_ws(states, kernel, domain, dev, ws)
 end
 
 @inline function _ka_periodic_modal_energy(

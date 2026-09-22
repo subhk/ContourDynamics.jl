@@ -23,7 +23,7 @@ timestep, and regularization length are package discretization choices. The full
 example script defaults to the unbounded SQG contour solver for runtime; setting
 `periodic_domain = true` uses the periodic box from the paper.
 
-```@repl example_sqg_ellipse
+```@example example_sqg_ellipse
 using ContourDynamics
 
 N = 48

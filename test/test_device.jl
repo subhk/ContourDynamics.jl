@@ -475,6 +475,26 @@ end
         @test actual[1].corners == expected[1].corners
     end
 
+    @testset "Device remeshing is independent of coordinate units" begin
+        for T in (Float32, Float64)
+            c = elliptical_patch(2, 1, 96, 1; T=T)
+            params = SurgeryParams(T(0.01), T(0.05), T(0.5), T(1e-8), 5)
+            baseline = only(ContourDynamics._device_remesh_contours([c], params, CPU()))
+            tolerance = T === Float32 ? T(2e-4) : T(1e-10)
+            for scale in (T(0.01), T(100))
+                scaled = PVContour([scale * x for x in c.nodes], c.pv)
+                scaled_params = SurgeryParams(params.δ * scale, params.μ * scale,
+                    params.Δ_max * scale, params.area_min * scale^2, params.n_surgery)
+                actual = only(ContourDynamics._device_remesh_contours([scaled], scaled_params, CPU()))
+                host = remesh(scaled, scaled_params)
+
+                @test nnodes(actual) == nnodes(baseline) == nnodes(host)
+                @test actual.nodes ./ scale ≈ baseline.nodes rtol=tolerance
+                @test actual.nodes ≈ host.nodes rtol=tolerance
+            end
+        end
+    end
+
     @testset "Device closed remesh matches CPU weighted remesh" begin
         contours = [
             elliptical_patch(1.0, 0.6, 40, 1.0),
@@ -758,6 +778,37 @@ end
         @test isempty(ContourDynamics._unpack_close_pair_candidates(admissible_nested))
     end
 
+    @testset "Device surgery preserves weak PV levels and periodic containment" begin
+        for T in (Float32, Float64)
+            δ = T(0.02)
+            for q in (one(T), T(1e-10)), factor in (-one(T), zero(T), one(T), T(2))
+                cs = [circular_patch(0.2, 32, q; cx=-0.205, T=T),
+                      circular_patch(0.2, 32, factor * q; cx=0.205, T=T)]
+                candidates = ContourDynamics._device_admissible_close_segment_buffer(
+                    cs, δ, UnboundedDomain(), CPU())
+                pairs = ContourDynamics._unpack_close_pair_candidates(candidates)
+                @test any(p -> p[1] != p[3], pairs) == (factor == one(T))
+            end
+            nested = [circular_patch(1, 64, 1e-10; T=T),
+                      circular_patch(0.99, 64, 1e-10; T=T)]
+            candidates = ContourDynamics._device_admissible_close_segment_buffer(
+                nested, δ, UnboundedDomain(), CPU())
+            @test isempty(ContourDynamics._unpack_close_pair_candidates(candidates))
+
+            cs = [circular_patch(0.2, 64, 2; T=T),
+                  circular_patch(0.05, 64, 1; cx=0.745, T=T),
+                  circular_patch(0.05, 64, 1; cx=0.855, T=T)]
+            state = DeviceContourState(cs, CPU())
+            pairs_by_domain = map((UnboundedDomain(), PeriodicDomain(one(T)))) do d
+                candidates = ContourDynamics._device_admissible_close_segment_buffer(state, δ, d, CPU())
+                pairs = ContourDynamics._unpack_close_pair_candidates(candidates)
+                Set(p for p in pairs if p[1] == 2 && p[3] == 3)
+            end
+            @test !isempty(pairs_by_domain[1])
+            @test pairs_by_domain[2] == pairs_by_domain[1]
+        end
+    end
+
     @testset "Device close-pair admissibility honors interior vorticity" begin
         δ = 0.05
         outer = circular_patch(1.0, 96, 1.0)
@@ -1033,6 +1084,32 @@ end
             state = DeviceContourState(deepcopy(contours_in), CPU())
             @test ContourDynamics._ka_energy_from_state(state, kernel, domain, CPU()) ≈
                   ContourDynamics._ka_energy(prob, CPU()) rtol=1e-7 atol=1e-10
+        end
+    end
+
+    @testset "Energy packing excludes invalid contours in both precisions" begin
+        for T in (Float32, Float64)
+            closed = circular_patch(0.25, 6, one(T); T=T)
+            short = PVContour(closed.nodes[1:2], T(3))
+            spanning = PVContour(copy(closed.nodes), T(2), SVector{2,T}(4, 0))
+            invalid = [short, spanning]
+            mixed = [short, closed, spanning]
+            tolerance = T === Float32 ? T(2e-5) : T(1e-7)
+            for domain in (UnboundedDomain(), PeriodicDomain(T(2), T(2))),
+                kernel in (EulerKernel(), QGKernel(T(1.25)), SQGKernel(T(0.02)))
+                expected = energy(ContourProblem(kernel, domain, [closed]))
+                workspace = ExecutionWorkspace(T)
+                for (contours_in, reference) in ((mixed, expected), (invalid, zero(T)),
+                                                  (PVContour{T}[], zero(T)))
+                    state = DeviceContourState(contours_in, CPU())
+                    @test ContourDynamics._ka_energy_from_state(
+                        contours_in, kernel, domain, CPU(); workspace) ≈
+                          reference rtol=tolerance atol=eps(T)
+                    @test ContourDynamics._ka_energy_from_state(
+                        state, kernel, domain, CPU(); workspace) ≈
+                          reference rtol=tolerance atol=eps(T)
+                end
+            end
         end
     end
 

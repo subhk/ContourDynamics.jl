@@ -6,10 +6,17 @@
 Parameters controlling contour surgery.
 
 - `δ`: proximity threshold for detecting close contour segments.
-- `μ`: minimum segment length after remeshing.
-- `Δ_max`: maximum segment length after remeshing.
+- `μ`: minimum target segment length for remeshing.
+- `Δ_max`: maximum target segment length for remeshing.
 - `area_min`: minimum enclosed area; contours smaller than this are removed.
 - `n_surgery`: number of time-steps between surgery passes.
+
+`δ`, `μ`, and `Δ_max` use the same length units as the contour coordinates.
+The adapted Dritschel density uses the dimensionless ratio `μ/L`, where `L`
+is the estimated large-scale contour length; `μ` itself is not the
+dimensionless node-density parameter of the literature. Spacing bounds apply
+to the redistribution targets; cubic interpolation and area correction can
+change the final chord lengths.
 """
 struct SurgeryParams{T<:AbstractFloat}
     δ::T

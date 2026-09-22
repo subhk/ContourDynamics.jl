@@ -66,10 +66,13 @@ end
 
 Redistribute nodes along contour `c` with a Dritschel-style density that
 increases with curvature and vorticity-weighted nonlocal curvature influence,
-placing new nodes on cubic interpolation arcs while keeping segment lengths
-between `params.μ` and `params.Δ_max`. Closed contours preserve signed polygon
-area after redistribution unless the contour has fixed surgery corners. Corner
-nodes are held fixed and divide the contour into independently remeshed spans.
+placing new nodes on cubic interpolation arcs with target spacings between
+`params.μ` and `params.Δ_max`. These parameters are lengths; the dimensionless
+density parameter is `params.μ/L` for the estimated large-scale length `L`.
+Closed contours preserve signed polygon area after redistribution. Corner nodes
+are held fixed and divide the contour into independently remeshed spans, with
+area correction applied only to free nodes. Interpolation and area correction
+can change the final chord lengths from the target spacings.
 Returns a new [`PVContour`](@ref).
 
 The optional `_buf`, `_arc_buf`, and `_vnodes_buf` keywords accept pre-allocated

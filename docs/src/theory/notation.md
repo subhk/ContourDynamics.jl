@@ -7,8 +7,15 @@ equations where they first appear; this glossary is the quick reference.
 Unless a page states otherwise, bold lowercase letters are two-dimensional
 vectors, ``|\mathbf{v}|`` is the Euclidean norm of ``\mathbf{v}``, and contour
 indices are cyclic, so ``\mathbf{x}_{N+1}=\mathbf{x}_1`` for a closed contour.
-All length-valued inputs must use the same coordinate units. PV jumps have units
-of inverse time, so velocities have units of length per time.
+All length-valued inputs must use the same coordinate units. Euler and QG PV
+jumps have units of inverse time. For SQG, `PVContour.pv` instead stores the
+jump in the normalized surface scalar ``\theta`` of the unregularized model
+``-(-\nabla^2)^{1/2}\psi=\theta``. At finite `δ_sqg`, the implemented inversion
+has Fourier multiplier ``-e^{-\delta_{\mathrm{SQG}}|\mathbf k|}/|\mathbf k|``
+for nonzero modes; see [Contour Dynamics](contour_dynamics.md).
+Since ``\psi`` has units of length squared per time, this ``\theta`` has
+velocity units (length per time); physical buoyancy
+must be converted to that normalization before use.
 
 ## Flow and contour symbols
 
@@ -23,12 +30,12 @@ of inverse time, so velocities have units of length per time.
 | ``\psi`` | Streamfunction | Recovered implicitly through the Green's function |
 | ``\mathbf{u}=(-\partial_y\psi,\partial_x\psi)`` | Incompressible velocity | Returned by `velocity` or `velocity!` |
 | ``\mathcal{L}`` | PV-inversion operator | Selected by the kernel type |
-| ``G(r)`` | Scalar Green's function at separation ``r`` | `EulerKernel`, `QGKernel`, or `SQGKernel` |
+| ``G(r)`` | Scalar contour kernel at separation ``r``; ``G=-G_\psi`` for the streamfunction Green's function | `EulerKernel`, `QGKernel`, or `SQGKernel` |
 | ``r=|\mathbf{x}-\mathbf{x}'|`` | Source-target distance | Computed by velocity kernels |
 | ``dA'`` | Source-area element | Used in the continuous area integral |
 | ``d\mathbf{x}'`` | Oriented tangent line element along a contour | Segment or cubic-arc differential |
 | ``\hat{\mathbf{t}}`` | Unit tangent of a straight segment | ``(\mathbf{b}-\mathbf{a})/|\mathbf{b}-\mathbf{a}|`` |
-| ``\mathbf{n}`` | Unit normal pointing left of the oriented chord | Cubic Dritschel arc normal |
+| ``\mathbf{n}`` | Left-rotated chord ``(-(b_y-a_y),b_x-a_x)`` of length ``e=|\mathbf b-\mathbf a|`` | Cubic Dritschel arc normal |
 
 ## Kernel symbols
 
@@ -37,8 +44,9 @@ of inverse time, so velocities have units of length per time.
 | ``L_d`` | Rossby deformation radius | `Ld` |
 | ``\kappa=L_d^{-1}`` | Inverse deformation radius | Derived internally |
 | ``K_0`` | Modified Bessel function of the second kind, order zero | Used by `QGKernel` |
-| ``\theta`` | Active surface buoyancy in SQG | PV jump stored in `PVContour.pv` |
+| ``\theta`` | Normalized active surface scalar in SQG, with velocity units | Scalar jump stored in `PVContour.pv` |
 | ``\delta_{\mathrm{SQG}}`` | SQG kernel regularization length | `δ_sqg` or `SQGKernel.δ` |
+| ``\psi_\delta`` | Streamfunction obtained from the softened SQG kernel | Used by SQG velocity and energy calculations |
 | ``\gamma_E`` | Euler--Mascheroni constant | Limit of the regularized QG remainder |
 
 The SQG regularization ``\delta_{\mathrm{SQG}}`` and the surgery proximity
@@ -73,15 +81,18 @@ but the package does not identify them.
 | ``d_{ij}=|\mathbf{x}_j-\mathbf{m}_i|`` | Node-to-source-midpoint distance | Derived internally |
 | ``\delta`` | Reconnection proximity threshold | `SurgeryParams.δ` or `.delta` |
 | ``\mu`` | Minimum target segment length | `SurgeryParams.μ` or `.mu` |
+| ``\mu_{\mathrm d}=\mu/L`` | Dimensionless density parameter used by the adapted remeshing rule | Derived from the public spacing length and the estimated large-scale length |
 | ``\Delta_{\max}`` | Maximum target segment length | `SurgeryParams.Δ_max` or `.Delta_max` |
 | ``A_{\min}`` | Minimum retained absolute contour area | `SurgeryParams.area_min` |
 | ``n_{\mathrm{surgery}}`` | Number of timesteps between surgery passes | `SurgeryParams.n_surgery` |
-| ``\rho(s)`` | Node-density function along arclength | Remeshing density |
-| ``M(s)=\int_0^s\rho(\sigma)d\sigma`` | Cumulative weighted arclength | Used to place new nodes |
-| ``L_c`` | Total contour perimeter | Sum of segment lengths |
+| ``\tilde\kappa_j,\bar\kappa_j`` | Transformed node curvature and its average over segment endpoints | Averaged before density saturation |
+| ``\rho_j`` | Rescaled, clamped density on input segment ``j`` | Remeshing density |
+| ``M_{j+1}=M_j+\ell_j\rho_j`` | Cumulative chord-weighted measure, starting at ``M_1=0`` | Used to locate the source segment for each new node |
+| ``m_k`` | Equally spaced target in the cumulative measure | Mapped to a cubic interpolation parameter ``p_k`` |
+| ``L_c`` | Polygonal contour perimeter | Sum of chord lengths |
 | ``N_{\mathrm{seg}}`` | Number of redistributed segments | Chosen from density and spacing bounds |
 | ``p\in[0,1]`` | Local coordinate along one cubic arc | Quadrature/interpolation parameter |
-| ``\eta(p)`` | Normal displacement of the cubic arc from its chord | Cubic interpolation polynomial |
+| ``\eta(p)`` | Dimensionless normal coefficient; signed normal displacement is ``e\eta(p)`` | Cubic interpolation polynomial |
 
 ## Time-integration symbols
 
@@ -106,6 +117,7 @@ but the package does not identify them.
 | ``\mathbf{\Lambda}=\operatorname{diag}(\lambda_m)`` | Diagonal matrix of modal eigenvalues | `MultiLayerQGKernel.eigenvalues` |
 | ``m`` | Vertical-mode index | Index into modal eigenvalues |
 | ``L_d^{(m)}=1/\sqrt{|\lambda_m|}`` | Deformation radius of a nonbarotropic mode | Entry of `Ld` |
+| ``L_{\mathrm{upper}},L_{\mathrm{modal}}`` | Upper-layer and baroclinic modal radii in the two-layer example; ``L_{\mathrm{modal}}=L_{\mathrm{upper}}/\sqrt{1+H_1/H_2}`` | The example passes `SVector(L_modal)` as `Ld` |
 | ``\beta`` | Meridional gradient of planetary PV | `beta` |
 | ``y`` | Meridional coordinate | Second coordinate of a node |
 | ``n_\beta`` | Number of beta-staircase interfaces | `n_beta` argument to `beta_staircase` |

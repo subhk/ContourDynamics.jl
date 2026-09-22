@@ -37,7 +37,7 @@ This means vortices smaller than ``L_d`` behave like Euler vortices, while large
 
 ## Single-Layer QG
 
-```@repl tutorial_qg_single
+```@example tutorial_qg_single
 using ContourDynamics
 
 # QG vortex with deformation radius Ld = 2.0
@@ -70,7 +70,7 @@ same.
 
 When ``L_d \gg R`` (patch radius), QG velocities approach the Euler limit. When ``L_d \lesssim R``, QG velocities are weaker due to rotational screening:
 
-```@repl tutorial_qg_compare
+```@example tutorial_qg_compare
 using StaticArrays   # needed for SVector velocity buffers below
 using ContourDynamics
 
@@ -101,7 +101,7 @@ This comparison illustrates the role of `Ld`:
 
 ### Evolving a QG Vortex
 
-```@repl tutorial_qg_single
+```@example tutorial_qg_single
 evolve!(prob; nsteps=5)
 
 # QG also conserves circulation and energy
@@ -115,7 +115,7 @@ For geophysical applications, doubly-periodic domains are essential. ContourDyna
 
 ### Setting Up a Periodic Domain
 
-```@repl tutorial_qg_periodic
+```@example tutorial_qg_periodic
 using ContourDynamics
 
 # A vortex patch in a periodic domain [-π, π) × [-π, π)
@@ -131,7 +131,7 @@ println("Nodes: $(total_nodes(prob))");
 
 The Ewald cache is built automatically on first use. For custom accuracy, pre-build with `setup_ewald_cache!`:
 
-```@repl tutorial_qg_periodic
+```@example tutorial_qg_periodic
 # Higher accuracy: more Fourier modes and periodic images
 setup_ewald_cache!(domain(prob), kernel(prob); n_fourier=16, n_images=4)
 println("Ewald cache configured with n_fourier=16 and n_images=4");
@@ -152,7 +152,7 @@ The kernel keeps a reference copy of the initial straight staircase, subtracts
 that reference from the contour sum, then adds the analytic zonal correction for
 `reference staircase - beta*y`.
 
-```@repl tutorial_qg_staircase
+```@example tutorial_qg_staircase
 using ContourDynamics
 
 T = Float64
@@ -201,7 +201,7 @@ For ``N``-layer QG dynamics, the layers are coupled through interface deformatio
 
 ### Two-Layer Setup
 
-```@repl tutorial_qg_multilayer
+```@example tutorial_qg_multilayer
 using ContourDynamics
 using LinearAlgebra
 using StaticArrays   # needed for SVector/SMatrix coupling matrix
@@ -218,7 +218,11 @@ println("Number of layers: $(nlayers(kernel))")
 println("Modal deformation radius: $(Ld[1])");
 ```
 
-The constructor automatically eigen-decomposes the coupling matrix. Each eigenmode is evolved independently using either the Euler kernel (barotropic mode) or a QG kernel with the appropriate modal deformation radius.
+The constructor automatically eigen-decomposes the coupling matrix. PV inversion
+is performed independently for each mode using either the Euler kernel
+(barotropic mode) or a QG kernel with the appropriate modal deformation radius.
+The resulting physical-layer velocities advect the contours; nonlinear evolution
+remains coupled across modes.
 
 The package handles the eigen-decomposition and the projection back to physical
 layers internally.
@@ -227,7 +231,7 @@ For unequal depths, pass the raw physical coupling matrix together with the
 layer thicknesses. For example, ``H=(1,3)`` and interface coefficients
 ``F_1=0.6``, ``F_2=0.2`` obey ``H_1F_1=H_2F_2``:
 
-```@repl tutorial_qg_multilayer
+```@example tutorial_qg_multilayer
 H_unequal = SVector(1.0, 3.0)
 coupling_unequal = @SMatrix [-0.6 0.6; 0.2 -0.2]
 Ld_unequal = SVector(1 / sqrt(0.6 + 0.2))
@@ -241,7 +245,7 @@ physical Hamiltonian scale.
 
 ### Creating a Multi-Layer Problem
 
-```@repl tutorial_qg_multilayer
+```@example tutorial_qg_multilayer
 using ContourDynamics
 using StaticArrays
 
@@ -266,7 +270,7 @@ For unequal-depth input, add `layer_thicknesses=H_unequal` (and use its matching
 
 ### Evolving the Multi-Layer System
 
-```@repl tutorial_qg_multilayer
+```@example tutorial_qg_multilayer
 energy0 = energy(prob)
 circulation0 = circulation(prob)
 

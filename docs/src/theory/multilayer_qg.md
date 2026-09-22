@@ -20,9 +20,9 @@ Here:
 - ``C_{ij}`` measures how strongly layer ``j`` influences layer ``i``
 - ``\mathbf{C}`` is the full layer-coupling matrix
 
-Instead of evolving that coupled system directly, the implementation changes
-basis into independent vertical modes. When the layer depths are unequal, the
-physical matrix ``\mathbf C`` is generally **not symmetric**. Let
+To solve the coupled PV inversion, the implementation changes basis into
+vertical modes that can be inverted independently. When the layer depths are
+unequal, the physical matrix ``\mathbf C`` is generally **not symmetric**. Let
 ``\mathbf W=\operatorname{diag}(H_1,\ldots,H_N)`` contain the positive layer
 thicknesses. A physical stretching matrix obeys
 
@@ -59,7 +59,7 @@ weighted maps:
 
 These are stored as `physical_to_modal` and `modal_to_physical`, respectively.
 They reduce to ``\mathbf P^{\mathsf T}`` and ``\mathbf P`` for the historical
-equal-depth, symmetric input. Each eigenmode ``m`` then evolves independently:
+equal-depth, symmetric input. Each eigenmode ``m`` has an independent inversion:
 
 - If ``|\lambda_m| \approx 0``: **barotropic mode** — uses the Euler kernel
 - Otherwise: ``L_d^{(\text{mode})} = 1/\sqrt{|\lambda_m|}`` — uses a QG kernel
@@ -86,7 +86,17 @@ construction, velocity evaluation, and diagnostics.
 
 The velocity in physical layers is recovered by projecting back through the
 weighted reconstruction matrix. In practical terms, the code solves a set of
-uncoupled single-mode problems, then recombines them into layer velocities.
+uncoupled elliptic inversion problems, then recombines them into layer velocities
+at every time-integration stage. The physical-layer contours are advected by
+these velocities. The nonlinear evolution remains coupled:
+
+```math
+\partial_t q_i + J(\psi_i,q_i)=0,
+\qquad J(a,b)=a_xb_y-a_yb_x.
+```
+
+Diagonalizing the linear stretching operator does not diagonalize this nonlinear
+advection term.
 
 The same weighting is required by the Hamiltonian:
 
@@ -108,7 +118,7 @@ explicit thicknesses because the relative scale of its blocks is ambiguous.
 
 - Pedlosky, J. (1987). *Geophysical Fluid Dynamics*, 2nd ed. Springer. [doi:10.1007/978-1-4612-4650-3](https://doi.org/10.1007/978-1-4612-4650-3)
 - Vallis, G.K. (2017). *Atmospheric and Oceanic Fluid Dynamics*, 2nd ed. Cambridge University Press. [doi:10.1017/9781107588417](https://doi.org/10.1017/9781107588417)
-- Dritschel, D.G. & de la Torre Juárez, M. (2002). *Vortex dynamics in rotating and stratified fluids.* Lecture Notes in Physics **555**, 299--340. [doi:10.1007/3-540-45674-0_11](https://doi.org/10.1007/3-540-45674-0_11)
+- Polvani, L. M., Zabusky, N. J. & Flierl, G. R. (1989). *Two-layer geostrophic vortex dynamics. Part 1. Upper-layer V-states and merger.* J. Fluid Mech. **205**, 215--242. [doi:10.1017/S0022112089002016](https://doi.org/10.1017/S0022112089002016)
 - [pyqg layered-QG equations](https://pyqg.readthedocs.io/en/latest/equations/notation_layered.html), including the ``H_i``-weighted energy.
 
 For more references across contour dynamics and geophysical vortex dynamics, see [References](references.md).

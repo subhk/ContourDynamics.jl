@@ -160,8 +160,9 @@ surgery algorithm (Dritschel 1988, Table III): identify admissible close contour
 parts enclosing the same interior vorticity, split or merge them, repeat until
 exhausted, and redistribute nodes afterward. Reconnection creates labelled
 corner nodes that remain fixed during remeshing until they become obtuse.
-Remeshing uses the Dritschel nonlocal node-density rule with cubic interpolation
-arcs; the velocity paths use the same signed-curvature geometry when evaluating
+Remeshing adapts Dritschel's nonlocal density to the public target spacing
+lengths and rescales it to the node budget, using cubic interpolation arcs.
+The velocity paths use the same signed-curvature geometry when evaluating
 curved segments.
 Mutates `_host_contours(prob)` in place.
 """

@@ -2,11 +2,20 @@
 
 ## Periodic Green's Functions
 
-On a doubly-periodic domain ``[-L_x, L_x) \times [-L_y, L_y)``, the Green's function includes contributions from all periodic images. Direct summation converges slowly, so we use **Ewald splitting** to decompose:
+On a doubly-periodic domain ``[-L_x, L_x) \times [-L_y, L_y)``, the contour
+kernel includes contributions from all periodic images. Ewald splitting
+separates the singular short-range and smooth long-range contributions. For
+Euler, the implementation uses the **mean-free** contour kernel:
 
 ```math
-G_{\text{per}}(\mathbf{r}) = G_{\text{real}}(\mathbf{r}) + G_{\text{Fourier}}(\mathbf{r})
+G_{\text{Euler,per}}(\mathbf{r}) = G_{\text{real}}(\mathbf{r}) + G_{\text{Fourier}}(\mathbf{r}) - \frac{1}{4\alpha^2 A}.
 ```
+
+The two sums below are the Euler decomposition. Their real-space part has
+cell average ``1/(4\alpha^2 A)``; the displayed subtraction removes it, matching
+`_periodic_euler_zero_mode_scalar`. This constant does not affect velocity from
+a closed contour because ``\oint_C d\mathbf x'=0``. All kernels on this page
+use the contour-integral sign convention, ``G=-G_\psi``.
 
 The basic problem is this:
 
@@ -77,12 +86,16 @@ by Gauss–Legendre quadrature. In the code this split is explicit — the base
 term is `_periodic_base_velocity` and the per-quadrature-point correction is
 `_periodic_green_correction`, dispatched on the kernel:
 
-- **Euler and SQG**: the base is the exact *unbounded* segment formula, and the
+- **Euler and SQG**: the base is the *unbounded* segment contribution, and the
   correction is ``G_{\text{per}} - G_\infty``, where ``G_\infty`` is the
   corresponding unbounded-space Green's function.
 - **QG**: the base is the *periodic Euler* (Ewald) velocity itself, and the
   correction is the smooth QG–Euler Fourier series described in the next
   section (its coefficients are precomputed in `EwaldCache.corr_coeffs`).
+
+The unbounded Euler and regularized SQG contributions are analytic for straight
+segments. For cubic arcs, the base contribution also uses quadrature, as
+described in [Contour Surgery](contour_surgery.md#Curved-Segment-Velocity).
 
 Either way, only a smooth function is left for numerical quadrature. This is
 important because quadrature is most reliable on smooth integrands, not on
@@ -93,12 +106,17 @@ functions with logarithmic or stronger singular behavior.
 For the QG kernel on a periodic domain, we decompose:
 
 ```math
-G_{\text{QG,per}} = G_{\text{Euler,per}} - \underbrace{\frac{1}{A}\sum_{\mathbf{k}\neq 0} \frac{\kappa^2}{|\mathbf{k}|^2(|\mathbf{k}|^2 + \kappa^2)}\cos(\mathbf{k}\cdot\mathbf{r})}_{\text{smooth QG correction}}
+G_{\text{QG,per}} = G_{\text{Euler,per}} + \frac{1}{A\kappa^2} - \underbrace{\frac{1}{A}\sum_{\mathbf{k}\neq 0} \frac{\kappa^2}{|\mathbf{k}|^2(|\mathbf{k}|^2 + \kappa^2)}\cos(\mathbf{k}\cdot\mathbf{r})}_{\text{smooth QG correction}}
 ```
 
 Here ``G_{\text{QG,per}}`` and ``G_{\text{Euler,per}}`` are the periodic QG
 and Euler Green's functions, ``\kappa=1/L_d`` is inverse deformation radius,
 and ``A``, ``\mathbf{k}``, and ``\mathbf{r}`` retain their definitions above.
+The constant ``1/(A\kappa^2)`` is the QG zero Fourier mode. The velocity
+implementation omits this constant: it cancels around closed contours and
+between each live beta-staircase contour and its matching reference contour.
+The full periodic QG energy retains the corresponding zero-mode contribution,
+as described in [Diagnostics](../api/diagnostics.md).
 The key idea is that the QG periodic kernel can be written as:
 
 - an Euler-like periodic part, which already has a validated Ewald treatment
@@ -109,7 +127,8 @@ raw periodic Green's function would.
 
 ## SQG Periodic Decomposition
 
-For the SQG kernel ``G(r) = 1/(2\pi r)`` on a periodic domain, the Ewald splitting decomposes the periodic sum of ``1/r`` into:
+For the unregularized SQG kernel ``G(r) = 1/(2\pi r)``, the periodic
+``1/r`` sum has the following Ewald representation, modulo a spatial constant:
 
 ```math
 \sum_{\mathbf{n}} \frac{1}{|\mathbf{r} - \mathbf{L}_\mathbf{n}|} = \sum_{\mathbf{n}} \frac{\operatorname{erfc}(\alpha|\mathbf{r} - \mathbf{L}_\mathbf{n}|)}{|\mathbf{r} - \mathbf{L}_\mathbf{n}|} + \frac{2\pi}{A}\sum_{\mathbf{k}\neq 0} \frac{\operatorname{erfc}(|\mathbf{k}|/(2\alpha))}{|\mathbf{k}|}\cos(\mathbf{k}\cdot\mathbf{r})
@@ -125,7 +144,12 @@ displayed equation is the infinite-truncation form.
 The two-dimensional lattice sum of ``1/r`` and the ``k=0`` inverse of the
 fractional Laplacian are defined only up to a spatial constant. Accordingly,
 the displayed identity is understood modulo that constant. Closed-contour
-velocity is insensitive to it. For the softened kernel used by the package,
+velocity is insensitive to it. The real- and Fourier-space terms, together
+with the mean-free convention, are given by
+[Holzmann & Bernu (2005), Eqs. (6)–(7)](https://doi.org/10.1016/j.jcp.2004.11.037).
+Their mean-free ``1/r`` potential subtracts ``2\sqrt{\pi}/(\alpha A)`` from
+the two sums above; multiplying by ``1/(2\pi)`` gives the SQG contour-kernel
+normalization. For the softened kernel used by the package,
 the Ewald representative carries the constant coefficient
 
 ```math
@@ -139,11 +163,12 @@ The Fourier coefficients contain an ``\operatorname{erfc}(|\mathbf{k}|/(2\alpha)
 
 The periodic segment velocity again uses singular subtraction:
 
-- the regularized unbounded SQG segment velocity handles the near-singular part analytically
+- the regularized unbounded SQG contribution handles the near-singular part,
+  analytically for straight segments and by quadrature for cubic arcs
 - the periodic correction is smooth enough to integrate with 5-point Gauss-Legendre quadrature
 
 Regularization is applied to every periodic image. For the central image, the
-exact regularized unbounded contribution is added analytically and the Ewald
+regularized unbounded contribution is supplied by the base velocity and the Ewald
 correction is ``-\operatorname{erf}(\alpha r)/r``. This correction remains
 bounded at coincidence, where its limit is ``-2\alpha/\sqrt{\pi}``. Each
 non-central real-space image adds
@@ -154,9 +179,11 @@ non-central real-space image adds
 \qquad r_\delta=\sqrt{r^2+\delta^2}.
 ```
 
-Thus the combined real-space and Fourier sums represent the periodic sum of
-the documented softened kernel ``1/r_\delta``, rather than making the answer
-depend on where the Ewald split is introduced.
+Thus the combined real-space and Fourier sums approximate the periodic
+softened kernel ``1/r_\delta`` with the configured truncations. Its nonzero
+Fourier modes include the softening factor ``e^{-\delta|\mathbf k|}`` derived
+in [Contour Dynamics](contour_dynamics.md#SQG-Kernel); finite ``\delta`` changes
+the inversion from the unregularized SQG model.
 
 Here ``r=|\mathbf r|``, ``r_\delta`` is the regularized distance, and
 ``\delta`` is `SQGKernel.δ` (the `δ_sqg` constructor keyword), not the
@@ -164,6 +191,7 @@ independent contour-surgery threshold.
 
 ## References and Further Reading
 
+- Holzmann, M. & Bernu, B. (2005). *Optimized periodic 1/r Coulomb potential in two dimensions.* J. Comput. Phys. **206**(1), 111–121. [doi:10.1016/j.jcp.2004.11.037](https://doi.org/10.1016/j.jcp.2004.11.037)
 - Dritschel, D.G. & Ambaum, M.H.P. (1997). *A contour-advective semi-Lagrangian numerical algorithm for simulating fine-scale conservative dynamical fields.* Q. J. R. Meteorol. Soc. **123**(540), 1097--1130. [doi:10.1002/qj.49712354015](https://doi.org/10.1002/qj.49712354015)
 - Pedlosky, J. (1987). *Geophysical Fluid Dynamics*, 2nd ed. Springer. [doi:10.1007/978-1-4612-4650-3](https://doi.org/10.1007/978-1-4612-4650-3)
 - Vallis, G.K. (2017). *Atmospheric and Oceanic Fluid Dynamics*, 2nd ed. Cambridge University Press. [doi:10.1017/9781107588417](https://doi.org/10.1017/9781107588417)

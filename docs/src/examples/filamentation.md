@@ -26,7 +26,7 @@ To run the velocity calculation on an NVIDIA GPU, install/load CUDA.jl and set
 `use_gpu = true` near the top of the script. This unbounded single-layer Euler
 setup uses the CUDA velocity path and the device-side surgery backend.
 
-```@repl example_filamentation
+```@example example_filamentation
 using ContourDynamics, StaticArrays
 
 function dritschel_perturbed_ellipse(lambda, epsilon, mode, N, pv)

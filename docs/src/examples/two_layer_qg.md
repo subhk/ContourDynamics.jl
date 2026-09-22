@@ -3,7 +3,7 @@
 Two identical circular upper-layer vortex patches merge in a two-layer
 quasi-geostrophic system. The physical setup is Figure 19 of Polvani, Zabusky &
 Flierl (1989): unit radius and PV jump, initial centroid distance ``d_i=2.2``,
-depth ratio ``\delta=0.2``, and ``\gamma=R/L_d=5``. The lower layer has uniform
+depth ratio ``\delta=0.2``, and ``\gamma=R/L_{\mathrm{upper}}=5``. The lower layer has uniform
 geostrophic PV.
 
 What to look for:
@@ -18,21 +18,33 @@ Polvani et al. write the Phillips stretching operator as
 \gamma^2\begin{bmatrix}-1 & 1 \\ \delta & -\delta\end{bmatrix}.
 ```
 
-Here ``\gamma=R/L_d`` is the ratio of vortex radius ``R`` to deformation
-radius ``L_d``, and ``\delta=H_1/H_2`` is the layer-depth ratio used by the
-paper. The displayed ``2\times2`` matrix is its nondimensional Phillips
+Here ``\gamma=R/L_{\mathrm{upper}}`` uses the **upper-layer deformation
+radius** defined in section 2 of the paper, and ``\delta=H_1/H_2`` is its
+layer-depth ratio. The displayed ``2\times2`` matrix is the nondimensional Phillips
 stretching operator; matrix row and column indices identify the affected and
 source layers, respectively.
 
-The package uses its symmetric similar form, whose off-diagonal entries are
-``\gamma^2\sqrt{\delta}``; this leaves the upper-layer inversion unchanged and
-enables the modal solver. The short docs run below uses fewer nodes and steps
-than the paper. The full script in
+The package's `Ld` argument instead contains the **baroclinic modal radius**:
+
+```math
+L_{\mathrm{modal}}
+=\frac{L_{\mathrm{upper}}}{\sqrt{1+\delta}}
+=\frac{R}{\gamma\sqrt{1+\delta}}.
+```
+
+The example uses ``R=1`` as its length unit, so the nonzero coupling eigenvalue
+is ``-\gamma^2(1+\delta)`` and `Ld = SVector(L_modal)`.
+
+Pass this physical stretching matrix and the layer thicknesses to the package.
+The kernel forms its symmetric similar matrix internally, applies the weighted
+PV transform, and reconstructs the physical-layer velocities. Here thicknesses
+are expressed in units of ``H_2``, so ``H=(\delta,1)``. The short docs run below
+uses fewer nodes and steps than the paper. The full script in
 `examples/two_layer_qg.jl` writes snapshots and media under
 `examples/output/two_layer_qg/`, but is likewise a literature-derived numerical
 adaptation rather than an exact reproduction of the paper's time integration.
 
-```@repl example_two_layer_qg
+```@example example_two_layer_qg
 using ContourDynamics, StaticArrays
 
 N = 64
@@ -41,11 +53,13 @@ depth_ratio = 0.2
 gamma = 5.0
 initial_distance = 2.2
 
-# Symmetric form of the two-layer Phillips stretching operator
-sqrt_delta = sqrt(depth_ratio)
-Ld = SVector(1.0 / (gamma * sqrt(1 + depth_ratio)))
-coupling = gamma^2 * SMatrix{2,2}(-1.0, sqrt_delta,
-                                   sqrt_delta, -depth_ratio)
+# R = 1 is the length unit; distinguish the paper's radius from the modal one.
+L_upper = R / gamma
+L_modal = L_upper / sqrt(1 + depth_ratio)
+Ld = SVector(L_modal)
+# Physical two-layer Phillips stretching operator in these units
+coupling = gamma^2 * SMatrix{2,2}(-1.0, depth_ratio, 1.0, -depth_ratio)
+H = SVector(depth_ratio, 1.0)
 
 # Figure 19: two upper-layer vortices and uniform lower-layer PV
 c_left = circular_patch(R, N, pv; cx=-initial_distance / 2)
@@ -56,6 +70,7 @@ prob = Problem(;
     dt       = 0.01,
     Ld       = Ld,
     coupling = coupling,
+    layer_thicknesses = H,
     layers   = ([c_left, c_right], PVContour{Float64}[]),
     surgery  = :none,
 )

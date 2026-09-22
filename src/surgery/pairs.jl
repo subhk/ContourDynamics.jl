@@ -17,13 +17,8 @@ end
 
 function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T}, domain::PeriodicDomain{T}) where {T}
     is_spanning(c) && return false
-    pt_q = _wrap_query_pt(pt, domain)
-    inside = false
-    @inbounds for i in 1:nnodes(c)
-        a_img, b_img = _shift_segment_to_image(c.nodes[i], next_node(c, i), pt_q, domain)
-        inside = xor(inside, _ray_crosses_segment(pt_q, a_img, b_img))
-    end
-    return inside
+    return _periodic_point_in_polygon(pt[1], pt[2], nnodes(c),
+        i -> (c.nodes[i][1], c.nodes[i][2]), domain.Lx, domain.Ly)
 end
 
 function _segment_interior_probe(c::PVContour{T}, i::Int, δ, domain::AbstractDomain=UnboundedDomain()) where {T}
@@ -145,8 +140,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
     @inline function _cached_same_interior_q(ci, i, cj, j)
         qi = _cached_interior_q(ci, i)
         qj = _cached_interior_q(cj, j)
-        tol = sqrt(eps(T)) * max(one(T), abs(qi), abs(qj))
-        return isapprox(qi, qj; atol=tol, rtol=sqrt(eps(T)))
+        return _same_surgery_pv(qi, qj)
     end
 
     for (ci, c) in enumerate(contours)
@@ -193,7 +187,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                         # nested vortices where several contours carry the same
                         # jump but bound different vorticity levels.
                         pv_i, pv_j = contours[ci].pv, contours[cj].pv
-                        !isapprox(pv_i, pv_j; atol=sqrt(eps(T)), rtol=sqrt(eps(T))) && continue
+                        _same_surgery_pv(pv_i, pv_j) || continue
                         _cached_same_interior_q(ci, i, cj, j) || continue
                     end
 

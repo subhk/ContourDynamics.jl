@@ -76,7 +76,9 @@ function build_ewald_cache(domain::PeriodicDomain{T},
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
-            if k2 > eps(T)
+            # Only the zero mode is absent; nonzero wavenumbers become small
+            # as the numeric domain lengths grow.
+            if !iszero(k2)
                 fourier_coeffs[mi, ni] = _ewald_fourier_coefficient(kernel, k2, α, area)
             end
         end
@@ -107,7 +109,7 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
-            if k2 > eps(T)
+            if !iszero(k2)
                 fourier_coeffs[mi, ni] = exp(-k2 / (4 * α^2)) / (k2 * area)
                 corr_coeffs[mi, ni] = kappa2 / (k2 * (k2 + kappa2) * area)
             end

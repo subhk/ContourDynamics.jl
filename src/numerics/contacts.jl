@@ -1,4 +1,10 @@
-# Scalar geometric predicates used by both surgery backends.
+# Scalar contact and surgery predicates used by both backends.
+
+# PV jumps and interior levels carry units. An absolute epsilon floor would
+# identify distinct weak levels (even opposite signs) as the same fluid.
+@inline function _same_surgery_pv(a::T, b::T) where {T}
+    return a == b || abs(a - b) <= sqrt(eps(T)) * max(abs(a), abs(b))
+end
 
 @inline _flat_point_segment_dist2(px, py, ax, ay, bx, by) =
     first(_flat_point_segment_closest(px, py, ax, ay, bx, by))
@@ -33,4 +39,42 @@ end
     (ay > py) == (by > py) && return false
     x_cross = ax + (py - ay) * (bx - ax) / (by - ay)
     return px < x_cross
+end
+
+@inline function _point_in_polygon(px, py, n::Int, getnode::F) where {F}
+    n < 3 && return false
+    inside = false
+    @inbounds for i in 1:n
+        ax, ay = getnode(i)
+        bx, by = getnode(i < n ? i + 1 : 1)
+        inside = xor(inside, _flat_ray_crosses_segment(px, py, ax, ay, bx, by))
+    end
+    return inside
+end
+
+@inline function _periodic_point_in_polygon(px::T, py::T, n::Int, getnode::F,
+                                            Lx::T, Ly::T) where {T,F}
+    n < 3 && return false
+    xmin, ymin = getnode(1)
+    xmax, ymax = xmin, ymin
+    @inbounds for i in 2:n
+        x, y = getnode(i)
+        xmin, xmax = min(xmin, x), max(xmax, x)
+        ymin, ymax = min(ymin, y), max(ymax, y)
+    end
+
+    # Translate the query by whole periods, keeping the polygon closed in its
+    # original coordinate frame. Only images inside its bounding box can be
+    # contained. Enumerating them also supports contours wider than a half
+    # period, for which choosing one nearest image is insufficient.
+    period_x, period_y = T(2) * Lx, T(2) * Ly
+    ixlo = ceil(Int, (xmin - px) / period_x)
+    ixhi = floor(Int, (xmax - px) / period_x)
+    iylo = ceil(Int, (ymin - py) / period_y)
+    iyhi = floor(Int, (ymax - py) / period_y)
+    for ix in ixlo:ixhi, iy in iylo:iyhi
+        qx, qy = px + T(ix) * period_x, py + T(iy) * period_y
+        _point_in_polygon(qx, qy, n, getnode) && return true
+    end
+    return false
 end

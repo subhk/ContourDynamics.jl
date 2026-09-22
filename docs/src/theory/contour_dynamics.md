@@ -15,7 +15,7 @@ streamfunction, ``q(\mathbf{x})`` is PV (vorticity for Euler), and
 Laplacian and ``L_d`` is the deformation radius. The solution is:
 
 ```math
-\psi(\mathbf{x}) = \int\!\!\int G(|\mathbf{x} - \mathbf{x}'|) \, q(\mathbf{x}') \, dA'
+\psi(\mathbf{x}) = \int\!\!\int G_\psi(|\mathbf{x} - \mathbf{x}'|) \, q(\mathbf{x}') \, dA'
 ```
 
 Here:
@@ -23,12 +23,15 @@ Here:
 - ``\psi`` is the streamfunction
 - ``q(\mathbf{x}')`` is the PV field at source point ``\mathbf{x}'``
 - ``\mathbf{x}`` is the point where we want to evaluate the solution
-- ``G`` is the Green's function, meaning the response at ``\mathbf{x}`` to a unit source placed at ``\mathbf{x}'``
+- ``G_\psi`` is the streamfunction Green's function, meaning the response at ``\mathbf{x}`` to a unit source placed at ``\mathbf{x}'``
 - ``r=|\mathbf{x}-\mathbf{x}'|`` is source-target distance
 - ``dA'`` is the area element at the source point, and the double integral covers the PV-supporting area
 
-The Green's function ``G`` gives the response at one point to a unit source at
-another point.
+The scalar kernel multiplying the oriented tangent in a contour integral has
+the opposite sign, ``G=-G_\psi``, after integration by parts. For Euler,
+``G_\psi=\log r/(2\pi)``; for QG, ``G_\psi=-K_0(r/L_d)/(2\pi)``.
+For the patch formulas below, take counterclockwise contours with jumps defined
+as the inside value minus the outside value.
 
 For a single vortex patch with uniform PV jump ``q`` bounded by contour ``C``, the velocity ``\mathbf{u} = (-\psi_y, \psi_x)`` can be converted from an area integral to a **contour integral** via Green's theorem:
 
@@ -91,8 +94,9 @@ The segment velocity is:
 ```
 
 Here ``\hat{\mathbf{t}}=(\mathbf{b}-\mathbf{a})/|\mathbf{b}-\mathbf{a}|`` is
-the unit tangent, while ``u_a`` and ``u_b`` are the signed tangent coordinates
-of endpoints ``\mathbf{a}`` and ``\mathbf{b}`` relative to the target. The
+the unit tangent, while ``u_a=(\mathbf x-\mathbf a)\cdot\hat{\mathbf t}`` and
+``u_b=(\mathbf x-\mathbf b)\cdot\hat{\mathbf t}=u_a-|\mathbf b-\mathbf a|``
+are the signed target coordinates measured from the two endpoints. The
 normal coordinate ``h`` is constant along a straight segment.
 
 This straight-segment fallback is exact and introduces no quadrature error.
@@ -120,23 +124,27 @@ remainder suitable for standard quadrature.
 
 ### SQG Kernel
 
-Surface quasi-geostrophic (SQG) dynamics replaces the Laplacian PV inversion with a **fractional Laplacian**:
+Unregularized surface quasi-geostrophic (SQG) dynamics replaces the Laplacian PV
+inversion with a **fractional Laplacian**:
 
 ```math
 -(-\nabla^2)^{1/2}\psi = \theta
 ```
 
-where ``\theta`` is the surface buoyancy in the package's lower-boundary
-convention. The streamfunction Green's function is
+where ``\theta`` is the normalized surface scalar in the package's
+lower-boundary convention, with units of velocity. It represents surface
+buoyancy after the physical normalization needed to obtain this inversion.
+The streamfunction Green's function is
 ``G_\psi(r)=-1/(2\pi r)``, and integration by parts gives the contour integral:
 
 ```math
-\mathbf{u}(\mathbf{x}) = \frac{1}{2\pi}\oint_C \frac{d\mathbf{x}'}{|\mathbf{x}-\mathbf{x}'|}
+\mathbf{u}(\mathbf{x}) = \frac{\Delta\theta}{2\pi}\oint_C \frac{d\mathbf{x}'}{|\mathbf{x}-\mathbf{x}'|}
 ```
 
 Here ``(-\nabla^2)^{1/2}`` is the half-order fractional Laplacian,
 ``\theta`` plays the role of the active scalar, ``r=|\mathbf{x}-\mathbf{x}'|``,
-``C`` is its patch boundary, and ``d\mathbf{x}'`` is the oriented tangent line
+``C`` is its patch boundary, ``\Delta\theta`` is the scalar jump carried by the
+contour, and ``d\mathbf{x}'`` is the oriented tangent line
 element. The kernel is more singular than in Euler, so SQG tends to generate
 sharper fronts and stronger filamentation.
 
@@ -145,13 +153,34 @@ keeps positive stored jumps counter-clockwise, consistently with the Euler and
 QG kernels. Reversing the physical boundary orientation reverses the meaning
 of the stored buoyancy sign.
 
-The segment integral has a closed-form antiderivative:
+Unlike the Euler and QG kernels, the unregularized SQG velocity is **singular at
+the contour boundary**: the tangential component diverges logarithmically. The
+implementation requires a regularization length ``\delta>0`` and replaces
+``1/r`` with ``1/\sqrt{r^2+\delta^2}``.
+
+This softening changes the inversion. Fourier-transforming the implemented
+streamfunction kernel ``-1/(2\pi\sqrt{r^2+\delta^2})`` gives
+
+```math
+\widehat{\psi_\delta}(\mathbf{k})
+=-\frac{e^{-\delta|\mathbf{k}|}}{|\mathbf{k}|}\widehat\theta(\mathbf{k}),
+\qquad \mathbf{k}\ne0.
+```
+
+Here hats denote horizontal Fourier transforms, ``\mathbf k`` is the
+wavevector, and ``\psi_\delta`` is the regularized streamfunction used to
+advect the contours. The unregularized relation in Held et al. (1995), Eq. (13),
+is recovered as ``\delta\to0`` at fixed nonzero wavenumber. At finite ``\delta``,
+the extra exponential factor suppresses small-scale velocity; it is a model
+regularization as well as a way to evaluate boundary velocities. The associated
+Hamiltonian is described in [Diagnostics](../api/diagnostics.md).
+
+For a straight segment, let ``h_{\mathrm{eff}}^2=h^2+\delta^2``. The regularized
+segment integral has a closed-form antiderivative:
 
 ```math
 F(u) = \log\!\left(u + \sqrt{u^2 + h_{\text{eff}}^2}\right) = \operatorname{arcsinh}\!\left(\frac{u}{\sqrt{h_{\text{eff}}^2}}\right) + \text{const}
 ```
-
-Unlike the Euler and QG kernels, the SQG velocity is **singular at the contour boundary** — the tangential component diverges logarithmically. A regularization ``\delta > 0`` is required, replacing ``1/r`` with ``1/\sqrt{r^2 + \delta^2}`` so that ``h_{\text{eff}}^2 = h^2 + \delta^2``.
 
 Here:
 
@@ -159,7 +188,7 @@ Here:
 - ``h_{\text{eff}}`` is the regularized normal distance
 - ``\text{const}`` is an arbitrary additive integration constant, which cancels in endpoint differences
 
-For straight segments, the regularized segment velocity remains exact:
+For straight segments, the regularized unit-jump segment velocity remains exact:
 
 ```math
 \mathbf{v}_{\text{seg}} = \frac{1}{2\pi}\hat{\mathbf{t}} \left[F(u_a) - F(u_b)\right]

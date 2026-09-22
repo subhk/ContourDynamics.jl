@@ -1,6 +1,74 @@
 using Test, ContourDynamics, StaticArrays, Logging
 
 @testset "Surgery" begin
+    @testset "PV compatibility is independent of PV units" begin
+        for T in (Float32, Float64), q in (one(T), T(1e-10))
+            δ = T(0.02)
+            for factor in (-one(T), zero(T), one(T), T(2))
+                cs = [circular_patch(0.2, 64, q; cx=-0.205, T=T),
+                      circular_patch(0.2, 64, factor * q; cx=0.205, T=T)]
+                index = ContourDynamics.build_spatial_index(cs, δ)
+                pairs = ContourDynamics.find_close_segments(cs, index, δ)
+                merges = filter(p -> p[1] != p[3], pairs)
+                @test isempty(merges) == (factor != one(T))
+
+                if factor == -one(T)
+                    prob = ContourProblem(EulerKernel(), UnboundedDomain(), cs)
+                    params = SurgeryParams(δ, T(0.08), T(0.15), T(1e-8), 1)
+                    surgery!(prob, params)
+                    @test length(cs) == 2
+                    @test sort(getproperty.(cs, :pv)) == [-q, q]
+                    @test abs(circulation(prob)) <= T(1e-5) * q
+                end
+            end
+
+            # Equal jumps at different nested fluid levels must also remain
+            # distinct when their absolute PV values are very small.
+            nested = [circular_patch(1, 64, q; T=T), circular_patch(0.99, 64, q; T=T)]
+            index = ContourDynamics.build_spatial_index(nested, δ)
+            @test isempty(ContourDynamics.find_close_segments(nested, index, δ))
+        end
+    end
+
+    @testset "Periodic containment preserves closed polygon images" begin
+        for T in (Float32, Float64)
+            domain = PeriodicDomain(one(T))
+            c = circular_patch(0.2, 64, 1; T=T)
+            contains(c, x, y) = ContourDynamics._point_in_closed_contour(SVector(T(x), T(y)), c, domain)
+            @test contains(c, 0, 0)
+            @test contains(c, 4, -2)
+            for (x, y) in ((0.95, 0), (-0.95, 0), (0, 0.95), (0.95, 0.95))
+                @test !contains(c, x, y)
+            end
+            seam = circular_patch(0.2, 64, 1; cx=0.95, cy=0.95, T=T)
+            @test contains(seam, -0.98, -0.98)
+            @test !contains(seam, 0.7, 0.7)
+
+            # This thin diagonal polygon is wider than a full period in x.
+            # Its image containing the query is not the nearest to its center.
+            wide = PVContour(SVector{2,T}.([(-1.3, -0.45), (1.3, 0.35),
+                                            (1.3, 0.45), (-1.3, -0.35)]), one(T))
+            @test contains(wide, 0.8, -0.37)
+            @test !contains(wide, 0, 0.5)
+            reversed = PVContour(reverse(wide.nodes), wide.pv)
+            @test contains(reversed, 0.8, -0.37)
+
+            # A distant patch must not change the interior PV at either side
+            # of a legitimate merger near its antipodal point.
+            cs = [circular_patch(0.2, 64, 2; T=T),
+                  circular_patch(0.05, 64, 1; cx=0.745, T=T),
+                  circular_patch(0.05, 64, 1; cx=0.855, T=T)]
+            δ = T(0.02)
+            pair_sets = map((UnboundedDomain(), domain)) do d
+                index = ContourDynamics.build_spatial_index(cs, δ, d)
+                pairs = ContourDynamics.find_close_segments(cs, index, δ, d)
+                Set(p for p in pairs if p[1] == 2 && p[3] == 3)
+            end
+            @test !isempty(pair_sets[1])
+            @test pair_sets[2] == pair_sets[1]
+        end
+    end
+
     @testset "Translated contour orientation helpers" begin
         base_nodes = SVector{2,Float64}[
             SVector(0.0, 0.0),
@@ -85,6 +153,28 @@ using Test, ContourDynamics, StaticArrays, Logging
         c_new = remesh(c, params)
 
         @test vortex_area(c_new) ≈ vortex_area(c) rtol=1e-12 atol=1e-12
+    end
+
+    @testset "Remeshing is independent of coordinate units" begin
+        for T in (Float32, Float64)
+            c = elliptical_patch(2, 1, 96, 1; T=T)
+            params = SurgeryParams(T(0.01), T(0.05), T(0.5), T(1e-8), 5)
+            density = ContourDynamics._dritschel_segment_densities(c, params)
+            redistributed = remesh(c, params)
+            tolerance = T === Float32 ? T(2e-4) : T(1e-10)
+
+            for scale in (T(0.01), T(100))
+                scaled = PVContour([scale * x for x in c.nodes], c.pv)
+                scaled_params = SurgeryParams(params.δ * scale, params.μ * scale,
+                    params.Δ_max * scale, params.area_min * scale^2, params.n_surgery)
+                scaled_density = ContourDynamics._dritschel_segment_densities(scaled, scaled_params)
+                scaled_remesh = remesh(scaled, scaled_params)
+
+                @test scale .* scaled_density ≈ density rtol=tolerance
+                @test nnodes(scaled_remesh) == nnodes(redistributed)
+                @test scaled_remesh.nodes ./ scale ≈ redistributed.nodes rtol=tolerance
+            end
+        end
     end
 
     @testset "Remesh reuses arc lengths and prepared source geometry" begin

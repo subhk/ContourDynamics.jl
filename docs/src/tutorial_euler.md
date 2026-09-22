@@ -6,7 +6,7 @@ This tutorial shows the basic ContourDynamics.jl workflow on a 2D Euler vortex p
 
 In 2D Euler flow, the velocity is determined by the vorticity field. For a **vortex patch**, a region of uniform vorticity surrounded by irrotational flow, that velocity can be written as a contour integral around the patch boundary.
 
-The Green's function is ``G(r) = -\frac{1}{2\pi} \log r``, and the velocity at a boundary node is:
+The scalar contour kernel is ``G(r) = -\frac{1}{2\pi} \log r``, and the velocity at a boundary node is:
 
 ```math
 \mathbf{u}(\mathbf{x}) = -\frac{q}{4\pi} \oint_C \log|\mathbf{x} - \mathbf{x}'|^2 \, d\mathbf{x}'
@@ -67,7 +67,7 @@ domain, or different surgery settings.
 
 Initial diagnostics:
 
-```@repl tutorial_euler
+```@example tutorial_euler
 initial_contours = materialize_contours(prob)
 area0 = vortex_area(initial_contours[1])        # should be about π*a*b = 2π
 circulation0 = circulation(prob)                # should be about pv * area0 = 2π
@@ -120,7 +120,7 @@ and ``\Omega`` is the rigid angular velocity. For our parameters
 
 After evolution, the following checks verify the solution quality:
 
-```@repl tutorial_euler
+```@example tutorial_euler
 # The aspect ratio should remain ≈ 2 (steady rotation, no deformation)
 println("Final aspect ratio: $(round(aspect_ratios[end]; digits=6))")
 println("Aspect ratio drift: $(round(abs(aspect_ratios[end] - 2.0); digits=6))")
@@ -137,7 +137,7 @@ println("Relative circulation change: $(round(rel_circulation_change; digits=8))
 The velocity field can be evaluated at arbitrary points, not only on contour
 nodes:
 
-```@repl tutorial_euler
+```@example tutorial_euler
 using StaticArrays
 
 # Velocity at the origin (should be zero by symmetry for a centered patch)

@@ -264,7 +264,7 @@ end
         sx_trig = sin(kxi * r0x)
         for ni in 1:nky
             coeff = fourier_coeffs[mi, ni]
-            abs(coeff) < eps(T) && continue
+            iszero(coeff) && continue
             kyi = ky[ni]
             G_corr += coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
         end
@@ -290,7 +290,7 @@ end
             kyi = ky[ni]
             coeff = if corr_coeffs === nothing
                 k2 = kxi^2 + kyi^2
-                k2 < eps(T) && continue
+                iszero(k2) && continue
                 -kappa2 / (k2 * (k2 + kappa2) * area)
             else
                 -corr_coeffs[mi, ni]
@@ -339,7 +339,7 @@ end
         sx_trig = sin(kxi * r0x)
         for ni in 1:nky
             coeff = fourier_coeffs[mi, ni]
-            abs(coeff) < eps(T) && continue
+            iszero(coeff) && continue
             kyi = ky[ni]
             G_corr += inv2pi * coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
         end

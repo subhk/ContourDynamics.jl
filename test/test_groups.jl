@@ -5,7 +5,7 @@ const TEST_GROUPS = (
             "test_threading.jl", "test_multi_contour.jl", "test_example_visualization_geometry.jl",
             "test_two_layer_qg_example.jl"],
     numerical = ["test_beta_plane.jl", "test_euler.jl", "test_qg.jl", "test_sqg.jl",
-                 "test_periodic_qg_sqg.jl", "test_periodic_velocity_regression.jl",
+                 "test_periodic_qg_sqg.jl", "test_periodic_scaling.jl", "test_periodic_velocity_regression.jl",
                  "test_periodic_velocity_oracle.jl"],
     device = ["test_device.jl"],
     performance = ["test_allocations.jl"],

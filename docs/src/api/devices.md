@@ -21,11 +21,18 @@ device topology-rewrite kernels.
 
 Single-point `velocity(prob, x)` probes also evaluate from the authoritative
 device state with the same KA segment kernels as node velocity. Only the final
-two velocity scalars are copied back. Small scalar counts and diagnostic results
-may cross to the host for allocation, control flow, or return values. Bulk host
-copies occur only at explicit output boundaries such as `materialize_contours`,
-snapshots, plotting, and animation. The CPU-vector OrdinaryDiffEq bridge rejects
-GPU problems instead of falling back.
+velocity components are copied back (two per layer). Small scalar counts also cross to the
+host for allocation and control flow.
+
+Scalar diagnostics compute contributions on the device and finish their sums
+on the CPU. Energy copies back one partial contribution per valid segment
+(for each mode in multi-layer QG); circulation, enstrophy, and angular momentum
+copy back one contribution per contour. These transfers scale with the segment
+or contour count and occur whenever the corresponding diagnostic is called.
+The active contour geometry remains on the device. Full geometry copies are
+made for output or inspection through `materialize_contours`, snapshots,
+plotting, and animation. The CPU-vector OrdinaryDiffEq bridge rejects GPU
+problems instead of falling back.
 
 The device velocity and energy paths reuse buffers owned by the problem's
 `ExecutionWorkspace`, sized to the current topology. Call

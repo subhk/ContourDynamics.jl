@@ -63,32 +63,20 @@ function timestep!(prob::MultiLayerContourProblem{N}, stepper::RK4Stepper{T}) wh
 end
 
 """
-    resize_buffers!(stepper::RK4Stepper, prob::ContourProblem)
+    resize_buffers!(stepper::RK4Stepper, prob::Union{ContourProblem,MultiLayerContourProblem})
 
 Resize RK4 work arrays after surgery changes node count.
 The buffers live on the stepper's device (a `Vector` for CPU problems, a device
 array for GPU problems — see [`RK4Stepper`](@ref)); `resize!` preserves that type.
 """
-function resize_buffers!(stepper::RK4Stepper{T}, prob::ContourProblem) where {T}
+function resize_buffers!(stepper::RK4Stepper{T},
+                         prob::Union{ContourProblem,MultiLayerContourProblem}) where {T}
     N = total_nodes(prob)
     z = zero(SVector{2, T})
-    resize!(stepper.k1, N); fill!(stepper.k1, z)
-    resize!(stepper.k2, N); fill!(stepper.k2, z)
-    resize!(stepper.k3, N); fill!(stepper.k3, z)
-    resize!(stepper.k4, N); fill!(stepper.k4, z)
-    resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
-    empty!(stepper.node_ranges)
-    return stepper
-end
-
-function resize_buffers!(stepper::RK4Stepper{T}, prob::MultiLayerContourProblem) where {T}
-    N = total_nodes(prob)
-    z = zero(SVector{2, T})
-    resize!(stepper.k1, N); fill!(stepper.k1, z)
-    resize!(stepper.k2, N); fill!(stepper.k2, z)
-    resize!(stepper.k3, N); fill!(stepper.k3, z)
-    resize!(stepper.k4, N); fill!(stepper.k4, z)
-    resize!(stepper.nodes_buf, N); fill!(stepper.nodes_buf, z)
+    for buffer in (stepper.k1, stepper.k2, stepper.k3, stepper.k4, stepper.nodes_buf)
+        resize!(buffer, N)
+        fill!(buffer, z)
+    end
     empty!(stepper.vel_bufs)
     empty!(stepper.node_ranges)
     return stepper
@@ -178,19 +166,9 @@ end
 
 # RK4 keeps no previous-step history, so post-surgery handling only needs to
 # synchronize its reusable buffers with the current topology.
-@inline _invalidate_history!(::AbstractTimeStepper) = nothing
-
-@inline function _handle_post_surgery!(prob::ContourProblem, stepper, ::Int)
-    if !_ensure_stepper_buffers!(prob, stepper)
-        _invalidate_history!(stepper)
-    end
-    return nothing
-end
-
-@inline function _handle_post_surgery!(prob::MultiLayerContourProblem, stepper, ::Int)
-    if !_ensure_stepper_buffers!(prob, stepper)
-        _invalidate_history!(stepper)
-    end
+@inline function _handle_post_surgery!(prob::Union{ContourProblem,MultiLayerContourProblem},
+                                      stepper, ::Int)
+    _ensure_stepper_buffers!(prob, stepper)
     return nothing
 end
 

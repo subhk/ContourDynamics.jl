@@ -96,9 +96,7 @@ end
                     dist_along = min(dist_along, nc - dist_along)
                     admissible = dist_along > 2
                 else
-                    tol = sqrt(eps(one(δ2))) *
-                          max(one(δ2), abs(pv[ci]), abs(pv[cj]))
-                    admissible = abs(pv[ci] - pv[cj]) <= tol
+                    admissible = _same_surgery_pv(pv[ci], pv[cj])
                 end
 
                 if admissible
@@ -320,20 +318,13 @@ end
                                                offsets, lengths, ci,
                                                periodic, Lx, Ly)
     (!iszero(wrapx[ci]) || !iszero(wrapy[ci])) && return false
-    inside = false
     off = offsets[ci]
     n = lengths[ci]
-    @inbounds for li in 1:n
-        g = off + li - 1
-        ax = x[g]
-        ay = y[g]
-        bx = li < n ? x[g + 1] : x[off] + wrapx[ci]
-        by = li < n ? y[g + 1] : y[off] + wrapy[ci]
-        ax, ay, bx, by = _flat_shift_segment_to_image(
-            ax, ay, bx, by, px, py, periodic, Lx, Ly)
-        inside = inside != _flat_ray_crosses_segment(px, py, ax, ay, bx, by)
+    getnode = i -> (x[off + i - 1], y[off + i - 1])
+    if periodic
+        return _periodic_point_in_polygon(px, py, n, getnode, Lx, Ly)
     end
-    return inside
+    return _point_in_polygon(px, py, n, getnode)
 end
 
 @inline function _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
@@ -371,8 +362,7 @@ end
                                                 offsets, lengths, cj,
                                                 pair_j[k], δ, ncontours,
                                                 periodic, Lx, Ly)
-            tol = sqrt(eps(one(δ))) * max(one(δ), abs(qi), abs(qj))
-            ok = abs(qi - qj) <= tol
+            ok = _same_surgery_pv(qi, qj)
         end
         valid[k] = ok ? UInt8(1) : UInt8(0)
     end
@@ -711,4 +701,3 @@ function _device_select_reconnection_pair_buffer(contours::Vector{PVContour{T}},
     return _device_select_reconnection_pair_buffer(
         contours, _pack_close_pair_candidates(close_pairs, dev), dev)
 end
-

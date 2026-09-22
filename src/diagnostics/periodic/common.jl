@@ -8,21 +8,8 @@ function _energy_contour_pair_euler_periodic(ci::PVContour{T}, cj::PVContour{T},
     # The shared normalization then requires the contour integrand 4πφ.
     # This k⁻⁴ series is smooth, including for coincident segments.
     area = T(4) * domain.Lx * domain.Ly
-    kx, ky = cache.kx, cache.ky
-    Φ = rv -> begin
-        val = zero(T)
-        for kxi in kx
-            cx = cos(kxi * rv[1])
-            sx = sin(kxi * rv[1])
-            for kyi in ky
-                k2 = kxi * kxi + kyi * kyi
-                k2 < eps(T) && continue
-                phase_cos = cx * cos(kyi * rv[2]) - sx * sin(kyi * rv[2])
-                val -= T(4) * T(π) * phase_cos / (area * k2 * k2)
-            end
-        end
-        val
-    end
+    Φ = rv -> _periodic_energy_potential_scalar(
+        rv[1], rv[2], zero(T), area, cache.kx, cache.ky)
     return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
 
@@ -35,22 +22,8 @@ function _energy_contour_pair_qg_periodic(ci::PVContour{T}, cj::PVContour{T},
     # The spatially constant k=0 energy is added by the problem-level caller.
     area = T(4) * domain.Lx * domain.Ly
     kappa2 = one(T) / (Ld * Ld)
-    kx, ky = cache.kx, cache.ky
-    Φ = rv -> begin
-        val = zero(T)
-        for kxi in kx
-            cx = cos(kxi * rv[1])
-            sx = sin(kxi * rv[1])
-            for kyi in ky
-                k2 = kxi * kxi + kyi * kyi
-                k2 < eps(T) && continue
-                phase_cos = cx * cos(kyi * rv[2]) - sx * sin(kyi * rv[2])
-                val -= T(4) * T(π) * phase_cos /
-                       (area * k2 * (k2 + kappa2))
-            end
-        end
-        val
-    end
+    Φ = rv -> _periodic_energy_potential_scalar(
+        rv[1], rv[2], kappa2, area, cache.kx, cache.ky)
     return _energy_contour_pair(ci, cj, Φ; _partial=_partial)
 end
 
@@ -93,40 +66,9 @@ function _eval_sqg_periodic_energy_potential(r_vec::SVector{2,T},
                                              cache::EwaldCache{T},
                                              domain::PeriodicDomain{T},
                                              δ::T) where {T}
-    # Apply the SQG softening to every periodic image.  For each image,
-    #
-    #   2Φ_real(r) + 2Φδ(r) - 2r
-    #
-    # has Laplacian twice the scalar Ewald kernel. This factor of two is required
-    # by the shared -raw/(8π) contour-energy normalization; together with the
-    # doubled Fourier part it gives the positive SQG Hamiltonian.
-    α = cache.α
-    Lx, Ly = domain.Lx, domain.Ly
-    phi = zero(T)
-
-    for px in -cache.n_images:cache.n_images
-        for py in -cache.n_images:cache.n_images
-            shift = SVector{2,T}(2 * Lx * px, 2 * Ly * py)
-            rv = r_vec - shift
-            r2 = rv[1]^2 + rv[2]^2
-            r = sqrt(r2)
-            phi += T(2) * _sqg_ewald_real_potential(r, α) +
-                   _sqg_regularized_energy_potential_scalar(r2, δ) - T(2) * r
-        end
-    end
-
-    for (mi, kxi) in enumerate(cache.kx)
-        for (ni, kyi) in enumerate(cache.ky)
-            k2 = kxi^2 + kyi^2
-            k2 < eps(T) && continue
-            coeff = cache.fourier_coeffs[mi, ni]
-            abs(coeff) < eps(T) && continue
-            phase = kxi * r_vec[1] + kyi * r_vec[2]
-            phi -= T(2) * coeff * cos(phase) / k2
-        end
-    end
-
-    return phi
+    return _sqg_periodic_energy_potential_scalar(
+        r_vec[1], r_vec[2], cache.α, domain.Lx, domain.Ly, δ,
+        cache.n_images, cache.kx, cache.ky, cache.fourier_coeffs)
 end
 
 function _energy_contour_pair_sqg_periodic(ci::PVContour{T}, cj::PVContour{T},

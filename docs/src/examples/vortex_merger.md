@@ -17,7 +17,7 @@ The full script in `examples/vortex_merger.jl` writes snapshots, a final figure,
 an MP4 animation, and `vortex_merger_diagnostics.csv` with contour count, node
 count, area, circulation drift, and energy drift for validation.
 
-```@repl example_vortex_merger
+```@example example_vortex_merger
 using ContourDynamics
 
 R = 1.0

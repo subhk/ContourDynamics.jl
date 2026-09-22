@@ -58,9 +58,12 @@ is `δ ≈ μ`, the minimum segment length used for surgery.
 
 Positive PV (surface buoyancy) induces counter-clockwise circulation, matching
 the `EulerKernel` convention. With `u = (-ψ_y, ψ_x)`, this is the lower-boundary
-convention `θ = -(-Δ)^(1/2)ψ`; the corresponding streamfunction Green's
-function is `-1/(2πr)` and integration by parts gives the positive contour
-kernel above.
+convention `θ = -(-Δ)^(1/2)ψ` in the unregularized model. Its streamfunction
+Green's function is `-1/(2πr)` and integration by parts gives the positive
+contour kernel above. At finite `δ`, the implemented streamfunction kernel is
+`-1/(2π√(r² + δ²))`: its Fourier multiplier is `-exp(-δ|k|)/|k|` for nonzero
+wavenumber. This suppresses small-scale velocity and recovers the unregularized
+inversion as `δ → 0` at fixed nonzero wavenumber.
 """
 struct SQGKernel{T<:AbstractFloat} <: AbstractKernel
     δ::T

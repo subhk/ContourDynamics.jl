@@ -29,12 +29,15 @@ function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
     μ = T(params.μ)
     Δ_max = T(params.Δ_max)
     L = max(perimeter / T(2π), T(params.Δ_max))
-    inv_μL = inv(μ * L)
+    # μ is a length in the public API. The dimensionless density parameter
+    # is μ/L, so 1/(μ_density * L) = 1/μ.
+    inv_μ = inv(μ)
     sqrt2 = sqrt(T(2))
-    d2_floor = eps(T) * max(one(T), L)^2
+    d2_floor = eps(T) * L^2
     source_data = _source_data === nothing ? _prepare_density_sources(sources) : _source_data
 
-    # Dritschel (1988), Eqs. (2a)-(2d).  First form the nonlocal
+    # Adapt Dritschel's nonlocal density construction to the public spacing
+    # lengths and the node-budget normalization below. First form the nonlocal
     # vorticity-weighted curvature K_j at each node of this contour, using all
     # source contours that participate in the same surgery pass.  The resulting
     # transformed node density is averaged onto segments and saturated so the
@@ -66,7 +69,7 @@ function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
         end
 
         K_j = denominator <= eps(T) ? zero(T) : numerator / denominator
-        node_density_curvatures[j] = inv_μL * (K_j * L)^α + sqrt2 * K_j
+        node_density_curvatures[j] = inv_μ * (K_j * L)^α + sqrt2 * K_j
     end
 
     raw = Vector{T}(undef, n)

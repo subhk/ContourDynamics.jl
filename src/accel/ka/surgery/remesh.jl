@@ -187,7 +187,7 @@ end
         xj = x[g]
         yj = y[g]
         L = max(perimeters[ci] / eltype(x)(2π), Δ_max)
-        d2_floor = eps(typeof(L)) * max(one(L), L)^2
+        d2_floor = eps(typeof(L)) * L^2
         numerator = zero(L)
         denominator = zero(L)
 
@@ -212,7 +212,8 @@ end
         K_j = denominator <= eps(typeof(denominator)) ? zero(denominator) : numerator / denominator
         α = eltype(x)(2) / eltype(x)(3)
         sqrt2 = sqrt(eltype(x)(2))
-        node_density_curvatures[g] = inv(μ * L) * (K_j * L)^α + sqrt2 * K_j
+        # Public μ is a length; the dimensionless density parameter is μ/L.
+        node_density_curvatures[g] = inv(μ) * (K_j * L)^α + sqrt2 * K_j
     end
 end
 

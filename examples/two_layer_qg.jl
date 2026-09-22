@@ -6,9 +6,9 @@
 # d_i = 2.2, depth ratio δ = 0.2, and γ = R/L_d = 5.
 #
 # The paper's lower layer has constant geostrophic PV. For δ > 0 we use a
-# symmetric similarity transform of the two-layer Phillips stretching operator,
-# γ^2[-1 1; δ -δ], so the package's symmetric modal solver gives
-# the same upper-layer streamfunction while keeping the lower layer empty.
+# physical two-layer Phillips stretching operator, γ^2[-1 1; δ -δ], and
+# layer thicknesses proportional to (δ, 1). The package performs the weighted
+# similarity transform internally; the lower layer has no PV contours.
 #
 #   Polvani, L.M., Zabusky, N.J. & Flierl, G.R. (1989). "Two-layer
 #   geostrophic vortex dynamics. Part 1. Upper-layer V-states and merger."
@@ -23,6 +23,7 @@ using ContourDynamics
 using StaticArrays
 using JLD2
 using LinearAlgebra
+include("two_layer_qg_setup.jl")
 
 # --- Output ---
 OUTDIR = joinpath(@__DIR__, "output", "two_layer_qg")
@@ -47,44 +48,15 @@ surgery_every = 25
 save_media = true
 save_media && include("visualization.jl")
 
-function polvani_upper_layer_merger_problem(; nodes_per_contour=nodes_per_contour,
-                                             R=R,
-                                             pv=pv,
-                                             depth_ratio=depth_ratio,
-                                             γ=γ,
-                                             initial_distance=initial_distance,
-                                             dt=dt,
-                                             surgery_δ=surgery_δ,
-                                             surgery_mu=surgery_mu,
-                                             max_segment=max_segment,
-                                             surgery_every=surgery_every)
-    depth_ratio > 0 || throw(ArgumentError("depth_ratio must be positive for the two-layer solver. Use a single-layer QG kernel for the equivalent-barotropic δ = 0 limit."))
-    sqrt_δ = sqrt(depth_ratio)
-    Ld = SVector(1.0 / (γ * sqrt(1 + depth_ratio)))
-    coupling = γ^2 * SMatrix{2,2}(-1.0, sqrt_δ,
-                                      sqrt_δ, -depth_ratio)
-
-    c_left = circular_patch(R, nodes_per_contour, pv; cx=-initial_distance / 2)
-    c_right = circular_patch(R, nodes_per_contour, pv; cx=initial_distance / 2)
-    surgery = SurgeryParams(surgery_δ, surgery_mu, max_segment, 1e-8, surgery_every)
-
-    prob = Problem(; kernel=:multilayer_qg,
-                     Ld=Ld,
-                     coupling=coupling,
-                     layers=([c_left, c_right], PVContour{Float64}[]),
-                     dt=dt,
-                     surgery=surgery)
-
-    return prob, Ld, coupling
-end
-
 function upper_layer_centroid_distance(prob)
     layer = prob.contour_problem.layers[1]
     length(layer) < 2 && return NaN
     return sqrt(sum((centroid(layer[2]) .- centroid(layer[1])).^2))
 end
 
-prob, Ld, coupling = polvani_upper_layer_merger_problem()
+prob, Ld, coupling = polvani_upper_layer_merger_problem(;
+    nodes_per_contour, R, pv, depth_ratio, γ, initial_distance, dt,
+    surgery_δ, surgery_mu, max_segment, surgery_every)
 display(prob); println()
 
 energy0 = energy(prob)

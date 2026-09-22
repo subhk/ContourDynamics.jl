@@ -176,6 +176,4 @@ export flatten_nodes, unflatten_nodes!, to_ode_problem, record_evolution
 export recorded_diagnostics
 export save_snapshot, load_snapshot, jld2_recorder, load_simulation, load_problem
 
-# Precompile common execution paths after all methods are defined.
-include("precompile.jl")
 end # module
