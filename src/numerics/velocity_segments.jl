@@ -166,6 +166,27 @@ end
     return evx + cvx, evy + cvy
 end
 
+# Velocity of a straight regularized SQG panel a→b: the analytic integral of
+# t̂/√(r² + δ²) along the panel.
+@inline function _straight_sqg_contribution_scalar(xi::T, yi::T,
+                                                   ax::T, ay::T, bx::T, by::T,
+                                                   pv::T, δ_sq::T, inv2pi::T) where {T}
+    dsx = bx - ax
+    dsy = by - ay
+    ds_len = sqrt(dsx^2 + dsy^2)
+    iszero(ds_len) && return zero(T), zero(T)
+    tx = dsx / ds_len
+    ty = dsy / ds_len
+    r0x = xi - ax
+    r0y = yi - ay
+    u_a = r0x * tx + r0y * ty
+    h = -r0x * ty + r0y * tx
+    h_eff = sqrt(h * h + δ_sq)
+    F_diff = _sqg_asinh_difference(u_a, u_a - ds_len, h_eff, ds_len)
+    contrib = inv2pi * pv * F_diff
+    return contrib * tx, contrib * ty
+end
+
 @inline function _curved_sqg_contribution_scalar(xi::T, yi::T,
                                                  ax::T, ay::T, bx::T, by::T,
                                                  pv::T, κa::T, κb::T,
@@ -176,34 +197,44 @@ end
     ds_len < eps(T) && return zero(T), zero(T)
     δ_sq = δ * δ
 
-    if max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T))
-        tx = dsx / ds_len
-        ty = dsy / ds_len
-        nx = -ty
-        ny = tx
-        r0x = xi - ax
-        r0y = yi - ay
-        u_a = r0x * tx + r0y * ty
-        h = r0x * nx + r0y * ny
-        u_b = u_a - ds_len
-        h_eff = sqrt(h * h + δ_sq)
-        F_diff = _sqg_asinh_difference(u_a, u_b, h_eff, ds_len)
-        contrib = inv2pi * pv * F_diff
-        return contrib * tx, contrib * ty
+    max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
+        return _straight_sqg_contribution_scalar(xi, yi, ax, ay, bx, by, pv, δ_sq, inv2pi)
+
+    # Singular subtraction: integrate a straight model panel m(p) analytically
+    # and only the difference to the cubic c(p) with 5-point Gauss-Legendre.
+    # Near an endpoint the model is the tangent line there, m(p) = a + p c'(0)
+    # (or b + (p - 1) c'(1)): the chord would leave a θ/p remainder for a target
+    # at the endpoint (θ the tangent-chord angle), whose log(ds/δ) integral
+    # the quadrature cannot resolve. Elsewhere the chord is the model.
+    da2 = (xi - ax)^2 + (yi - ay)^2
+    db2 = (xi - bx)^2 + (yi - by)^2
+    near2 = ds_len * ds_len / 16
+    model = da2 <= near2 && da2 <= db2 ? 1 : db2 <= near2 ? 2 : 0
+    m0x, m0y, mtx, mty = if model == 1
+        _, _, t0x, t0y = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, zero(T))
+        ax, ay, t0x, t0y
+    elseif model == 2
+        _, _, t1x, t1y = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, one(T))
+        bx - t1x, by - t1y, t1x, t1y
+    else
+        ax, ay, dsx, dsy
     end
+    vx, vy = _straight_sqg_contribution_scalar(
+        xi, yi, m0x, m0y, m0x + mtx, m0y + mty, pv, δ_sq, inv2pi)
 
     g_nodes, g_weights = _gl5_nodes_weights(T)
-    vx = zero(T)
-    vy = zero(T)
     @inbounds for q in 1:5
         p = (one(T) + g_nodes[q]) / T(2)
         sx, sy, tx, ty = _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p)
         rx = xi - sx
         ry = yi - sy
-        rreg = sqrt(rx * rx + ry * ry + δ_sq)
-        coeff = inv2pi * pv * (g_weights[q] / T(2)) / rreg
-        vx += coeff * tx
-        vy += coeff * ty
+        mx = xi - (m0x + p * mtx)
+        my = yi - (m0y + p * mty)
+        inv_curve = one(T) / sqrt(rx * rx + ry * ry + δ_sq)
+        inv_model = one(T) / sqrt(mx * mx + my * my + δ_sq)
+        coeff = inv2pi * pv * (g_weights[q] / T(2))
+        vx += coeff * (tx * inv_curve - mtx * inv_model)
+        vy += coeff * (ty * inv_curve - mty * inv_model)
     end
     return vx, vy
 end
@@ -250,7 +281,7 @@ end
                 else
                     G_corr += inv4pi * (-γ_euler - T(2) * log(α))
                 end
-            elseif r2 > eps(T)
+            elseif r2 > eps(T) && α^2 * r2 <= _ewald_real_cutoff(T)
                 G_corr += inv4pi * _expint_e1(α^2 * r2)
             end
         end
@@ -273,36 +304,55 @@ end
     return G_corr - _periodic_euler_zero_mode_scalar(α, Lx, Ly)
 end
 
+# Smooth periodic QG-minus-Euler correction G̃_QG - G̃_E = κ²Ĝ at one
+# quadrature point, via the Ewald split of numerics/periodic_ewald.jl.
+# `corr_coeffs` are the cache's κ²ĉ_k.
 @inline function _periodic_qg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
-                                                      kappa2::T, area::T,
-                                                      kx, ky, corr_coeffs=nothing) where {T}
-    rx = xi - sx
-    ry = yi - sy
-    G_corr = zero(T)
-    nkx = length(kx)
-    nky = length(ky)
-
-    for mi in 1:nkx
-        kxi = kx[mi]
-        cx = cos(kxi * rx)
-        sx_trig = sin(kxi * rx)
-        for ni in 1:nky
-            kyi = ky[ni]
-            coeff = if corr_coeffs === nothing
-                k2 = kxi^2 + kyi^2
-                iszero(k2) && continue
-                -kappa2 / (k2 * (k2 + kappa2) * area)
-            else
-                -corr_coeffs[mi, ni]
-            end
-            iszero(coeff) && continue
-            G_corr += coeff * (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry))
-        end
-    end
-
-    return G_corr
+                                                      kappa2::T, α::T, Lx::T, Ly::T,
+                                                      n_images::Int, kx, ky,
+                                                      corr_coeffs) where {T}
+    return _scaled_qg_correction_scalar(xi - sx, yi - sy, kappa2, α,
+                                        _ewald_qg_x(kappa2, α), Lx, Ly,
+                                        n_images, kx, ky, corr_coeffs)
 end
 
+# Periodic QG segment velocity by direct summation over periodic images, used
+# when K₀ decays within a few periods. `a`/`b` must already be the segment's
+# nearest image to the target. The zero-mean Green's function removes the
+# k = 0 term 1/(Aκ²) of the image sum, which contributes along the chord.
+@inline function _periodic_qg_direct_contribution_scalar(xi::T, yi::T,
+                                                         ax::T, ay::T, bx::T, by::T,
+                                                         pv::T, κa::T, κb::T,
+                                                         Ld::T, Lx::T, Ly::T,
+                                                         inv2pi::T, inv4pi::T) where {T}
+    kappa = one(T) / Ld
+    nx = _qg_direct_image_count(kappa, Lx)
+    ny = _qg_direct_image_count(kappa, Ly)
+    vx = zero(T)
+    vy = zero(T)
+    for px in -nx:nx
+        shx = 2 * Lx * T(px)
+        for py in -ny:ny
+            shy = 2 * Ly * T(py)
+            dvx, dvy = _curved_qg_contribution_scalar(
+                xi, yi, ax + shx, ay + shy, bx + shx, by + shy,
+                pv, κa, κb, Ld, inv2pi, inv4pi)
+            vx += dvx
+            vy += dvy
+        end
+    end
+    zero_mode = pv * Ld * Ld / (4 * Lx * Ly)
+    return vx - zero_mode * (bx - ax), vy - zero_mode * (by - ay)
+end
+
+# Smooth periodic SQG correction G_per - G_unbounded at one quadrature point
+# for the regularized kernel 1/(2π r_δ), r_δ = √(r² + δ²). The quasi-2-D Ewald
+# split of 1/r_δ (the Coulomb potential of a charge at height δ) treats the
+# softening exactly: real-space terms erfc(α r_δ)/r_δ and Fourier coefficients
+# (`fourier_coeffs`, see `_ewald_fourier_coefficient`) both decay like
+# Gaussians. The zero-mean inversion removes the k = 0 content of the real-space
+# sum, 2π[e^{-α²δ²}/(α√π) - δ erfc(αδ)]/A; without it spanning contours with
+# Σ pv·wrap ≠ 0 drift with a uniform velocity that depends on α.
 @inline function _periodic_sqg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
                                                        α::T, δ_sq::T,
                                                        Lx::T, Ly::T, n_images::Int,
@@ -318,15 +368,14 @@ end
             shifty = T(2) * Ly * T(py)
             rx = r0x - shiftx
             ry = r0y - shifty
-            r2 = rx * rx + ry * ry
+            r2_δ = rx * rx + ry * ry + δ_sq
 
             if px == 0 && py == 0
-                G_corr -= inv2pi * _sqg_erf_over_r(α, r2)
-            elseif r2 > eps(T)
-                r = sqrt(r2)
-                r_reg = sqrt(r2 + δ_sq)
-                softening = -δ_sq / (r * r_reg * (r + r_reg))
-                G_corr += inv2pi * (erfc(α * r) / r + softening)
+                # erfc(α r_δ)/r_δ - 1/r_δ, finite for δ = 0 as well.
+                G_corr -= inv2pi * _sqg_erf_over_r(α, r2_δ)
+            else
+                r_δ = sqrt(r2_δ)
+                G_corr += inv2pi * erfc(α * r_δ) / r_δ
             end
         end
     end
@@ -345,5 +394,8 @@ end
         end
     end
 
-    return G_corr
+    δ = sqrt(δ_sq)
+    area = T(4) * Lx * Ly
+    zero_mode = (exp(-α * α * δ_sq) / (α * sqrt(T(π))) - δ * erfc(α * δ)) / area
+    return G_corr - zero_mode
 end

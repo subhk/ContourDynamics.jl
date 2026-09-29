@@ -241,4 +241,55 @@ end
             rm(fname; force=true)
         end
     end
+
+    @testset "a new recorder run replaces earlier snapshots" begin
+        fname = tempname() * ".jld2"
+        try
+            run1 = ContourProblem(EulerKernel(), UnboundedDomain(), [circular_patch(0.5, 32, 1.0)])
+            evolve!(run1, RK4Stepper(0.01, total_nodes(run1)), nothing; nsteps=40,
+                    callbacks=[jld2_recorder(fname; save_every=10, dt=0.01)])
+            run2 = ContourProblem(EulerKernel(), UnboundedDomain(), [circular_patch(0.5, 32, -3.0)])
+            evolve!(run2, RK4Stepper(0.01, total_nodes(run2)), nothing; nsteps=30,
+                    callbacks=[jld2_recorder(fname; save_every=15, dt=0.01)])
+            snapshots = load_simulation(fname)
+            @test [s.step for s in snapshots] == [0, 15, 30]
+            @test all(s -> only(s.contours).pv == -3.0, snapshots)
+
+            # Reusing one recorder for a rerun from step 0 also starts afresh,
+            # while append=true continues an existing record.
+            recorder = jld2_recorder(fname; save_every=10)
+            evolve!(run1, RK4Stepper(0.01, total_nodes(run1)), nothing; nsteps=20,
+                    callbacks=[recorder])
+            evolve!(run1, RK4Stepper(0.01, total_nodes(run1)), nothing; nsteps=10,
+                    callbacks=[recorder])
+            @test [s.step for s in load_simulation(fname)] == [0, 10]
+            continuation = jld2_recorder(fname; save_every=10, append=true)
+            evolve!(run1, RK4Stepper(0.01, total_nodes(run1)), nothing; nsteps=10,
+                    callbacks=[continuation], step_offset=10, run_initial_callbacks=false)
+            @test [s.step for s in load_simulation(fname)] == [0, 10, 20]
+        finally
+            rm(fname; force=true)
+        end
+    end
+
+    @testset "multi-layer metadata records the layer thicknesses" begin
+        fname = tempname() * ".jld2"
+        try
+            H = SVector(0.3, 1.7)
+            F1 = 2.0
+            F2 = F1 * H[1] / H[2]
+            kernel = MultiLayerQGKernel(SVector(1 / sqrt(F1 + F2)),
+                                        SMatrix{2,2}(-F1, F2, F1, -F2), H)
+            prob = MultiLayerContourProblem(
+                kernel, UnboundedDomain(),
+                ([circular_patch(0.4, 32, 1.0)], [circular_patch(0.3, 32, -1.0; cx=0.5)]))
+            save_snapshot(fname, prob, 0)
+            stored = jldopen(fname, "r") do f
+                f["step_000000/metadata/kernel_layer_thicknesses"]
+            end
+            @test stored == collect(H)
+        finally
+            rm(fname; force=true)
+        end
+    end
 end

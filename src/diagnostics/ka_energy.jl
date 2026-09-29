@@ -119,6 +119,7 @@ mutable struct _EnergyWorkspace{T, DA<:AbstractVector{T}, IA<:AbstractVector{Int
     dev_ewald_kx::DA
     dev_ewald_ky::DA
     dev_ewald_fourier::DMA
+    dev_ewald_energy::DMA
     last_ewald::Union{Nothing,EwaldCache{T}}
     ncontours::Int
     total_nodes::Int
@@ -139,8 +140,8 @@ function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
         device_zeros(dev, Int, 1),
         da, mk_t(), mk_t(), mk_t(), mk_t(), mk_t(),
         zeros(Int, 1), Vector{T}(undef, total_nodes),
-        device_zeros(dev, T, 0), device_zeros(dev, T, 0), dma, nothing,
-        ncontours, total_nodes)
+        device_zeros(dev, T, 0), device_zeros(dev, T, 0), dma,
+        device_zeros(dev, T, 0, 0), nothing, ncontours, total_nodes)
 end
 
 const _ENERGY_WS_KEY = :contourdynamics_energy_workspace
@@ -198,9 +199,10 @@ function _ensure_energy_ewald!(ws::_EnergyWorkspace{T}, cache::EwaldCache{T},
         ws.dev_ewald_kx = to_device(dev, cache.kx)
         ws.dev_ewald_ky = to_device(dev, cache.ky)
         ws.dev_ewald_fourier = to_device(dev, cache.fourier_coeffs)
+        ws.dev_ewald_energy = to_device(dev, cache.energy_coeffs)
         ws.last_ewald = cache
     end
-    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier
+    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier, ws.dev_ewald_energy
 end
 
 @inline function _energy_segment_geometry(ax, ay, bx, by, i, ::Type{T}) where {T}
@@ -223,47 +225,6 @@ end
     # Delta phi_δ = 1/r_δ. The shared energy normalization is
     # -raw/(8pi), so SQG uses 2phi_δ to recover the physical Hamiltonian.
     return T(2) * (r_δ - δ * log(δ + r_δ))
-end
-
-@inline function _sqg_periodic_energy_potential_scalar(rx::T, ry::T, α::T,
-                                                       Lx::T, Ly::T, δ::T,
-                                                       n_images::Int, kx, ky,
-                                                       fourier_coeffs) where {T}
-    phi = zero(T)
-
-    for px in -n_images:n_images
-        shiftx = T(2) * Lx * T(px)
-        for py in -n_images:n_images
-            shifty = T(2) * Ly * T(py)
-            sx = rx - shiftx
-            sy = ry - shifty
-            r2 = sx * sx + sy * sy
-            r = sqrt(r2)
-            # The regularized potential is already doubled for the shared
-            # energy normalization; scale every other Ewald piece likewise.
-            phi += T(2) * _sqg_ewald_real_potential(r, α) +
-                   _sqg_regularized_energy_potential_scalar(r2, δ) - T(2) * r
-        end
-    end
-
-    nkx = length(kx)
-    nky = length(ky)
-    for mi in 1:nkx
-        kxi = kx[mi]
-        cx = cos(kxi * rx)
-        sx_trig = sin(kxi * rx)
-        for ni in 1:nky
-            kyi = ky[ni]
-            k2 = kxi * kxi + kyi * kyi
-            iszero(k2) && continue
-            coeff = fourier_coeffs[mi, ni]
-            iszero(coeff) && continue
-            phi -= T(2) * coeff *
-                   (cx * cos(kyi * ry) - sx_trig * sin(kyi * ry)) / k2
-        end
-    end
-
-    return phi
 end
 
 # All six kernels use the same straight-segment 3×3 Gauss–Legendre rule.
@@ -318,56 +279,31 @@ end
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
-# For G_k = 1/[A(k²+κ²)], the shared contour-energy normalization needs
-# -4π cos(k·r)/[A k²(k²+κ²)]. Euler is the κ²=0 case. The k=0 energy,
-# when present, is added by the problem-level caller.
-@inline function _periodic_energy_potential_scalar(dx::T, dy::T, kappa2::T,
-                                                   area::T, kx, ky) where {T}
-    phi = zero(T)
-    for mi in eachindex(kx)
-        kxi = kx[mi]
-        cx = cos(kxi * dx)
-        sx = sin(kxi * dx)
-        for ni in eachindex(ky)
-            kyi = ky[ni]
-            k2 = kxi * kxi + kyi * kyi
-            iszero(k2) && continue
-            phase_cos = cx * cos(kyi * dy) - sx * sin(kyi * dy)
-            phi -= T(4) * T(pi) * phase_cos / (area * k2 * (k2 + kappa2))
-        end
-    end
-    return phi
-end
-
 @kernel function _periodic_euler_energy_ka!(partial, ax, ay, bx, by, pv,
-                                            Lx, Ly, kx, ky, n_seg)
+                                            α, Lx, Ly, n_images, kx, ky,
+                                            fourier_coeffs, energy_coeffs, n_seg)
     i = @index(Global)
     T = eltype(partial)
-    area = T(4) * Lx * Ly
-    potential = (dx, dy) ->
-        _periodic_energy_potential_scalar(dx, dy, zero(T), area, kx, ky)
+    potential = (dx, dy) -> _periodic_energy_potential_scalar(
+        dx, dy, zero(T), α, Lx, Ly, n_images, kx, ky, fourier_coeffs, energy_coeffs)
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
 @kernel function _periodic_qg_energy_ka!(partial, ax, ay, bx, by, pv,
-                                         kappa2, area, kx, ky, n_seg)
+                                         kappa2, α, Lx, Ly, n_images, kx, ky,
+                                         fourier_coeffs, energy_coeffs, n_seg)
     i = @index(Global)
-    potential = (dx, dy) ->
-        _periodic_energy_potential_scalar(dx, dy, kappa2, area, kx, ky)
+    potential = (dx, dy) -> _periodic_energy_potential_scalar(
+        dx, dy, kappa2, α, Lx, Ly, n_images, kx, ky, fourier_coeffs, energy_coeffs)
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
 @kernel function _periodic_sqg_energy_ka!(partial, ax, ay, bx, by, pv,
                                           α, δ, Lx, Ly, n_images,
-                                          kx, ky, fourier_coeffs, n_seg)
+                                          kx, ky, energy_coeffs, n_seg)
     i = @index(Global)
-    Lx2, Ly2 = _period_lengths(Lx, Ly)
-    potential = (dx, dy) -> begin
-        rx = dx - round(dx / Lx2) * Lx2
-        ry = dy - round(dy / Ly2) * Ly2
-        _sqg_periodic_energy_potential_scalar(rx, ry, α, Lx, Ly, δ,
-                                               n_images, kx, ky, fourier_coeffs)
-    end
+    potential = (dx, dy) -> _sqg_periodic_energy_potential_scalar(
+        dx, dy, α, Lx, Ly, δ, n_images, kx, ky, energy_coeffs)
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
@@ -409,22 +345,10 @@ end
     return γ
 end
 
-# The 2-D Ewald split of the softened SQG kernel retains a spatially constant
-# coefficient even though the fractional-Laplacian inverse is defined only for
-# nonzero Fourier modes. The unregularized real-space term contributes
-# 1/(A*α*sqrt(pi)); softening contributes -δ/A.
-@inline function _sqg_periodic_ewald_zero_mode(cache::EwaldCache{T},
-                                                domain::PeriodicDomain{T},
-                                                δ::T) where {T}
-    area = T(4) * domain.Lx * domain.Ly
-    return (inv(cache.α * sqrt(T(pi))) - δ) / area
-end
-
-# Upload the Ewald tables once per call — every periodic energy kernel takes
-# the same (kx, ky, fourier_coeffs) triple.
+# Upload the Ewald tables once per call: (kx, ky, fourier_coeffs, energy_coeffs).
 @inline function _device_ewald_tables(cache::EwaldCache, dev::AbstractDevice)
     return (to_device(dev, cache.kx), to_device(dev, cache.ky),
-            to_device(dev, cache.fourier_coeffs))
+            to_device(dev, cache.fourier_coeffs), to_device(dev, cache.energy_coeffs))
 end
 
 # GPU problems keep their nodes in `device_state`, CPU-device problems in the
@@ -446,17 +370,19 @@ end
 
 @inline _periodic_energy_recipe(::EulerKernel, domain::PeriodicDomain{T},
                                 cache::EwaldCache{T}, tables) where {T} =
-    (_periodic_euler_energy_ka!, (domain.Lx, domain.Ly, tables[1], tables[2]))
+    (_periodic_euler_energy_ka!, (cache.α, domain.Lx, domain.Ly, cache.n_images,
+                                  tables[1], tables[2], tables[3], tables[4]))
 @inline function _periodic_energy_recipe(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                                          cache::EwaldCache{T}, tables) where {T}
     kappa2 = one(T) / (kernel.Ld * kernel.Ld)
-    area = T(4) * domain.Lx * domain.Ly
-    return (_periodic_qg_energy_ka!, (kappa2, area, tables[1], tables[2]))
+    return (_periodic_qg_energy_ka!, (kappa2, cache.α, domain.Lx, domain.Ly,
+                                      cache.n_images, tables[1], tables[2],
+                                      tables[3], tables[4]))
 end
 @inline _periodic_energy_recipe(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                 cache::EwaldCache{T}, tables) where {T} =
     (_periodic_sqg_energy_ka!, (cache.α, kernel.δ, domain.Lx, domain.Ly,
-                                cache.n_images, tables[1], tables[2], tables[3]))
+                                cache.n_images, tables[1], tables[2], tables[4]))
 
 # `circulation_fn` is a thunk so only the kernels whose zero mode needs the
 # circulation pay for it (on the GPU path it is a device reduction).
@@ -470,13 +396,9 @@ end
     area = T(4) * domain.Lx * domain.Ly
     return γ * γ / (T(2) * area * kappa2)
 end
-@inline function _periodic_energy_zero_mode(kernel::SQGKernel{T},
-                                            domain::PeriodicDomain{T},
-                                            cache::EwaldCache{T},
-                                            circulation_fn::F) where {T, F}
-    γ = circulation_fn()
-    return -_sqg_periodic_ewald_zero_mode(cache, domain, kernel.δ) * γ * γ / T(2)
-end
+# The periodic SQG potential is zero-mean: no k = 0 energy.
+@inline _periodic_energy_zero_mode(::SQGKernel, domain::PeriodicDomain{T},
+                                   cache, circulation_fn::F) where {T, F} = zero(T)
 
 function _ka_energy_from_state(src::Vector{PVContour{T}},
                                kernel::_PeriodicPointKernel{T},
@@ -660,23 +582,15 @@ function _ka_multilayer_energy_with_ws(
     return _normalize_energy(raw)
 end
 
+# Each vertical mode reads its own Ewald cache (the barotropic mode the Euler
+# one), matching the CPU `_modal_energy_cache` and the device velocity path.
 @inline function _ka_periodic_modal_energy(
-        ::EulerKernel, energy_ws, total, dev, cache, domain,
-        kx, ky, to_modal, mode, layer_circulation, area)
-    raw = _ka_energy_raw_with_workspace!(
-        _periodic_euler_energy_ka!, energy_ws, total, dev,
-        domain.Lx, domain.Ly, kx, ky)
-    return raw, zero(area)
-end
-
-@inline function _ka_periodic_modal_energy(
-        mode_kernel::QGKernel{T}, energy_ws, total, dev, cache, domain,
-        kx, ky, to_modal, mode,
-        layer_circulation, area) where {T}
-    kappa2 = inv(mode_kernel.Ld * mode_kernel.Ld)
-    raw = _ka_energy_raw_with_workspace!(
-        _periodic_qg_energy_ka!, energy_ws, total, dev,
-        kappa2, area, kx, ky)
+        mode_kernel::Union{EulerKernel, QGKernel}, energy_ws, total, dev, domain,
+        to_modal, mode, layer_circulation, area)
+    cache = _get_ewald_cache(domain, mode_kernel)
+    tables = _ensure_energy_ewald!(energy_ws, cache, dev)
+    kernel!, args = _periodic_energy_recipe(mode_kernel, domain, cache, tables)
+    raw = _ka_energy_raw_with_workspace!(kernel!, energy_ws, total, dev, args...)
     zero_energy = _periodic_modal_zero_energy(
         mode_kernel, to_modal, mode, layer_circulation, area)
     return raw, zero_energy
@@ -689,10 +603,6 @@ function _ka_multilayer_energy_with_ws(
         ws::_MultilayerEnergyWorkspace{T}) where {N,T}
     evals = kernel.eigenvalues
     to_modal = kernel.physical_to_modal
-    # Every mode uses the same Fourier grid; its kernel differs only through
-    # the modal eigenvalue in the denominator.
-    cache = _get_ewald_cache(domain, EulerKernel())
-    kx, ky, _ = _ensure_energy_ewald!(ws.energy, cache, dev)
     area = T(4) * domain.Lx * domain.Ly
     layer_lengths, total = _pack_multilayer_energy_workspace!(ws, states, dev)
     total == 0 && return zero(T)
@@ -706,8 +616,7 @@ function _ka_multilayer_energy_with_ws(
         lam = evals[mode]
         raw_mode, mode_zero = _dispatch_qg_mode(
             _ka_periodic_modal_energy, kernel, lam, energy_ws, total, dev,
-            cache, domain, kx, ky, to_modal, mode,
-            layer_circulation, area)
+            domain, to_modal, mode, layer_circulation, area)
         raw += raw_mode
         zero_energy += mode_zero
     end

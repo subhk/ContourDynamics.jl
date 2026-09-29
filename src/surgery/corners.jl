@@ -59,7 +59,7 @@ function _demote_obtuse_corners(c::PVContour{T}) where {T}
 
     @inbounds for i in 1:n
         corners[i] || continue
-        prev = c.nodes[mod1(i - 1, n)]
+        prev = i == 1 ? c.nodes[n] - c.wrap : c.nodes[i - 1]
         curr = c.nodes[i]
         nxt = next_node(c, i)
 

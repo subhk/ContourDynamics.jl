@@ -62,4 +62,34 @@ using Test, ContourDynamics, OrdinaryDiffEq
         @test length(sol.u[end]) == length(flatten_nodes(solve_prob))
         @test all(isfinite, sol.u[end])
     end
+
+    @testset "Solving the same surgery problem twice gives the same result" begin
+        base = ContourProblem(EulerKernel(), UnboundedDomain(),
+                              [circular_patch(1.0, 64, 1.0),
+                               circular_patch(0.3, 32, -1.0; cx=3.0)])
+        wrapped = to_ode_problem(base, (0.0, 0.2);
+                                 surgery_params=SurgeryParams(0.005, 0.05, 0.2, 1e-8, 5),
+                                 surgery_dt=0.1)
+        solve_once() = solve(wrapped.ode_prob, Tsit5(); dt=0.01, adaptive=false,
+                             callback=wrapped.callback)
+        first_solution = solve_once()
+        first_final = copy(first_solution.u[end])
+        first_circulation = circulation(base)
+        second_solution = solve_once()
+        @test second_solution.u[end] == first_final
+        @test circulation(base) ≈ first_circulation rtol=1e-12
+        @test_throws DimensionMismatch unflatten_nodes!(base, vcat(first_final, 0.0, 0.0))
+    end
+
+    @testset "Problem wrapper keeps its bundled surgery" begin
+        p = Problem(; contours=[circular_patch(1.0, 8, 1.0)], dt=0.01)
+        wrapped = to_ode_problem(p, (0.0, 0.05))
+        @test keys(wrapped) == (:ode_prob, :callback)
+        sol = solve(wrapped.ode_prob, Tsit5(); dt=0.01, adaptive=false,
+                    callback=wrapped.callback)
+        # Surgery (every n_surgery = 5 steps of dt) refined the coarse polygon.
+        @test length(sol.u[end]) > 2 * 8
+        plain = to_ode_problem(p, (0.0, 0.05); surgery_params=nothing)
+        @test plain isa ODEProblem
+    end
 end

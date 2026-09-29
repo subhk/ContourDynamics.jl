@@ -2,27 +2,6 @@
 # layout (serial reference and parallel scan), node materialization, and
 # rebuilding a device state from the rewritten outputs.
 
-@inline function _flat_contour_node_xy(x, y, offsets, ci, local_idx)
-    g = offsets[ci] + local_idx - 1
-    return x[g], y[g]
-end
-
-@inline function _flat_oriented_contour_node_xy(x, y, offsets, lengths, ci,
-                                                local_idx, reversed)
-    n = lengths[ci]
-    source_idx = reversed ? n - local_idx + 1 : local_idx
-    return _flat_contour_node_xy(x, y, offsets, ci, source_idx)
-end
-
-@inline function _flat_inserted_contour_node_xy(x, y, offsets, ci, inserted_idx,
-                                                stitch_x, stitch_y, local_idx)
-    if inserted_idx > 0 && local_idx == inserted_idx
-        return stitch_x, stitch_y
-    end
-    original_idx = inserted_idx > 0 && local_idx > inserted_idx ? local_idx - 1 : local_idx
-    return _flat_contour_node_xy(x, y, offsets, ci, original_idx)
-end
-
 @inline function _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
     n = lengths[ci]
     n < 3 && return zero(eltype(x))
@@ -48,72 +27,6 @@ end
     return area2
 end
 
-# Device twin of `_shoelace_noise_scale`: squared local contour extent, used as
-# the relative floor for sign decisions on translation-stable shoelace areas.
-@inline function _flat_shoelace_noise_scale(x, y, offsets, lengths, ci)
-    n = lengths[ci]
-    iszero(n) && return zero(eltype(x))
-    off = offsets[ci]
-    ox = x[off]
-    oy = y[off]
-    s = zero(eltype(x))
-    @inbounds for li in 1:n
-        g = off + li - 1
-        s = max(s, abs(x[g] - ox), abs(y[g] - oy))
-    end
-    return s * s
-end
-
-@inline function _flat_split_part_area2(x, y, offsets, ci, inserted_idx,
-                                        stitch_x, stitch_y, start_idx, len)
-    area2 = zero(eltype(x))
-    iszero(len) && return area2
-    ox, oy = _flat_inserted_contour_node_xy(x, y, offsets, ci, inserted_idx,
-                                            stitch_x, stitch_y, start_idx)
-    @inbounds for m in 1:len
-        local_idx = start_idx + m - 1
-        next_idx = m == len ? start_idx : local_idx + 1
-        x1, y1 = _flat_inserted_contour_node_xy(x, y, offsets, ci,
-                                                inserted_idx, stitch_x,
-                                                stitch_y, local_idx)
-        x2, y2 = _flat_inserted_contour_node_xy(x, y, offsets, ci,
-                                                inserted_idx, stitch_x,
-                                                stitch_y, next_idx)
-        px1 = x1 - ox
-        py1 = y1 - oy
-        px2 = x2 - ox
-        py2 = y2 - oy
-        area2 += px1 * py2 - px2 * py1
-    end
-    return area2
-end
-
-@inline function _flat_wrapped_split_part_area2(x, y, offsets, ci, inserted_idx,
-                                                stitch_x, stitch_y, hi, lo,
-                                                nc, len)
-    area2 = zero(eltype(x))
-    iszero(len) && return area2
-    ox, oy = _flat_inserted_contour_node_xy(x, y, offsets, ci, inserted_idx,
-                                            stitch_x, stitch_y, hi)
-    @inbounds for m in 1:len
-        pos = m <= nc - hi + 1 ? hi + m - 1 : m - (nc - hi + 1)
-        next_m = m == len ? 1 : m + 1
-        next_pos = next_m <= nc - hi + 1 ? hi + next_m - 1 : next_m - (nc - hi + 1)
-        x1, y1 = _flat_inserted_contour_node_xy(x, y, offsets, ci,
-                                                inserted_idx, stitch_x,
-                                                stitch_y, pos)
-        x2, y2 = _flat_inserted_contour_node_xy(x, y, offsets, ci,
-                                                inserted_idx, stitch_x,
-                                                stitch_y, next_pos)
-        px1 = x1 - ox
-        py1 = y1 - oy
-        px2 = x2 - ox
-        py2 = y2 - oy
-        area2 += px1 * py2 - px2 * py1
-    end
-    return area2
-end
-
 @inline function _flat_point_segment_dist2_in_domain(px, py, ax, ay, bx, by,
                                                      periodic, Lx, Ly)
     if periodic
@@ -128,8 +41,6 @@ end
 
 @kernel function _topology_rewrite_size_kernel!(op, valid, node_from_first,
                                                 node_idx, seg_idx, inserted_idx,
-                                                split_reverse1, split_reverse2,
-                                                merge_reverse_second,
                                                 stitch_x, stitch_y,
                                                 merge_shift_x, merge_shift_y,
                                                 out_count,
@@ -146,21 +57,9 @@ end
         n1 = lengths[ci]
         n2 = lengths[cj]
         op_k = ci == cj ? UInt8(1) : UInt8(2)
-        reverse_second = false
-        if op_k == UInt8(2)
-            area1_2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
-            area2_2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, cj)
-            # Scale-relative floors matching the CPU `_reconnect_merge!` gate:
-            # shoelace sign noise grows with the squared local contour extent.
-            # The `area*_2` values carry a factor 2, hence 2000 vs the CPU 1000.
-            tol1 = eps(one(area1_2)) * 2000 *
-                   _flat_shoelace_noise_scale(x, y, offsets, lengths, ci)
-            tol2 = eps(one(area2_2)) * 2000 *
-                   _flat_shoelace_noise_scale(x, y, offsets, lengths, cj)
-            reverse_second = abs(area1_2) > tol1 && abs(area2_2) > tol2 &&
-                             ((area1_2 > zero(area1_2)) != (area2_2 > zero(area2_2)))
-        end
 
+        # Neither splits nor merges reverse a contour: see the CPU
+        # `_reconnect_split!` and `_reconnect_merge!`.
         g1 = offsets[ci] + i - 1
         ax1 = x[g1]
         ay1 = y[g1]
@@ -169,17 +68,12 @@ end
         bx1 = i < n1 ? x[g1 + 1] : x[offsets[ci]] + wrapx[ci]
         by1 = i < n1 ? y[g1 + 1] : y[offsets[ci]] + wrapy[ci]
 
-        j_eff = reverse_second ? (n2 - j == 0 ? n2 : n2 - j) : j
+        j_eff = j
         j_end = j_eff < n2 ? j_eff + 1 : 1
-        ax2, ay2 = _flat_oriented_contour_node_xy(x, y, offsets, lengths, cj,
-                                                  j_eff, reverse_second)
-        bx2, by2 = _flat_oriented_contour_node_xy(x, y, offsets, lengths, cj,
-                                                  j_end, reverse_second)
-        if !reverse_second && j_eff == n2
-            bx2 = x[offsets[cj]] + wrapx[cj]
-            by2 = y[offsets[cj]] + wrapy[cj]
-        end
-
+        ax2 = x[offsets[cj] + j_eff - 1]
+        ay2 = y[offsets[cj] + j_eff - 1]
+        bx2 = j_eff < n2 ? x[offsets[cj] + j_eff] : x[offsets[cj]] + wrapx[cj]
+        by2 = j_eff < n2 ? y[offsets[cj] + j_eff] : y[offsets[cj]] + wrapy[cj]
 
         shift_x = zero(eltype(x))
         shift_y = zero(eltype(y))
@@ -244,8 +138,6 @@ end
         count_k = 1
         len1 = 0
         len2 = 0
-        reverse1 = UInt8(0)
-        reverse2 = UInt8(0)
         if op_k == UInt8(1)
             adjusted_node = best_seg_idx < best_node_idx ? best_node_idx + 1 : best_node_idx
             lo = min(adjusted_node, inserted)
@@ -254,20 +146,6 @@ end
             len2 = n1 + 1 - len1
             if len1 >= 3 && len2 >= 3
                 count_k = 2
-                parent_area2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
-                if parent_area2 != zero(parent_area2)
-                    area1_2 = _flat_split_part_area2(x, y, offsets, ci, inserted,
-                                                     best_x, best_y, lo, len1)
-                    area2_2 = _flat_wrapped_split_part_area2(x, y, offsets, ci,
-                                                             inserted, best_x,
-                                                             best_y, hi, lo,
-                                                             n1 + 1, len2)
-                    parent_pos = parent_area2 > zero(parent_area2)
-                    reverse1 = ((parent_pos && area1_2 < zero(area1_2)) ||
-                                (!parent_pos && area1_2 > zero(area1_2))) ? UInt8(1) : UInt8(0)
-                    reverse2 = ((parent_pos && area2_2 < zero(area2_2)) ||
-                                (!parent_pos && area2_2 > zero(area2_2))) ? UInt8(1) : UInt8(0)
-                end
             else
                 valid_k = UInt8(0)
                 count_k = 1
@@ -285,9 +163,6 @@ end
         node_idx[k] = best_node_idx
         seg_idx[k] = best_seg_idx
         inserted_idx[k] = inserted
-        split_reverse1[k] = reverse1
-        split_reverse2[k] = reverse2
-        merge_reverse_second[k] = reverse_second ? UInt8(1) : UInt8(0)
         stitch_x[k] = best_x
         stitch_y[k] = best_y
         merge_shift_x[k] = shift_x
@@ -309,9 +184,6 @@ function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T}
     node_idx = device_zeros(dev, Int, npairs)
     seg_idx = device_zeros(dev, Int, npairs)
     inserted_idx = device_zeros(dev, Int, npairs)
-    split_reverse1 = device_zeros(dev, UInt8, npairs)
-    split_reverse2 = device_zeros(dev, UInt8, npairs)
-    merge_reverse_second = device_zeros(dev, UInt8, npairs)
     stitch_x = device_zeros(dev, T, npairs)
     stitch_y = device_zeros(dev, T, npairs)
     merge_shift_x = device_zeros(dev, T, npairs)
@@ -324,8 +196,7 @@ function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T}
         periodic, Lx, Ly = _flat_surgery_domain(domain, T)
         @_ka_launch dev npairs _topology_rewrite_size_kernel!(
             op, valid, node_from_first, node_idx, seg_idx, inserted_idx,
-            split_reverse1, split_reverse2, merge_reverse_second, stitch_x,
-            stitch_y, merge_shift_x, merge_shift_y,
+            stitch_x, stitch_y, merge_shift_x, merge_shift_y,
             out_count, out_len1, out_len2, pair_ci, pair_i,
             pair_cj, pair_j, flat.x, flat.y, flat.wrapx, flat.wrapy,
             flat.offsets, flat.lengths, periodic, Lx, Ly, npairs)
@@ -333,9 +204,7 @@ function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T}
 
     return DeviceTopologyRewritePlan(pair_ci, pair_i, pair_cj, pair_j, op,
                                      valid, node_from_first, node_idx, seg_idx,
-                                     inserted_idx, split_reverse1,
-                                     split_reverse2, merge_reverse_second,
-                                     stitch_x, stitch_y,
+                                     inserted_idx, stitch_x, stitch_y,
                                      merge_shift_x, merge_shift_y,
                                      out_count, out_len1, out_len2)
 end
@@ -410,18 +279,6 @@ end
     return x[g], y[g], corners[g]
 end
 
-@inline function _inserted_oriented_contour_node(x, y, corners, offsets, lengths,
-                                                 ci, inserted_idx, stitch_x,
-                                                 stitch_y, local_idx, reversed)
-    if inserted_idx > 0 && local_idx == inserted_idx
-        return stitch_x, stitch_y, UInt8(0)
-    end
-    oriented_idx = inserted_idx > 0 && local_idx > inserted_idx ? local_idx - 1 : local_idx
-    original_idx = reversed ? lengths[ci] - oriented_idx + 1 : oriented_idx
-    g = offsets[ci] + original_idx - 1
-    return x[g], y[g], corners[g]
-end
-
 @kernel function _materialize_rewrite_outputs_kernel!(out_x, out_y, out_corners,
                                                        out_offsets, out_lengths,
                                                        out_node_contour, out_op_index,
@@ -429,8 +286,6 @@ end
                                                        pair_ci, pair_cj,
                                                        op, valid, node_from_first,
                                                        node_idx, seg_idx, inserted_idx,
-                                                       split_reverse1, split_reverse2,
-                                                       merge_reverse_second,
                                                        stitch_x, stitch_y,
                                                        merge_shift_x, merge_shift_y,
                                                        in_x, in_y,
@@ -463,29 +318,24 @@ end
                 lo = min(adjusted_node, inserted)
                 hi = max(adjusted_node, inserted)
                 nc = n + 1
-                out_len = out_lengths[out_ci]
-                reverse_part = part == 1 ? !iszero(split_reverse1[op_idx]) :
-                                           !iszero(split_reverse2[op_idx])
-                logical_local = reverse_part ? out_len - out_local + 1 : out_local
                 source_local = 1
                 if part == 1
-                    source_local = lo + logical_local - 1
+                    source_local = lo + out_local - 1
                 else
                     first_span = nc - hi + 1
-                    source_local = logical_local <= first_span ? hi + logical_local - 1 :
-                                                           logical_local - first_span
+                    source_local = out_local <= first_span ? hi + out_local - 1 :
+                                                         out_local - first_span
                 end
                 ox, oy, corner = _inserted_contour_node(in_x, in_y, in_corners,
                                                         in_offsets, ci, inserted,
                                                         stitch_x[op_idx],
                                                         stitch_y[op_idx],
                                                         source_local)
-                (reverse_part ? out_local == out_len : out_local == 1) && (corner = UInt8(1))
+                out_local == 1 && (corner = UInt8(1))
             else
                 n1 = in_lengths[pair_ci[op_idx]]
                 n2 = in_lengths[pair_cj[op_idx]]
                 from_first = !iszero(node_from_first[op_idx])
-                reverse_second = !iszero(merge_reverse_second[op_idx])
                 c1_inserted = from_first ? 0 : inserted_idx[op_idx]
                 c2_inserted = from_first ? inserted_idx[op_idx] : 0
                 c1_len = n1 + (from_first ? 0 : 1)
@@ -496,21 +346,19 @@ end
                 if out_local <= c1_len
                     source_local = c1_start + out_local - 1
                     source_local = source_local > c1_len ? source_local - c1_len : source_local
-                    ox, oy, corner = _inserted_oriented_contour_node(
-                        in_x, in_y, in_corners, in_offsets, in_lengths, ci,
-                        c1_inserted, stitch_x[op_idx], stitch_y[op_idx],
-                        source_local, false)
+                    ox, oy, corner = _inserted_contour_node(
+                        in_x, in_y, in_corners, in_offsets, ci, c1_inserted,
+                        stitch_x[op_idx], stitch_y[op_idx], source_local)
                     out_local == 1 && (corner = UInt8(1))
                 else
                     local2 = out_local - c1_len
                     source_local = c2_start + local2 - 1
                     source_local = source_local > c2_len ? source_local - c2_len : source_local
-                    ox, oy, corner = _inserted_oriented_contour_node(
-                        in_x, in_y, in_corners, in_offsets, in_lengths, cj,
-                        c2_inserted,
+                    ox, oy, corner = _inserted_contour_node(
+                        in_x, in_y, in_corners, in_offsets, cj, c2_inserted,
                         stitch_x[op_idx] - merge_shift_x[op_idx],
                         stitch_y[op_idx] - merge_shift_y[op_idx],
-                        source_local, reverse_second)
+                        source_local)
                     ox += merge_shift_x[op_idx]
                     oy += merge_shift_y[op_idx]
                     local2 == 1 && (corner = UInt8(1))

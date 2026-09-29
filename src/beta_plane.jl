@@ -86,12 +86,12 @@ function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},
                   x::SVector{2,T}) where {T, D<:PeriodicDomain{T}}
     kernel = prob.kernel
     ewald = _prefetch_ewald(prob.domain, kernel)
-    scratch = prob.velocity_scratch
-    contour_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures,
-                                                     _host_contours(prob))
-    reference_curvatures = _prepare_curvature_buffers!(scratch.reference_curvatures,
-                                                       kernel.reference_contours)
-    return _beta_plane_velocity_at(kernel, prob.domain, x, _host_contours(prob),
+    # Call-local curvatures, not the problem's velocity scratch, so concurrent
+    # point queries on one problem are safe.
+    contours = _host_contours(prob)
+    contour_curvatures = [_signed_node_curvatures(c) for c in contours]
+    reference_curvatures = [_signed_node_curvatures(c) for c in kernel.reference_contours]
+    return _beta_plane_velocity_at(kernel, prob.domain, x, contours,
                                    contour_curvatures, reference_curvatures, ewald)
 end
 

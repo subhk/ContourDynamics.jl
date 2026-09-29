@@ -134,15 +134,42 @@ end
         clear_ewald_cache!()
         domain = PeriodicDomain(3.0, 2.0)
         kernel = QGKernel(1.0)
-        modes = 12
         contour = circular_patch(0.5, 64, 1.0; cx=0.31, cy=-0.27)
-        setup_ewald_cache!(domain, kernel; n_fourier=modes, n_images=2)
         prob = ContourProblem(kernel, domain, [contour])
-        reference = _qg_periodic_fourier_energy(domain, [contour], kernel.Ld, modes)
+        # Extrapolate the algebraic tail (∝ 1/K²) of the independent sum.
+        coarse = _qg_periodic_fourier_energy(domain, [contour], kernel.Ld, 100)
+        fine = _qg_periodic_fourier_energy(domain, [contour], kernel.Ld, 200)
+        reference = (4 * fine - coarse) / 3
 
-        @test energy(prob) ≈ reference rtol=3e-9
+        default_energy = energy(prob)
+        @test default_energy ≈ reference rtol=2e-6
         @test ContourDynamics._ka_energy(prob, ContourDynamics.CPU()) ≈
-              reference rtol=3e-9
+              default_energy rtol=1e-13
+        # The Ewald-split potential is converged at the default truncation.
+        setup_ewald_cache!(domain, kernel; n_fourier=16, n_images=3)
+        @test energy(prob) ≈ default_energy rtol=1e-12
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic single-layer QG is converged for short deformation radii" begin
+        # With Ld small against the cell, κ exceeds the Fourier cutoff of the
+        # default cache; the kernel is summed over images directly instead.
+        clear_ewald_cache!()
+        domain = PeriodicDomain(Float64(π))
+        kernel = QGKernel(0.1)
+        contour = circular_patch(0.3, 32, 1.0; cx=0.4, cy=-0.3)
+        prob = ContourProblem(kernel, domain, [contour])
+        free = ContourProblem(kernel, UnboundedDomain(), [deepcopy(contour)])
+        # Periodic images are e^{-2π/Ld} ≈ 1e-27 away: the periodic problem
+        # must reproduce the unbounded one.
+        vel = zeros(SVector{2,Float64}, nnodes(contour))
+        free_vel = similar(vel)
+        velocity!(vel, prob)
+        velocity!(free_vel, free)
+        @test maximum(norm.(vel .- free_vel)) < 1e-13 * maximum(norm.(free_vel))
+        @test energy(prob) ≈ energy(free) rtol=1e-12
+        @test ContourDynamics._ka_energy(prob, ContourDynamics.CPU()) ≈
+              energy(free) rtol=1e-12
         clear_ewald_cache!()
     end
 
@@ -223,20 +250,27 @@ end
         @test all(abs(sum(c.pv * vortex_area(c) for c in layer)) < 2e-16
                   for layer in energy_layers)
         energy_prob = MultiLayerContourProblem(kernel, domain, deepcopy(energy_layers))
-        reference_energy = _multilayer_periodic_fourier_energy(
-            domain, energy_layers, coupling, H, modes)
-        @test energy(energy_prob) ≈ reference_energy rtol=5e-7
+        # Extrapolate the algebraic tail (∝ 1/K²) of the independent sum.
+        coarse_energy = _multilayer_periodic_fourier_energy(
+            domain, energy_layers, coupling, H, 120)
+        fine_energy = _multilayer_periodic_fourier_energy(
+            domain, energy_layers, coupling, H, 240)
+        reference_energy = (4 * fine_energy - coarse_energy) / 3
+        # The periodic potential is converged, so agreement is limited by the
+        # diagnostic's fixed 3×3 panel quadrature on these 20–24-node
+        # polygons (subdividing their edges converges to the reference).
+        @test energy(energy_prob) ≈ reference_energy rtol=1e-5
 
         states = ntuple(i -> DeviceContourState(deepcopy(energy_layers[i]),
                                                 ContourDynamics.CPU()), 2)
         @test ContourDynamics._ka_multilayer_energy_from_states(
             states, kernel, domain, ContourDynamics.CPU()) ≈
-            reference_energy rtol=5e-7
+            energy(energy_prob) rtol=1e-13
 
         inferred_energy_prob = MultiLayerContourProblem(
             inferred_kernel, domain, deepcopy(energy_layers))
         @test energy(inferred_energy_prob) ≈
-              reference_energy / (sum(H) / length(H)) rtol=5e-7
+              energy(energy_prob) / (sum(H) / length(H)) rtol=1e-13
 
         # A pure weighted eigenmode must have exactly the corresponding
         # single-layer QG Hamiltonian in an unbounded domain.
@@ -289,5 +323,57 @@ end
             SMatrix{2,2,Float64}(-tiny_F, tiny_F, tiny_F, -tiny_F))
         @test count(lam -> ContourDynamics._is_barotropic_mode(tiny, lam),
                     tiny.eigenvalues) == 1
+    end
+
+    @testset "couplings typed to finite precision keep one barotropic mode" begin
+        # Each entry rounded to 7 digits: the rows miss zero by ~1e-7, which
+        # the uniform-null check accepts, so the barotropic eigenvalue must be
+        # recognized at that level rather than counted as a baroclinic mode.
+        H = SVector(1.0, 2.0, 3.0)
+        exact = SMatrix{3,3}(-2/3, 1/3, 0.0, 2/3, -(1/3 + 1/7), 2/21, 0.0, 1/7, -2/21)
+        typed = SMatrix{3,3}(round.(Matrix(exact); sigdigits=7))
+        @test maximum(abs, typed * ones(3)) > 1e-8
+        λ = eigvals(Symmetric(Diagonal(sqrt.(H)) * Matrix(exact) * Diagonal(1 ./ sqrt.(H))))
+        Ld = SVector{2}(sort([1 / sqrt(-l) for l in λ if abs(l) > 1e-12]))
+        kernel = MultiLayerQGKernel(Ld, typed, H)
+        @test count(iszero, kernel.eigenvalues) == 1
+        @test count(lam -> ContourDynamics._is_barotropic_mode(kernel, lam),
+                    kernel.eigenvalues) == 1
+    end
+
+    @testset "multi-layer angular momentum is depth weighted and conserved" begin
+        # With unequal depths only Σ H_l ∫ q r² dA is invariant.
+        H = SVector(0.3, 1.7)
+        F1 = 2.0
+        F2 = F1 * H[1] / H[2]
+        coupling = SMatrix{2,2}(-F1, F2, F1, -F2)
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(F1 + F2)), coupling, H)
+        layers = ([circular_patch(0.4, 64, 1.0; cx=0.5)],
+                  [circular_patch(0.3, 64, -1.5; cx=-0.4, cy=0.3)])
+        prob = MultiLayerContourProblem(kernel, UnboundedDomain(), deepcopy(layers))
+        moments(p) = [sum(c.pv * ContourDynamics._second_moment_r2(c) for c in layer)
+                      for layer in contours(p)]
+        M0 = moments(prob)
+        @test angular_momentum(prob) ≈ H[1] * M0[1] + H[2] * M0[2] rtol=1e-14
+        L0 = angular_momentum(prob)
+        stepper = RK4Stepper(0.02, total_nodes(prob))
+        evolve!(prob, stepper, nothing; nsteps=40)
+        M1 = moments(prob)
+        # The layers exchange angular momentum ...
+        @test abs(sum(M1) - sum(M0)) > 1e-4 * abs(sum(M0))
+        # ... while the depth-weighted sum is conserved by the dynamics.
+        @test angular_momentum(prob) ≈ L0 rtol=1e-6
+    end
+
+    @testset "QG energy keeps precision in Float32 for large deformation radii" begin
+        # The potential's additive constant grows like Ld²log(Ld); it cancels
+        # in the closed-contour integral but its rounding must not swamp it.
+        for Ld in (10.0, 1000.0)
+            c64 = elliptical_patch(0.5, 0.3, 64, 1.0)
+            c32 = elliptical_patch(0.5, 0.3, 64, 1.0; T=Float32)
+            E64 = energy(ContourProblem(QGKernel(Ld), UnboundedDomain(), [c64]))
+            E32 = energy(ContourProblem(QGKernel(Float32(Ld)), UnboundedDomain(), [c32]))
+            @test E32 ≈ E64 rtol=1e-4
+        end
     end
 end

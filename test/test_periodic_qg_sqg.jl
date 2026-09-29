@@ -313,8 +313,9 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         r = SVector(0.37, -0.29)
         origin = zero(r)
 
-        phi(rv) = ContourDynamics._eval_sqg_periodic_energy_potential(
-            rv, cache, domain, kernel.δ)
+        phi(rv) = ContourDynamics._sqg_periodic_energy_potential_scalar(
+            rv[1], rv[2], cache.α, domain.Lx, domain.Ly, kernel.δ,
+            cache.n_images, cache.kx, cache.ky, cache.energy_coeffs)
         h = 1e-3
         ex = SVector(h, 0.0)
         ey = SVector(0.0, h)
@@ -407,5 +408,117 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         @test isfinite(E1)
         E_scale = max(abs(E), abs(E1), eps(Float64))
         @test abs(E1 - E) / E_scale < 1e-3
+    end
+
+    @testset "periodic QG velocity matches explicit periodic copies" begin
+        # Short deformation radii sum the kernel over images directly; longer
+        # ones use the Ewald-split correction. Both must reproduce the
+        # unbounded solver applied to enough explicit periodic copies (the
+        # reference's K₀ approximation limits the Ewald comparison to ~1e-8).
+        domain = PeriodicDomain(Float64(π))
+        L = domain.Lx
+        for (Ld, rings, tol) in ((0.1, 1, 1e-12), (1.0, 8, 1e-7))
+            clear_ewald_cache!()
+            kernel = QGKernel(Ld)
+            c = circular_patch(0.5, 24, 1.0; cx=0.4, cy=-0.3)
+            prob = ContourProblem(kernel, domain, [c])
+            vel = zeros(SVector{2,Float64}, nnodes(c))
+            velocity!(vel, prob)
+            copies = [PVContour([p + SVector(2L * px, 2L * py) for p in c.nodes], c.pv)
+                      for px in -rings:rings for py in -rings:rings]
+            free = ContourProblem(kernel, UnboundedDomain(), copies)
+            for k in 1:6:nnodes(c)
+                reference = velocity(free, c.nodes[k])
+                @test norm(vel[k] - reference) <= tol * norm(reference)
+            end
+        end
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic SQG spanning velocity does not depend on the Ewald split" begin
+        # Spanning contours with Σ pv·wrap ≠ 0 feel the k = 0 content of the
+        # real-space sum, which the zero-mean inversion must remove.
+        domain = PeriodicDomain(Float64(π), 2.0)
+        kernel = SQGKernel(0.05)
+        area = 4 * domain.Lx * domain.Ly
+        contours = [PVContour([SVector(p[1], p[2] + 0.2 * sin(p[1])) for p in c.nodes],
+                              c.pv, c.wrap)
+                    for c in beta_staircase(1.0, domain, 2; nodes_per_contour=32)]
+        function cache_with_alpha(scale)
+            base = build_ewald_cache(domain, kernel; n_fourier=24, n_images=6)
+            α = base.α * scale
+            coeffs = [iszero(kx^2 + ky^2) ? 0.0 :
+                      ContourDynamics._ewald_fourier_coefficient(kernel, kx^2 + ky^2, α, area)
+                      for kx in base.kx, ky in base.ky]
+            return EwaldCache(α, base.kx, base.ky, coeffs, 6, zeros(0, 0))
+        end
+        velocities = map((1.0, 0.5)) do scale
+            clear_ewald_cache!()
+            ContourDynamics._store_ewald!(domain, kernel, cache_with_alpha(scale))
+            prob = ContourProblem(kernel, domain, deepcopy(contours))
+            vel = zeros(SVector{2,Float64}, total_nodes(prob))
+            velocity!(vel, prob)
+            vel
+        end
+        @test maximum(norm.(velocities[1] .- velocities[2])) < 1e-12
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic SQG energy is exact at half-period separations" begin
+        function polygon_transform(nodes, kx, ky)
+            k2 = kx^2 + ky^2
+            s = 0.0 + 0.0im
+            n = length(nodes)
+            for j in 1:n
+                a = nodes[j]
+                b = nodes[mod1(j + 1, n)]
+                β = (kx * (b[1] - a[1]) + ky * (b[2] - a[2])) / 2
+                sincβ = abs(β) < 1e-12 ? 1.0 : sin(β) / β
+                s += (kx * (b[2] - a[2]) - ky * (b[1] - a[1])) *
+                     cis(-(kx * (a[1] + b[1]) + ky * (a[2] + b[2])) / 2) * sincβ
+            end
+            return im * s / k2
+        end
+        function spectral_energy(cs, L, δ, K)
+            area = 4L^2
+            E = 0.0
+            for m in -K:K, n in -K:K
+                (m == 0 && n == 0) && continue
+                kx, ky = π * m / L, π * n / L
+                k = hypot(kx, ky)
+                q = sum(c.pv * polygon_transform(c.nodes, kx, ky) for c in cs)
+                E += area / 2 * abs2(q / area) * exp(-δ * k) / k
+            end
+            return E
+        end
+        clear_ewald_cache!()
+        L = Float64(π)
+        δ = 0.05
+        for d in (0.95L, L)
+            cs = [circular_patch(0.15, 32, 1.0; cx=-d / 2), circular_patch(0.15, 32, 1.0; cx=d / 2)]
+            prob = ContourProblem(SQGKernel(δ), PeriodicDomain(L), cs)
+            reference = spectral_energy(cs, L, δ, 200)
+            @test energy(prob) ≈ reference rtol=1e-7
+            @test ContourDynamics._ka_energy(prob, ContourDynamics.CPU()) ≈ energy(prob) rtol=1e-12
+        end
+        clear_ewald_cache!()
+    end
+
+    @testset "multi-layer Ewald caches can be configured and stay configured" begin
+        clear_ewald_cache!()
+        domain = PeriodicDomain(2.0)
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), SMatrix{2,2}(-F, F, F, -F))
+        setup_ewald_cache!(domain, kernel; n_fourier=12, n_images=3)
+        baroclinic = QGKernel(1 / sqrt(2F))
+        @test length(ContourDynamics._get_ewald_cache(domain, EulerKernel()).kx) == 25
+        @test length(ContourDynamics._get_ewald_cache(domain, baroclinic).kx) == 25
+        # Automatically built caches are bounded; configured ones are not evicted.
+        for i in 1:(ContourDynamics._EWALD_CACHE_MAX + 5)
+            ContourDynamics._get_ewald_cache(domain, QGKernel(0.5 + i / 100))
+        end
+        @test ContourDynamics._get_ewald_cache(domain, baroclinic).n_images == 3
+        @test ContourDynamics._get_ewald_cache(domain, EulerKernel()).n_images == 3
+        clear_ewald_cache!()
     end
 end

@@ -86,17 +86,19 @@ end
         @test iszero(device_y)
 
         # Exercise the distinct straight-panel branch in the periodic KA
-        # kernel. A zero-splitting, empty-mode cache isolates its free-space
-        # contribution from the periodic correction.
+        # kernel. A vanishing splitting parameter, no images or modes, and a
+        # vast cell make every periodic correction term (the central
+        # erf(αr)/r ~ α and the zero-mode constant ~ 1/(αA)) negligible, which
+        # isolates the free-space contribution.
         segment = ContourDynamics.SegmentData(
             [a[1]], [a[2]], [b[1]], [b[2]], [1.0], [0.0], [0.0])
-        cache = EwaldCache(0.0, Float64[], Float64[], zeros(0, 0), 0,
+        cache = EwaldCache(1.0e-30, Float64[], Float64[], zeros(0, 0), 0,
                            zeros(0, 0))
         periodic_x = zeros(1)
         periodic_y = zeros(1)
         ContourDynamics._ka_periodic_sqg_velocity!(
             periodic_x, periodic_y, [x[1]], [x[2]], segment,
-            PeriodicDomain(1.0e15, 1.0e15), cache, δ, CPU())
+            PeriodicDomain(1.0e30, 1.0e30), cache, δ, CPU())
         @test periodic_x[1] ≈ reference rtol=1e-12
         @test iszero(periodic_y[1])
     end
@@ -165,5 +167,22 @@ end
         @test ContourDynamics._ka_energy(prob, ContourDynamics.CPU()) ≈
               reference rtol=1e-4
         clear_ewald_cache!()
+    end
+
+    @testset "curved panels stay accurate for a target at their endpoint" begin
+        # Adjacent panels place the target at a panel endpoint. A nearly
+        # straight cubic must reproduce the analytic straight panel there even
+        # when ds ≫ δ, and must not jump at the straightness threshold.
+        inv2pi = 1 / (2π)
+        for (L, δ) in ((0.2, 0.01), (0.02, 2e-4))
+            straight = ContourDynamics._curved_sqg_contribution_scalar(
+                0.0, 0.0, 0.0, 0.0, L, 0.0, 1.0, 0.0, 0.0, δ, inv2pi)
+            @test straight[1] ≈ inv2pi * asinh(L / δ) rtol=1e-12
+            for κL in (0.99 * sqrt(eps()), 1.01 * sqrt(eps()), 1e-6, 1e-4)
+                curved = ContourDynamics._curved_sqg_contribution_scalar(
+                    0.0, 0.0, 0.0, 0.0, L, 0.0, 1.0, κL / L, κL / L, δ, inv2pi)
+                @test curved[1] ≈ straight[1] rtol=10κL + 1e-12
+            end
+        end
     end
 end

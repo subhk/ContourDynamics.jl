@@ -174,6 +174,12 @@ relative values to be inferred.
 
 `surgery` may be a [`SurgeryParams`](@ref), one of `:standard`,
 `:conservative`, `:aggressive`, or `:none`.
+
+Contours (or layer vectors) whose element type is already `T` are used in
+place, not copied: the problem evolves them, and passing the same contours to
+two problems couples them. Build separate contours (or `deepcopy`) for
+independent problems. Inputs of another float type are converted into new
+contours.
 """
 Base.@constprop :aggressive function Problem(;
     contours=nothing,

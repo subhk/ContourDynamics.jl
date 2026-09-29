@@ -66,6 +66,9 @@ function _save_metadata!(g, kernel::MultiLayerQGKernel{N,M,T}, domain) where {N,
     g["kernel_type"] = "MultiLayerQGKernel"
     g["kernel_Ld"] = collect(kernel.Ld)
     g["kernel_coupling"] = collect(kernel.coupling)
+    # The layer depths weight the energy and angular momentum; without them a
+    # kernel rebuilt from Ld and the coupling alone infers different depths.
+    g["kernel_layer_thicknesses"] = collect(kernel.layer_thicknesses)
     g["kernel_nlayers"] = N
     _save_domain!(g, domain)
 end
@@ -86,6 +89,12 @@ Each snapshot is stored under a group `step_NNNNNN`.
 
 Saves: contour nodes, PV values, node counts, kernel/domain metadata,
 and optionally energy, circulation, enstrophy, and angular momentum.
+
+The file is opened for appending: an existing group for the same `step` is
+replaced and all other groups are kept. To record a new run into an existing
+file, use [`jld2_recorder`](@ref), which clears earlier step groups when the run
+starts, or remove the file first; otherwise [`load_simulation`](@ref) returns
+snapshots from both runs.
 """
 function ContourDynamics.save_snapshot(filename::String,
                                        prob::ContourProblem{K,D,T},
@@ -415,13 +424,20 @@ function _metadata_float_type(mg)
 end
 
 """
-    jld2_recorder(filename; save_every=nothing, save_dt=nothing, dt=nothing, diagnostics=true)
+    jld2_recorder(filename; save_every=nothing, save_dt=nothing, dt=nothing, diagnostics=true, append=false)
 
 Create a callback for `evolve!` that saves snapshots to a JLD2 file.
 
 Specify either:
 - `save_every::Int` — save every N iterations
 - `save_dt` + `dt` — save every `save_dt` time units (requires the stepper's `dt`)
+
+A run starts afresh: before its first snapshot, and whenever a snapshot step
+does not advance past the previous one (the recorder is reused for a rerun),
+the `step_*` groups already in the file are deleted, so
+[`load_simulation`](@ref) never mixes two runs. Other groups are kept. Pass
+`append=true` to continue a run already recorded in the file instead, for
+example after restarting from a checkpoint with `step_offset`.
 
 # Example
 
@@ -440,7 +456,8 @@ function ContourDynamics.jld2_recorder(filename::String;
                                         save_every::Union{Nothing,Int}=nothing,
                                         save_dt=nothing,
                                         dt=nothing,
-                                        diagnostics::Bool=true)
+                                        diagnostics::Bool=true,
+                                        append::Bool=false)
     if save_every === nothing && save_dt === nothing
         throw(ArgumentError("Specify either save_every (iterations) or save_dt (time interval)"))
     end
@@ -464,21 +481,41 @@ function ContourDynamics.jld2_recorder(filename::String;
         ratio = save_dt / dt
         (isfinite(ratio) && ratio <= typemax(Int)) || throw(ArgumentError(
             "save_dt/dt must be finite and fit in an Int; got $ratio"))
-        rounded = round(Int, ratio)
-        if abs(ratio - rounded) / max(ratio, 1) > 0.01
-            @warn "jld2_recorder: save_dt/dt = $ratio is not near-integer; rounding to $rounded (effective save_dt = $(rounded * dt))"
+        steps = max(1, round(Int, ratio))
+        if abs(ratio - steps) / max(ratio, 1) > 0.01
+            @warn "jld2_recorder: save_dt/dt = $ratio is not a whole number of steps; saving every $steps step(s) (effective save_dt = $(steps * dt))"
         end
-        max(1, rounded)
+        steps
     end
 
     step_dt = dt  # capture for closure
+    started = Ref(append)
+    last_step = Ref{Union{Nothing,Int}}(nothing)
 
     return function(prob, step)
         if step % interval == 0
+            previous = last_step[]
+            if !started[] || (previous !== nothing && step <= previous)
+                _clear_step_groups!(filename)
+                started[] = true
+            end
             ContourDynamics.save_snapshot(filename, prob, step;
                                           dt=step_dt, diagnostics=diagnostics)
+            last_step[] = step
         end
     end
+end
+
+# Delete every `step_*` group so a new run does not interleave with snapshots
+# left by an earlier one. Other groups in the file are left untouched.
+function _clear_step_groups!(filename::String)
+    isfile(filename) || return nothing
+    jldopen(filename, "a+") do f
+        for key in collect(keys(f))
+            startswith(key, "step_") && delete!(f, key)
+        end
+    end
+    return nothing
 end
 
 end # module

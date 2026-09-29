@@ -18,6 +18,7 @@ struct ContourProblem{K<:AbstractKernel, D<:AbstractDomain, T<:AbstractFloat, De
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
         _check_kernel_domain(kernel, domain)
+        _check_contour_wraps(contours, domain)
         _check_gpu_support(kernel, domain, dev)
         storage = _storage(contours, dev)
         new{K, D, T, Dev, typeof(storage)}(kernel, domain, storage, dev, workspace)
@@ -58,6 +59,30 @@ _check_kernel_domain(::AbstractKernel, ::AbstractDomain) = nothing
 _check_kernel_domain(kernel::BetaPlaneQGKernel, domain::AbstractDomain) =
     _validate_beta_plane_reference(kernel, domain)
 
+# A spanning contour closes through a shift by whole periods of the domain.
+# Any other wrap, or a wrap in an unbounded domain, would silently produce the
+# velocity of a different, non-periodic geometry.
+function _check_contour_wraps(contours, ::UnboundedDomain)
+    for (i, c) in pairs(contours)
+        is_spanning(c) && throw(ArgumentError(
+            "contour $i has wrap $(c.wrap), but spanning contours require a PeriodicDomain"))
+    end
+    return nothing
+end
+
+function _check_contour_wraps(contours, domain::PeriodicDomain{T}) where {T}
+    periods = SVector{2,T}(2 * domain.Lx, 2 * domain.Ly)
+    for (i, c) in pairs(contours)
+        is_spanning(c) || continue
+        counts = c.wrap ./ periods
+        tol = sqrt(eps(T)) * max(one(T), maximum(abs, counts))
+        all(abs.(counts .- round.(counts)) .<= tol) || throw(ArgumentError(
+            "contour $i has wrap $(c.wrap), which is not a whole number of " *
+            "domain periods $(Tuple(periods))"))
+    end
+    return nothing
+end
+
 """
     MultiLayerContourProblem{N,K,D,T,Dev}(kernel, domain, layers; dev=CPU())
 
@@ -75,6 +100,7 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
                                       dev::Dev=CPU(), workspace::ExecutionWorkspace{T}=ExecutionWorkspace(T)) where {N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, Dev<:AbstractDevice}
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
+        foreach(layer -> _check_contour_wraps(layer, domain), layers)
         storage = _storage(layers, dev)
         new{N, K, D, T, Dev, typeof(storage)}(kernel, domain, storage, dev, workspace)
     end
@@ -129,6 +155,12 @@ _device_state(prob::_ContourProblemTypes) = _device_storage(_active_storage(prob
 
 """Borrow live CPU contours (or layer tuple). Mutations affect the problem."""
 contours(prob::_ContourProblemTypes) = _host_contours(prob)
+
+"""Return the kernel of a contour problem."""
+kernel(prob::_ContourProblemTypes) = prob.kernel
+
+"""Return the domain of a contour problem."""
+domain(prob::_ContourProblemTypes) = prob.domain
 
 """
     snapshot_contours(prob)

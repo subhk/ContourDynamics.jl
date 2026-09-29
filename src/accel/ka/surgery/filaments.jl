@@ -40,8 +40,7 @@
             end
 
             area = abs(area2) / 2
-            min_perimeter = μ > zero(μ) ? 4 * μ : zero(μ)
-            drop = area < area_min || perimeter < min_perimeter
+            drop = area < area_min
             if !drop && has_corner
                 if nc <= 4
                     drop = true

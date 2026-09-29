@@ -79,12 +79,12 @@ using Test, ContourDynamics, StaticArrays, Logging
         shift = SVector(1.0e8, -1.0e8)
         shifted_nodes = [point + shift for point in base_nodes]
 
-        # Split orientation uses the raw-node helper, while merge orientation
-        # uses the contour scale to decide whether the sign is trustworthy.
-        @test ContourDynamics._shoelace_area(shifted_nodes) ≈
-              ContourDynamics._shoelace_area(base_nodes) rtol=0 atol=10eps(Float64)
-        @test ContourDynamics._shoelace_noise_scale(PVContour(shifted_nodes, 1.0)) ≈
-              ContourDynamics._shoelace_noise_scale(PVContour(base_nodes, 1.0))
+        # Merge admissibility weights enclosing contours by their orientation,
+        # which must survive translation far from the origin.
+        @test ContourDynamics._raw_polygon_area(shifted_nodes) ≈
+              ContourDynamics._raw_polygon_area(base_nodes) rtol=0 atol=10eps(Float64)
+        @test ContourDynamics._contour_orientation_signs(
+            [PVContour(shifted_nodes, 1.0), PVContour(reverse(shifted_nodes), 1.0)]) == [1.0, -1.0]
     end
 
     @testset "Filament Removal" begin
@@ -703,5 +703,176 @@ using Test, ContourDynamics, StaticArrays, Logging
         @test 1 <= length(contours(prob)) <= 2
         @test total_nodes(prob) >= 120
         @test abs(circulation(prob) - circulation0) / abs(circulation0) < 5e-3
+    end
+    # Physical PV level at a point: enclosing closed contours weighted by their
+    # orientation (a clockwise contour of jump q bounds a region of -q).
+    function _surgery_pv_level(pt, contours)
+        q = 0.0
+        for c in contours
+            ContourDynamics._point_in_closed_contour(pt, c, UnboundedDomain()) &&
+                (q += sign(vortex_area(c)) * c.pv)
+        end
+        return q
+    end
+
+    # C-shaped CCW annular sector whose tips are 2·gap_half radians apart.
+    function _cshape_patch(R, r, gap_half; nout=400, nin=240, ntip=3)
+        pts = SVector{2,Float64}[]
+        for k in 0:nout
+            θ = gap_half + (2π - 2gap_half) * k / nout
+            push!(pts, SVector(R * cos(θ), R * sin(θ)))
+        end
+        θ = 2π - gap_half
+        for k in 1:ntip
+            ρ = R - (R - r) * k / (ntip + 1)
+            push!(pts, SVector(ρ * cos(θ), ρ * sin(θ)))
+        end
+        for k in 0:nin
+            θ = (2π - gap_half) - (2π - 2gap_half) * k / nin
+            push!(pts, SVector(r * cos(θ), r * sin(θ)))
+        end
+        θ = gap_half
+        for k in 1:ntip
+            ρ = r + (R - r) * k / (ntip + 1)
+            push!(pts, SVector(ρ * cos(θ), ρ * sin(θ)))
+        end
+        return PVContour(pts, 1.0)
+    end
+
+    _circle_nodes(cx, cy, R, n) = [SVector(cx + R * cos(2π * k / n), cy + R * sin(2π * k / n))
+                                   for k in 0:(n - 1)]
+
+    @testset "Split of a closing gap keeps the trapped hole clockwise" begin
+        prob = Problem(; contours=[_cshape_patch(1.0, 0.6, 0.002)], dt=0.01)
+        Γ0 = circulation(prob)
+        evolve!(prob; nsteps=5)
+        cs = contours(prob)
+        @test length(cs) == 2
+        @test count(c -> vortex_area(c) < 0, cs) == 1
+        @test _surgery_pv_level(SVector(0.0, 0.0), cs) == 0
+        @test _surgery_pv_level(SVector(-0.8, 0.0), cs) == 1
+        @test circulation(prob) ≈ Γ0 rtol=5e-3
+    end
+
+    @testset "Merges compare the physical PV level on each part's far side" begin
+        params = SurgeryParams(0.005, 0.02, 0.1, 1e-6, 1)
+        run_surgery(cs) = (prob = ContourProblem(EulerKernel(), UnboundedDomain(), cs);
+                           Γ = circulation(prob); surgery!(prob, params); (prob, Γ))
+
+        # A clockwise contour of jump +1 bounds a -1 region: never merged
+        # with the +1 patch next to it.
+        prob, Γ = run_surgery([PVContour(_circle_nodes(-0.5015, 0.0, 0.5, 128), 1.0),
+                         PVContour(reverse(_circle_nodes(0.5015, 0.0, 0.5, 128)), 1.0)])
+        @test length(contours(prob)) == 2
+        @test abs(circulation(prob)) < 1e-12
+
+        prob, Γ = run_surgery([PVContour(_circle_nodes(-0.5015, 0.0, 0.5, 128), 1.0),
+                         PVContour(_circle_nodes(0.5015, 0.0, 0.5, 128), 1.0)])
+        @test length(contours(prob)) == 1
+        @test circulation(prob) ≈ Γ rtol=1e-3
+
+        # A thinning annulus built the documented way (clockwise hole boundary)
+        # is cut into a C-shape; the hole stays empty.
+        prob, Γ = run_surgery([PVContour(_circle_nodes(0.0, 0.0, 1.0, 256), 1.0),
+                         PVContour(reverse(_circle_nodes(0.197, 0.0, 0.8, 256)), 1.0)])
+        @test length(contours(prob)) == 1
+        @test circulation(prob) ≈ Γ rtol=2e-3
+        @test _surgery_pv_level(SVector(0.197, 0.0), contours(prob)) == 0
+
+        # A +1 patch inside that hole merges with the surrounding +1 annulus
+        # whichever order the contours are stored in.
+        for order in ((1, 2, 3), (1, 3, 2))
+            parts = (PVContour(_circle_nodes(0.0, 0.0, 1.0, 256), 1.0),
+                     PVContour(reverse(_circle_nodes(0.0, 0.0, 0.6, 192)), 1.0),
+                     PVContour(_circle_nodes(0.6 - 0.2 - 0.005, 0.0, 0.2, 96), 1.0))
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), collect(parts[collect(order)]))
+            Γ = circulation(prob)
+            surgery!(prob, SurgeryParams(0.01, 0.04, 0.2, 1e-6, 5))
+            @test length(contours(prob)) == 2
+            @test circulation(prob) ≈ Γ rtol=1e-3
+            @test _surgery_pv_level(SVector(-0.3, 0.0), contours(prob)) == 0
+        end
+    end
+
+    @testset "A closed contour touching its own periodic image is not split" begin
+        function band(xl, xr, w, h)
+            nodes = SVector{2,Float64}[]
+            nx = ceil(Int, (xr - xl) / h)
+            ny = max(2, ceil(Int, 2w / h))
+            for k in 0:(nx - 1); push!(nodes, SVector(xl + (xr - xl) * k / nx, -w)); end
+            for k in 0:(ny - 1); push!(nodes, SVector(xr, -w + 2w * k / ny)); end
+            for k in 0:(nx - 1); push!(nodes, SVector(xr - (xr - xl) * k / nx, w)); end
+            for k in 0:(ny - 1); push!(nodes, SVector(xl, w - 2w * k / ny)); end
+            return PVContour(nodes, 1.0)
+        end
+        prob = ContourProblem(EulerKernel(), PeriodicDomain(1.0, 1.0),
+                              [band(-0.995, 0.995, 0.1, 0.04)])
+        Γ0 = circulation(prob)
+        surgery!(prob, SurgeryParams(0.02, 0.08, 0.1, 1e-6, 10))
+        cs = contours(prob)
+        @test length(cs) == 1
+        @test circulation(prob) ≈ Γ0 rtol=1e-6
+        longest = maximum(hypot((next_node(c, i) - c.nodes[i])...) for c in cs for i in 1:nnodes(c))
+        @test longest < 0.2
+    end
+
+    @testset "Small user vortices below the remeshing scale are kept" begin
+        prob = Problem(; contours=[circular_patch(0.01, 32, 1.0),
+                                   circular_patch(0.01, 32, 1.0; cx=0.5)], dt=0.001)
+        Γ0 = circulation(prob)
+        with_logger(NullLogger()) do
+            evolve!(prob; nsteps=5)
+        end
+        @test length(contours(prob)) == 2
+        @test circulation(prob) ≈ Γ0 rtol=1e-9
+    end
+
+    @testset "Short segments keep their extent in Float32 contact tests" begin
+        d2 = ContourDynamics._flat_point_segment_dist2(1.5f-4, 1f-5, 0f0, 0f0, 3f-4, 0f0)
+        @test sqrt(d2) ≈ 1f-5 rtol=1e-5
+        full = ContourDynamics._segment_min_dist2(
+            SVector(0f0, 0f0), SVector(3f-4, 0f0), SVector(1.5f-4, 2f-5), SVector(1.5f-4, 5f-5))
+        @test sqrt(full) ≈ 2f-5 rtol=1e-4
+    end
+
+    @testset "Hole levels that cancel to zero compare equal in any order" begin
+        # Holes written as counter-clockwise contours of negative jump inside
+        # two nested patches: the level in each hole is q1 + q2 + qh = 0 up to
+        # summation-order rounding.
+        for (q1, q2, qh) in ((0.1, 0.2, -0.3), (1.0, 2.0, -3.0))
+            outer = circular_patch(1.0, 256, q1)
+            inner = circular_patch(0.8, 256, q2)
+            hA = circular_patch(0.2, 128, qh; cx=-0.201)
+            hB = circular_patch(0.2, 128, qh; cx=0.201)
+            counts = map(([outer, inner, hA, hB], [outer, hA, inner, hB])) do cs
+                idx = ContourDynamics.build_spatial_index(cs, 0.02)
+                pairs = ContourDynamics.find_close_segments(cs, idx, 0.005)
+                ia = findfirst(c -> c === hA, cs)
+                ib = findfirst(c -> c === hB, cs)
+                count(p -> Set((p[1], p[3])) == Set((ia, ib)), pairs)
+            end
+            @test counts[1] > 0
+            @test counts[1] == counts[2]
+        end
+    end
+
+    @testset "Corner demotion on spanning contours uses the wrapped previous node" begin
+        nodes = [SVector(-1.0 + 2.0 * k / 20, 0.1 * sin(π * k / 10)) for k in 0:19]
+        corners = falses(20)
+        corners[1] = true
+        c = PVContour(nodes, 1.0, SVector(2.0, 0.0), corners)
+        @test !ContourDynamics._demote_obtuse_corners(c).corners[1]
+    end
+
+    @testset "Remesh density does not depend on the PV scale in Float32" begin
+        # Dritschel's nonlocal curvature is a |pv|-weighted average, so the
+        # PV magnitude cancels; problems in physical units must not lose it.
+        L = 1.0f4
+        params = SurgeryParams(L * 0.005f0, L * 0.02f0, L * 0.2f0, L^2 * 1f-6, 5)
+        shape(pv) = elliptical_patch(L * 0.8, L * 0.2, 96, pv; T=Float32)
+        reference = remesh(shape(1f0), params)
+        for pv in (1f-5, 1f-9)
+            @test nnodes(remesh(shape(pv), params)) == nnodes(reference)
+        end
     end
 end

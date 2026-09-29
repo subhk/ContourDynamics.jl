@@ -82,15 +82,35 @@ using Test, ContourDynamics, StaticArrays, LinearAlgebra
         clear_ewald_cache!()
         domain = PeriodicDomain(3.0, 2.0)
         contour = circular_patch(0.5, 64, 1.0; cx=0.31, cy=-0.27)
-        modes = 8
-        setup_ewald_cache!(domain, EulerKernel();
-                           n_fourier=modes, n_images=2)
         prob = ContourProblem(EulerKernel(), domain, [contour])
-        reference = periodic_fourier_energy(domain, [contour], modes)
+        # The polygon spectrum decays algebraically; extrapolate the tail
+        # (∝ 1/K²) of the independent Fourier sum to its converged value.
+        coarse = periodic_fourier_energy(domain, [contour], 100)
+        fine = periodic_fourier_energy(domain, [contour], 200)
+        reference = (4 * fine - coarse) / 3
 
-        @test energy(prob) ≈ reference rtol=2e-9
+        default_energy = energy(prob)
+        @test default_energy ≈ reference rtol=2e-6
         @test ContourDynamics._ka_energy(prob, ContourDynamics.CPU()) ≈
-              reference rtol=2e-9
+              default_energy rtol=1e-13
+
+        # The Ewald split converges at the default truncation: refining it
+        # leaves the energy unchanged instead of adding high-k content.
+        setup_ewald_cache!(domain, EulerKernel(); n_fourier=16, n_images=3)
+        @test energy(prob) ≈ default_energy rtol=1e-12
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic Hamiltonian of a small patch is converged" begin
+        # A patch much smaller than the Fourier cutoff scale used to lose most
+        # of its energy to truncation of an undamped k⁻⁴ series.
+        clear_ewald_cache!()
+        domain = PeriodicDomain(Float64(π))
+        contour = circular_patch(0.1, 64, 1.0)
+        prob = ContourProblem(EulerKernel(), domain, [contour])
+        coarse = periodic_fourier_energy(domain, [contour], 150)
+        fine = periodic_fourier_energy(domain, [contour], 300)
+        @test energy(prob) ≈ (4 * fine - coarse) / 3 rtol=2e-5
         clear_ewald_cache!()
     end
 end

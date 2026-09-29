@@ -396,4 +396,50 @@ end
         circ_after = circulation(prob)
         @test isapprox(circ_before, circ_after; rtol=1e-5)
     end
+
+    @testset "spanning contours must close through whole domain periods" begin
+        nodes = [SVector(-1.0, 0.0), SVector(0.0, 0.1), SVector(0.5, -0.1)]
+        spanning = PVContour(nodes, 1.0, SVector(2.0, 0.0))
+        @test_throws ArgumentError ContourProblem(EulerKernel(), UnboundedDomain(), [spanning])
+        @test_throws ArgumentError ContourProblem(EulerKernel(), PeriodicDomain(1.3), [spanning])
+        @test ContourProblem(EulerKernel(), PeriodicDomain(1.0), [spanning]) isa ContourProblem
+        diagonal = PVContour(nodes, 1.0, SVector(-4.0, 1.0))
+        @test ContourProblem(EulerKernel(), PeriodicDomain(1.0, 0.5), [diagonal]) isa ContourProblem
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), SMatrix{2,2}(-F, F, F, -F))
+        @test_throws ArgumentError MultiLayerContourProblem(
+            kernel, UnboundedDomain(), ([spanning], PVContour{Float64}[]))
+    end
+
+    @testset "callbacks can query the problem's kernel and domain" begin
+        prob = Problem(; contours=[circular_patch(0.5, 32, 1.0)], dt=0.01, surgery=:none)
+        seen = Any[]
+        evolve!(prob; nsteps=2, callbacks=[(p, step) -> push!(seen, (kernel(p), domain(p)))])
+        @test length(seen) == 3
+        @test all(s -> s[1] === kernel(prob) && s[2] === domain(prob), seen)
+    end
+
+    @testset "concurrent point queries on one problem agree with serial ones" begin
+        points = [SVector(0.03 * i - 1.0, 0.7 - 0.02 * i) for i in 1:64]
+        function parallel_query(prob)
+            out = Vector{Any}(undef, length(points))
+            Threads.@threads for i in eachindex(points)
+                out[i] = velocity(prob, points[i])
+            end
+            return out
+        end
+        F = 0.5
+        ml_kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), SMatrix{2,2}(-F, F, F, -F))
+        multilayer = MultiLayerContourProblem(
+            ml_kernel, UnboundedDomain(),
+            ([circular_patch(0.5, 48, 1.0)], [circular_patch(0.4, 40, -1.0; cx=0.3)]))
+        domain = PeriodicDomain(3.0, 3.0)
+        staircase = beta_staircase(1.0, domain, 6; nodes_per_contour=8)
+        beta = ContourProblem(BetaPlaneQGKernel(1.0, 1.0, staircase), domain,
+                              vcat(deepcopy(staircase), [circular_patch(0.4, 32, 2.0)]))
+        for prob in (multilayer, beta)
+            serial = [velocity(prob, x) for x in points]
+            @test parallel_query(prob) == serial
+        end
+    end
 end

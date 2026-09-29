@@ -14,7 +14,9 @@ function _contour_perimeter(c::PVContour{T}) where {T}
     return perimeter
 end
 
-"""Remove closed contours below the retained area or perimeter scale."""
+# Whether a labelled-corner contour is unresolved reconnection debris: too few
+# nodes, or thinner than μ (mean width 2A/P below μ, which covers every such
+# contour with perimeter below 4μ by the isoperimetric inequality).
 function _is_corner_filament(c::PVContour{T}, area::T, perimeter::T, μ::T) where {T}
     any(c.corners) || return false
     # Dritschel (1988) removes contours with too few nodes (four or fewer) as
@@ -42,14 +44,18 @@ function remove_filaments!(contours::Vector{PVContour{T}}, area_min, μ=nothing)
     # short or thin labelled-corner fragments produced by reconnection.
     amin = T(area_min)
     μ_cut = μ === nothing ? zero(T) : T(μ)
-    min_perimeter = μ === nothing ? zero(T) : T(4) * μ_cut
     filter!(contours) do c
         is_spanning(c) && return true
         nnodes(c) >= 3 || return false
         area = abs(vortex_area(c))
+        area >= amin || return false
         perimeter = _contour_perimeter(c)
-        area >= amin &&
-            perimeter >= min_perimeter && !_is_corner_filament(c, area, perimeter, μ_cut)
+        # Size rules beyond area_min apply only to labelled-corner debris, so
+        # small user vortices are kept even when remeshing cannot resolve them.
+        any(c.corners) && return !_is_corner_filament(c, area, perimeter, μ_cut)
+        perimeter < T(4) * μ_cut &&
+            @warn "remove_filaments!: keeping a closed contour of perimeter $perimeter < 4μ = $(4μ_cut), below the remeshing resolution (fewer than four nodes fit at spacing μ). Reduce μ to resolve it." maxlog=1
+        return true
     end
 end
 

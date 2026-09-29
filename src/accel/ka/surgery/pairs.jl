@@ -18,6 +18,16 @@ end
     return ax + shiftx, ay + shifty, bx + shiftx, by + shifty
 end
 
+# Whether `_flat_shift_segment_to_image` moves both segments toward
+# (refx, refy) by the same whole number of periods.
+@inline function _flat_same_image(ax1, ay1, bx1, by1, ax2, ay2, bx2, by2,
+                                  refx, refy, Lx, Ly)
+    return round((refx - (ax1 + bx1) / 2) / (2 * Lx)) ==
+           round((refx - (ax2 + bx2) / 2) / (2 * Lx)) &&
+           round((refy - (ay1 + by1) / 2) / (2 * Ly)) ==
+           round((refy - (ay2 + by2) / 2) / (2 * Ly))
+end
+
 @inline _flat_surgery_domain(::UnboundedDomain, ::Type{T}) where {T} =
     (false, zero(T), zero(T))
 @inline _flat_surgery_domain(domain::PeriodicDomain, ::Type{T}) where {T} =
@@ -122,9 +132,17 @@ end
                         by2 = y[off] + wrapy[cj]
                     end
 
+                    same_image = true
                     if periodic
                         refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
                         refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
+                        # A closed contour touching its own periodic image
+                        # would reconnect into spanning contours, which are
+                        # exempt from surgery (CPU `find_close_segments`).
+                        same_image = ci != cj ||
+                            _flat_same_image(ax1, ay1, bx1, by1,
+                                             ax2, ay2, bx2, by2,
+                                             refx, refy, Lx, Ly)
                         ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
                             ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
                         ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
@@ -133,7 +151,7 @@ end
 
                     d2 = _flat_surgery_contact_distance2(ax1, ay1, bx1, by1,
                                                          ax2, ay2, bx2, by2)
-                    is_valid = d2 < δ2
+                    is_valid = same_image && d2 < δ2
                 end
             end
         end
@@ -283,9 +301,7 @@ function _unpack_close_pair_candidates(candidates::DeviceClosePairCandidates)
 end
 
 
-@inline function _flat_segment_interior_probe(x, y, wrapx, wrapy, offsets,
-                                              lengths, ci, i, δ,
-                                              periodic, Lx, Ly)
+@inline function _flat_segment_endpoints(x, y, wrapx, wrapy, offsets, lengths, ci, i)
     off = offsets[ci]
     n = lengths[ci]
     g = off + i - 1
@@ -293,24 +309,31 @@ end
     ay = y[g]
     bx = i < n ? x[g + 1] : x[off] + wrapx[ci]
     by = i < n ? y[g + 1] : y[off] + wrapy[ci]
+    return ax, ay, bx, by
+end
+
+# Device twin of `_segment_side_probe`: a point just off segment i on its left
+# (`side = +1`) or right (`side = -1`).
+@inline function _flat_segment_side_probe(x, y, wrapx, wrapy, offsets,
+                                          lengths, ci, i, side, δ,
+                                          periodic, Lx, Ly)
+    ax, ay, bx, by = _flat_segment_endpoints(x, y, wrapx, wrapy, offsets,
+                                             lengths, ci, i)
     sx = bx - ax
     sy = by - ay
     seg_len = sqrt(sx * sx + sy * sy)
-    if seg_len <= eps(typeof(δ))
+    if iszero(seg_len)
         px = (ax + bx) / 2
         py = (ay + by) / 2
         return periodic ? (_flat_wrap_coord(px, Lx), _flat_wrap_coord(py, Ly)) : (px, py)
     end
 
-    area2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ci)
     left_x = -sy / seg_len
     left_y = sx / seg_len
-    inward_x = area2 >= zero(area2) ? left_x : -left_x
-    inward_y = area2 >= zero(area2) ? left_y : -left_y
     probe_distance = max(δ / 10,
                          eps(typeof(δ)) * (one(δ) + abs(ax) + abs(ay) + seg_len))
-    px = (ax + bx) / 2 + probe_distance * inward_x
-    py = (ay + by) / 2 + probe_distance * inward_y
+    px = (ax + bx) / 2 + probe_distance * side * left_x
+    py = (ay + by) / 2 + probe_distance * side * left_y
     return periodic ? (_flat_wrap_coord(px, Lx), _flat_wrap_coord(py, Ly)) : (px, py)
 end
 
@@ -327,22 +350,29 @@ end
     return _point_in_polygon(px, py, n, getnode)
 end
 
-@inline function _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
-                                                offsets, lengths, ci, i, δ,
-                                                ncontours, periodic, Lx, Ly)
-    px, py = _flat_segment_interior_probe(x, y, wrapx, wrapy, offsets,
-                                          lengths, ci, i, δ, periodic, Lx, Ly)
+# Device twin of `_local_side_vorticity`: the physical PV level just off one
+# side of segment i (clockwise contours bound -pv regions) and the magnitude
+# of the summed jumps.
+@inline function _flat_local_side_vorticity(x, y, pv, wrapx, wrapy,
+                                            offsets, lengths, ci, i, side, δ,
+                                            ncontours, periodic, Lx, Ly)
+    px, py = _flat_segment_side_probe(x, y, wrapx, wrapy, offsets,
+                                      lengths, ci, i, side, δ, periodic, Lx, Ly)
     q = zero(δ)
+    scale = zero(δ)
     @inbounds for ck in 1:ncontours
         if _flat_point_in_closed_contour(px, py, x, y, wrapx, wrapy,
                                          offsets, lengths, ck,
                                          periodic, Lx, Ly)
-            q += pv[ck]
+            area2 = _flat_closed_area2(x, y, wrapx, wrapy, offsets, lengths, ck)
+            q += sign(area2) * pv[ck]
+            scale += abs(pv[ck])
         end
     end
-    return q
+    return q, scale
 end
 
+# Device twin of the far-side admissibility test in `find_close_segments`.
 @kernel function _admissible_close_pair_kernel!(valid, pair_ci, pair_i,
                                                 pair_cj, pair_j, x, y, pv,
                                                 wrapx, wrapy, offsets, lengths,
@@ -354,15 +384,33 @@ end
         cj = pair_cj[k]
         ok = ci == cj
         if !ok
-            qi = _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
-                                                offsets, lengths, ci,
-                                                pair_i[k], δ, ncontours,
-                                                periodic, Lx, Ly)
-            qj = _flat_local_interior_vorticity(x, y, pv, wrapx, wrapy,
-                                                offsets, lengths, cj,
-                                                pair_j[k], δ, ncontours,
-                                                periodic, Lx, Ly)
-            ok = _same_surgery_pv(qi, qj)
+            i = pair_i[k]
+            j = pair_j[k]
+            ax1, ay1, bx1, by1 = _flat_segment_endpoints(x, y, wrapx, wrapy,
+                                                         offsets, lengths, ci, i)
+            ax2, ay2, bx2, by2 = _flat_segment_endpoints(x, y, wrapx, wrapy,
+                                                         offsets, lengths, cj, j)
+            if periodic
+                refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
+                refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
+                ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
+                    ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
+                ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
+                    ax2, ay2, bx2, by2, refx, refy, periodic, Lx, Ly)
+            end
+            side_i = _flat_far_side(ax1, ay1, bx1, by1,
+                                    (ax2 + bx2) / 2, (ay2 + by2) / 2)
+            side_j = _flat_far_side(ax2, ay2, bx2, by2,
+                                    (ax1 + bx1) / 2, (ay1 + by1) / 2)
+            qi, scale_i = _flat_local_side_vorticity(x, y, pv, wrapx, wrapy,
+                                                     offsets, lengths, ci, i,
+                                                     side_i, δ, ncontours,
+                                                     periodic, Lx, Ly)
+            qj, scale_j = _flat_local_side_vorticity(x, y, pv, wrapx, wrapy,
+                                                     offsets, lengths, cj, j,
+                                                     side_j, δ, ncontours,
+                                                     periodic, Lx, Ly)
+            ok = _same_surgery_pv(qi, qj, max(scale_i, scale_j))
         end
         valid[k] = ok ? UInt8(1) : UInt8(0)
     end

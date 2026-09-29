@@ -30,7 +30,10 @@ load_problem
 `to_ode_problem(prob::ContourProblem, tspan; surgery_params=nothing, surgery_dt=nothing)`
 wraps a single-layer contour problem as an OrdinaryDiffEq `ODEProblem`. When
 `surgery_params` is provided, it returns a named tuple containing both the ODE
-problem and the surgery callback.
+problem and the surgery callback. Every `solve` with that callback starts from
+the contours held when the bridge was built, so the pair can be solved again.
+For a [`Problem`](@ref) wrapper the bundled `SurgeryParams` are used by default,
+applied every `n_surgery` steps of the bundled stepper, as in `evolve!`.
 
 The ODE bridge is CPU-only: it flattens contours to a CPU vector and mutates
 `prob.contours` inside the RHS closure. Passing a `GPU()` problem throws an

@@ -203,6 +203,24 @@ function _infer_qg_layer_thicknesses(coupling::SMatrix{N,N,T}) where {N,T<:Abstr
     return SVector{N,T}(inferred)
 end
 
+# The coupling annihilates a uniform streamfunction, so its thickness-weighted
+# symmetric form has the null vector √H and exactly one barotropic eigenvalue.
+# A coupling typed to finite precision leaves that eigenvalue within the
+# residual ‖C̃√H‖/‖√H‖ of zero, which can far exceed eigensolver rounding (the
+# tolerance used to resolve weak baroclinic modes). Identify it by that bound
+# and set it to exactly zero, so it is neither counted as a baroclinic mode nor
+# reported as a positive eigenvalue.
+function _snap_barotropic_eigenvalue(values::AbstractVector{T}, transformed,
+                                     sqrtH) where {T}
+    snapped = collect(values)
+    imin = argmin(abs.(snapped))
+    residual = norm(transformed * sqrtH) / norm(sqrtH)
+    bound = max(T(2) * residual,
+                _qg_modal_eigenvalue_tolerance(SVector{length(snapped),T}(snapped)))
+    abs(snapped[imin]) <= bound && (snapped[imin] = zero(T))
+    return snapped
+end
+
 function _build_multilayer_qg_kernel(
         Ld::SVector{M,T}, coupling::SMatrix{N,N,T},
         H::SVector{N,T}; strict::Bool=true) where {N,M,T<:AbstractFloat}
@@ -236,7 +254,7 @@ function _build_multilayer_qg_kernel(
     transformed = (transformed + transformed') / T(2)
     symmetric_coupling = SMatrix{N,N,T}(transformed)
     eig = eigen(Symmetric(transformed))
-    eigenvalues = SVector{N,T}(eig.values)
+    eigenvalues = SVector{N,T}(_snap_barotropic_eigenvalue(eig.values, transformed, sqrtH))
     eigenvectors = SMatrix{N,N,T}(eig.vectors)
     # P is orthogonal only in the thickness-weighted representation.
     eigenvectors_inv = SMatrix{N,N,T}(eig.vectors')

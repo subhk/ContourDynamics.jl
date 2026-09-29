@@ -21,39 +21,44 @@ function _point_in_closed_contour(pt::SVector{2,T}, c::PVContour{T}, domain::Per
         i -> (c.nodes[i][1], c.nodes[i][2]), domain.Lx, domain.Ly)
 end
 
-function _segment_interior_probe(c::PVContour{T}, i::Int, δ, domain::AbstractDomain=UnboundedDomain()) where {T}
-    # Probe just inside segment i. The sign of contour area tells us which side
-    # is inward, so nested contours can be compared by the vorticity they enclose
-    # locally rather than by PV jump alone.
+function _segment_side_probe(c::PVContour{T}, i::Int, side::T, δ,
+                             domain::AbstractDomain=UnboundedDomain()) where {T}
+    # Probe just off segment i on its left (`side = +1`) or right (`side = -1`).
     a = c.nodes[i]
     b = next_node(c, i)
     seg = b - a
 
     seg_len = sqrt(seg[1]^2 + seg[2]^2)
-    seg_len <= eps(T) && return _wrap_query_pt((a + b) / 2, domain)
-
-    area_sign = sign(vortex_area(c))
-    area_sign == 0 && (area_sign = one(T))
+    iszero(seg_len) && return _wrap_query_pt((a + b) / 2, domain)
 
     left_normal = SVector{2,T}(-seg[2] / seg_len, seg[1] / seg_len)
-    inward = area_sign > 0 ? left_normal : -left_normal
     probe_distance = max(T(δ) / T(10), eps(T) * (one(T) + abs(a[1]) + abs(a[2]) + seg_len))
 
-    return _wrap_query_pt((a + b) / 2 + probe_distance * inward, domain)
+    return _wrap_query_pt((a + b) / 2 + probe_distance * side * left_normal, domain)
 end
 
-function _local_interior_vorticity(contours::Vector{PVContour{T}},
-                                   ci::Int, i::Int, δ,
-                                   domain::AbstractDomain=UnboundedDomain()) where {T}
-    # Sum PV jumps of all closed contours containing the interior probe point.
-    # Equal values mean two nearby contour parts bound the same fluid level and
-    # are eligible to merge.
-    pt = _segment_interior_probe(contours[ci], i, δ, domain)
+# Orientation sign of each closed contour: a clockwise contour with jump q
+# bounds a region of -q (the documented inner-boundary form), so local PV
+# levels must weight each enclosing contour by it.
+_contour_orientation_signs(contours::Vector{PVContour{T}}) where {T} =
+    T[is_spanning(c) ? zero(T) : sign(vortex_area(c)) for c in contours]
+
+function _local_side_vorticity(contours::Vector{PVContour{T}}, orientation::Vector{T},
+                               ci::Int, i::Int, side::T, δ,
+                               domain::AbstractDomain=UnboundedDomain()) where {T}
+    # Physical PV level just off one side of segment i, relative to the level
+    # outside every closed contour, and the magnitude of the summed jumps for
+    # the comparison tolerance.
+    pt = _segment_side_probe(contours[ci], i, side, δ, domain)
     q = zero(T)
-    for c in contours
-        _point_in_closed_contour(pt, c, domain) && (q += c.pv)
+    scale = zero(T)
+    for (k, c) in enumerate(contours)
+        if _point_in_closed_contour(pt, c, domain)
+            q += orientation[k] * c.pv
+            scale += abs(c.pv)
+        end
     end
-    return q
+    return q, scale
 end
 
 # ── Periodic helpers for find_close_segments ─────────────
@@ -62,6 +67,17 @@ end
 
 @inline function _wrap_query_pt(pt::SVector{2,T}, domain::PeriodicDomain{T}) where {T}
     SVector{2,T}(_wrap_coord(pt[1], domain.Lx), _wrap_coord(pt[2], domain.Ly))
+end
+
+# Whether two shifts from `_shift_segment_to_image` select the same periodic
+# image, compared as whole-period counts so rounding in the shifts is ignored.
+@inline _same_image_shift(::SVector{2,T}, ::SVector{2,T}, ::UnboundedDomain) where {T} = true
+@inline function _same_image_shift(s1::SVector{2,T}, s2::SVector{2,T},
+                                   domain::PeriodicDomain) where {T}
+    Lx2 = 2 * T(domain.Lx)
+    Ly2 = 2 * T(domain.Ly)
+    return round(s1[1] / Lx2) == round(s2[1] / Lx2) &&
+           round(s1[2] / Ly2) == round(s2[2] / Ly2)
 end
 
 @inline _shift_segment_to_image(a, b, ref, ::UnboundedDomain) = (a, b)
@@ -108,7 +124,8 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
     use_compact = length(contours) <= typemax(UInt16) && max_idx <= typemax(UInt16)
     seen_compact = use_compact ? Set{UInt64}() : nothing
     seen_tuple = use_compact ? nothing : Set{Tuple{Int,Int,Int,Int}}()
-    interior_q_cache = Dict{Tuple{Int,Int}, T}()
+    side_q_cache = Dict{Tuple{Int,Int,Bool}, Tuple{T,T}}()
+    orientation = _contour_orientation_signs(contours)
 
     @inline function _pair_seen(ci, i, cj, j)
         a, b, c_idx, d = (ci, i) < (cj, j) ? (ci, i, cj, j) : (cj, j, ci, i)
@@ -130,17 +147,25 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
         end
     end
 
-    function _cached_interior_q(ci, i)
-        key = (ci, i)
-        return get!(interior_q_cache, key) do
-            _local_interior_vorticity(contours, ci, i, δ, domain)
+    function _cached_side_q(ci, i, side::T)
+        return get!(side_q_cache, (ci, i, side > zero(T))) do
+            _local_side_vorticity(contours, orientation, ci, i, side, δ, domain)
         end
     end
 
-    @inline function _cached_same_interior_q(ci, i, cj, j)
-        qi = _cached_interior_q(ci, i)
-        qj = _cached_interior_q(cj, j)
-        return _same_surgery_pv(qi, qj)
+    # Dritschel's merge condition: the two parts must bound the same fluid
+    # level on their far sides (away from the gap between them). With equal
+    # jumps this also matches the gap levels, and it rejects parallel parts of
+    # nested levels, whose far sides always differ by twice the jump. Probing
+    # the far side keeps the test independent of how thin the gap is.
+    @inline function _same_far_side_q(ci, i, ai, bi, cj, j, aj, bj)
+        mid_i = (ai + bi) / 2
+        mid_j = (aj + bj) / 2
+        side_i = _flat_far_side(ai[1], ai[2], bi[1], bi[2], mid_j[1], mid_j[2])
+        side_j = _flat_far_side(aj[1], aj[2], bj[1], bj[2], mid_i[1], mid_i[2])
+        qi, scale_i = _cached_side_q(ci, i, side_i)
+        qj, scale_j = _cached_side_q(cj, j, side_j)
+        return _same_surgery_pv(qi, qj, max(scale_i, scale_j))
     end
 
     for (ci, c) in enumerate(contours)
@@ -181,14 +206,7 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                         dist_along = min(abs(i - j), ncj - abs(i - j))
                         dist_along <= 2 && continue
                     else
-                        # Dritschel's merge condition is stricter than equal PV
-                        # jump: the contour parts must enclose identical interior
-                        # vorticity.  This prevents cross-level reconnections in
-                        # nested vortices where several contours carry the same
-                        # jump but bound different vorticity levels.
-                        pv_i, pv_j = contours[ci].pv, contours[cj].pv
-                        _same_surgery_pv(pv_i, pv_j) || continue
-                        _cached_same_interior_q(ci, i, cj, j) || continue
+                        _same_surgery_pv(contours[ci].pv, contours[cj].pv) || continue
                     end
 
                     a_j = contours[cj].nodes[j]
@@ -201,10 +219,19 @@ function find_close_segments(contours::Vector{PVContour{T}}, idx::SpatialIndex{T
                     a_i_img, b_i_img = _shift_segment_to_image(a_i, b_i, mid_q, domain)
                     a_j_img, b_j_img = _shift_segment_to_image(a_j, b_j, mid_q, domain)
 
-                    if _surgery_contact_distance2(a_i_img, b_i_img, a_j_img, b_j_img) < δ2
-                        _pair_insert!(ci, i, cj, j)
-                        push!(close_pairs, pair)
+                    _surgery_contact_distance2(a_i_img, b_i_img, a_j_img, b_j_img) < δ2 || continue
+
+                    if ci == cj
+                        # A closed contour touching its own periodic image would
+                        # reconnect into spanning contours, and spanning contours
+                        # are exempt from surgery, so leave such contacts alone.
+                        _same_image_shift(a_i_img - a_i, a_j_img - a_j, domain) || continue
+                    else
+                        _same_far_side_q(ci, i, a_i_img, b_i_img,
+                                         cj, j, a_j_img, b_j_img) || continue
                     end
+                    _pair_insert!(ci, i, cj, j)
+                    push!(close_pairs, pair)
                 end
             end
         end

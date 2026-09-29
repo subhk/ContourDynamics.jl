@@ -91,13 +91,15 @@ end
 # Δ[K₀(r/Ld) + log(r)] = K₀(r/Ld)/Ld²: the logarithm cancels the
 # δ singularity in K₀, leaving a smooth function at the origin. The
 # factor two matches the shared -raw/(8π) energy normalization.
+# The additive constant 2Ld²(log(2Ld) - γ) is dropped: it cancels in the
+# closed-contour double integral, but for large Ld its rounding swamps the
+# O(r²) variation that carries the energy (in Float32 already at Ld ~ 10³).
 @inline function _qg_energy_potential_scalar(r2::T, Ld::T) where {T}
-    limit = log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
-    r2 <= eps(T)^2 && return T(2) * Ld * Ld * limit
-    r = sqrt(r2)
-    rr = r / Ld
-    smooth = rr < T(0.5) ? _besselk0_correction(rr) + limit :
-             _besselk0_approx_scalar(rr) + log(r)
+    r2 <= eps(T)^2 && return zero(T)
+    rr = sqrt(r2) / Ld
+    # K₀(rr) + log(rr/2) + γ, without cancellation for small rr.
+    smooth = rr < T(0.5) ? _besselk0_correction(rr) :
+             _besselk0_approx_scalar(rr) + log(rr / 2) + T(Base.MathConstants.eulergamma)
     return T(2) * Ld * Ld * smooth
 end
 
@@ -307,8 +309,10 @@ end
 """
     angular_momentum(prob)
 
-Angular momentum `∑ qᵢ ∫ r² dA` of a `ContourProblem` or
-`MultiLayerContourProblem`.
+Angular momentum `∑ qᵢ ∫ r² dA` of a `ContourProblem`. For a
+`MultiLayerContourProblem` each layer's moment is weighted by the kernel's
+`layer_thicknesses` `Hₗ`, `∑ₗ Hₗ ∑ᵢ qᵢ ∫ r² dA`: layers exchange angular
+momentum through the coupling, and only this depth-weighted sum is conserved.
 """
 function angular_momentum(prob::ContourProblem{K, D, T}) where {K, D, T}
     s = zero(T)
@@ -477,9 +481,10 @@ end
 
 function angular_momentum(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
     N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, T<:AbstractFloat, S}
+    H = prob.kernel.layer_thicknesses
     s = zero(T)
     for i in 1:N
-        s += _state_angular_momentum(_device_state(prob)[i], prob.dev)
+        s += T(H[i]) * _state_angular_momentum(_device_state(prob)[i], prob.dev)
     end
     return s
 end
@@ -545,11 +550,15 @@ function enstrophy(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T
 end
 
 function angular_momentum(prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
+    # Only the depth-weighted sum is invariant; see the docstring.
+    H = prob.kernel.layer_thicknesses
     s = zero(T)
     for i in 1:N
+        layer = zero(T)
         for c in _host_contours(prob)[i]
-            s += c.pv * _second_moment_r2(c)
+            layer += c.pv * _second_moment_r2(c)
         end
+        s += T(H[i]) * layer
     end
     return s
 end

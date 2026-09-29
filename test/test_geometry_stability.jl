@@ -46,14 +46,6 @@ using Test, ContourDynamics, StaticArrays
             flat.x, flat.y, flat.wrapx, flat.wrapy,
             flat.offsets, flat.lengths, 1) ≈
               2 * expected_area rtol=0 atol=10eps(Float64)
-        @test ContourDynamics._flat_split_part_area2(
-            flat.x, flat.y, flat.offsets, 1, 0, 0.0, 0.0, 1, 4) ≈
-              2 * expected_area rtol=0 atol=10eps(Float64)
-        @test ContourDynamics._flat_wrapped_split_part_area2(
-            flat.x, flat.y, flat.offsets, 1, 0, 0.0, 0.0, 1, 1, 4, 4) ≈
-              2 * expected_area rtol=0 atol=10eps(Float64)
-        @test ContourDynamics._flat_shoelace_noise_scale(
-            flat.x, flat.y, flat.offsets, flat.lengths, 1) ≈ 4.0
 
         filament_params = SurgeryParams(0.001, 0.01, 0.5, 1.25, 10)
         @test ContourDynamics._device_filament_flags(

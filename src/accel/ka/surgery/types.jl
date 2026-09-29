@@ -62,9 +62,6 @@ struct DeviceTopologyRewritePlan{T<:AbstractFloat,
     node_idx::IA          # local index of the chosen stitch node
     seg_idx::IA           # local segment index receiving the inserted stitch node
     inserted_idx::IA      # local index of the inserted stitch node after insertion
-    split_reverse1::BA
-    split_reverse2::BA
-    merge_reverse_second::BA
     stitch_x::FA
     stitch_y::FA
     merge_shift_x::FA

@@ -110,9 +110,7 @@ function _materialize_rewrite_outputs(flat::FlatContourTopology{T},
             layout.out_node_contour, layout.op_index,
             layout.source_contour, layout.part, plan.ci, plan.cj,
             plan.op, plan.valid, plan.node_from_first, plan.node_idx,
-            plan.seg_idx, plan.inserted_idx, plan.split_reverse1,
-            plan.split_reverse2, plan.merge_reverse_second, plan.stitch_x,
-            plan.stitch_y, plan.merge_shift_x, plan.merge_shift_y,
+            plan.seg_idx, plan.inserted_idx, plan.stitch_x, plan.stitch_y, plan.merge_shift_x, plan.merge_shift_y,
             flat.x, flat.y, flat.corners, flat.offsets,
             flat.lengths, layout.total_nodes)
     end

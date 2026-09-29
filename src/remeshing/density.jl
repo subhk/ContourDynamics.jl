@@ -19,7 +19,7 @@ function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
 
     lengths = _arc_buf === nothing ? arc_lengths(c) : _arc_lengths!(_arc_buf, c)
     perimeter = sum(lengths)
-    if perimeter <= eps(T)
+    if iszero(perimeter)
         fill!(densities, one(T) / T(params.Δ_max))
         return densities
     end
@@ -58,7 +58,7 @@ function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
 
             for i in 1:ns
                 ei = source_lengths[i]
-                ei <= eps(T) && continue
+                iszero(ei) && continue
                 mid = (source.nodes[i] + next_node(source, i)) / T(2)
                 d = xj - mid
                 d2 = max(d[1]^2 + d[2]^2, d2_floor)
@@ -68,14 +68,17 @@ function _dritschel_segment_densities(c::PVContour{T}, params::SurgeryParams,
             end
         end
 
-        K_j = denominator <= eps(T) ? zero(T) : numerator / denominator
+        # The weights carry units of |pv|/length, so only an exact zero means
+        # "no sources"; an absolute floor would discard curvature adaptivity
+        # for problems in physical units (e.g. Float32 with small |pv|).
+        K_j = iszero(denominator) ? zero(T) : numerator / denominator
         node_density_curvatures[j] = inv_μ * (K_j * L)^α + sqrt2 * K_j
     end
 
     raw = Vector{T}(undef, n)
     @inbounds for j in 1:n
         κ̃ = (node_density_curvatures[j] + node_density_curvatures[mod1(j + 1, n)]) / T(2)
-        raw[j] = κ̃ <= eps(T) ? zero(T) : κ̃ / (one(T) + δ * κ̃ / sqrt2)
+        raw[j] = κ̃ <= zero(T) ? zero(T) : κ̃ / (one(T) + δ * κ̃ / sqrt2)
     end
 
     target_intervals = _target_interval_count(perimeter, n, μ, Δ_max)

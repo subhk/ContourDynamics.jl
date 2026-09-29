@@ -244,9 +244,18 @@ distance for the candidate pair and ``\delta`` is the surgery proximity
 threshold.
 
 Same-contour contacts are split into two daughter contours. Different-contour
-contacts are merged only when the PV jumps and the locally enclosed interior
-vorticity level agree. This is stricter than comparing PV jumps alone and avoids
-incorrect reconnection between different levels of a nested vortex.
+contacts are merged only when the PV jumps agree and the two contour parts bound
+the same PV level on their far sides, away from the gap between them. The level
+is the physical PV just off each segment, summing enclosing contours with their
+orientation, so a clockwise contour bounds a region of ``-q``. This is stricter
+than comparing PV jumps alone and avoids incorrect reconnection between
+different levels of a nested vortex or between regions of opposite sign.
+Neither operation reverses a contour: a split that traps outside fluid yields a
+clockwise daughter, the boundary of the new hole.
+
+In a periodic domain, a closed contour that comes within ``\delta`` of its own
+periodic image is left unchanged. Reconnecting it would turn it into spanning
+contours, which are exempt from surgery.
 
 Finally, unresolved debris is removed when it is too small to represent at the
 chosen resolution. The main area test is
@@ -331,7 +340,7 @@ the endpoint curvatures are numerically zero.
 When two contour segments approach within distance ``\delta``:
 
 - **Same contour**: the contour is **split** (pinched) into two daughter contours
-- **Different contours enclosing the same interior vorticity level**: the contours are **merged** (stitched together)
+- **Different contours bounding the same PV level**: the contours are **merged** (stitched together)
 
 Here ``\delta`` is the proximity threshold used to decide that two segments are
 close enough to be considered for reconnection.
@@ -363,8 +372,10 @@ After reconnection, labelled corner contours with four or fewer nodes are
 removed as unresolved surgery debris, matching Dritschel's cleanup rule for
 contours with too few nodes. Contours with ``|A| < A_{\min}`` (where ``A`` is
 the signed area) are also removed, as are extremely thin corner filaments whose
-effective width is below the remeshing scale. Spanning contours (which encode
-the periodic domain topology) are always preserved.
+effective width is below the remeshing scale. Other small closed contours are
+kept: one whose perimeter is below ``4\mu`` cannot be resolved at spacing
+``\mu``, so a one-time warning suggests reducing ``\mu``. Spanning contours
+(which encode the periodic domain topology) are always preserved.
 
 Here:
 

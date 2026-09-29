@@ -46,7 +46,7 @@ Launch the KA periodic Euler velocity kernel on the given device.
 function _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                       domain::PeriodicDomain{T}, cache::EwaldCache{T},
                                       dev::AbstractDevice, ws=nothing) where {T}
-    dev_kx, dev_ky, dev_fourier = _periodic_ewald_data(ws, cache, dev)
+    dev_kx, dev_ky, dev_fourier, _ = _periodic_ewald_data(ws, cache, dev)
     return _launch_ka_segment_kernel!(_periodic_euler_velocity_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
                                       cache.α, domain.Lx, domain.Ly, cache.n_images,
@@ -56,16 +56,30 @@ end
 """
     _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg, domain, cache, Ld, dev)
 
-Apply the periodic QG-minus-Euler Fourier correction on top of the periodic
+Apply the Ewald-split periodic QG-minus-Euler correction on top of the periodic
 Euler velocity already stored in `vel_x`/`vel_y`.
 """
 function _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                      domain::PeriodicDomain{T}, cache::EwaldCache{T},
                                      Ld::T, dev::AbstractDevice, ws=nothing) where {T}
-    dev_kx, dev_ky = _periodic_ewald_vectors(ws, cache, dev)
+    dev_kx, dev_ky, _, dev_corr = _periodic_ewald_data(ws, cache, dev)
     return _launch_ka_segment_kernel!(_periodic_qg_correction_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
-                                      Ld, domain.Lx, domain.Ly, dev_kx, dev_ky)
+                                      Ld, cache.α, domain.Lx, domain.Ly, cache.n_images,
+                                      dev_kx, dev_ky, dev_corr)
+end
+
+"""
+    _ka_periodic_qg_direct_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, Ld, dev)
+
+Launch the direct periodic-image QG velocity kernel (short deformation radius).
+"""
+function _ka_periodic_qg_direct_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
+                                          domain::PeriodicDomain{T}, Ld::T,
+                                          dev::AbstractDevice) where {T}
+    return _launch_ka_segment_kernel!(_periodic_qg_direct_velocity_ka!,
+                                      vel_x, vel_y, target_x, target_y, seg, dev,
+                                      Ld, domain.Lx, domain.Ly)
 end
 
 """
@@ -76,7 +90,7 @@ Launch the KA periodic SQG velocity kernel on the given device.
 function _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                     domain::PeriodicDomain{T}, cache::EwaldCache{T},
                                     δ::T, dev::AbstractDevice, ws=nothing) where {T}
-    dev_kx, dev_ky, dev_fourier = _periodic_ewald_data(ws, cache, dev)
+    dev_kx, dev_ky, dev_fourier, _ = _periodic_ewald_data(ws, cache, dev)
     return _launch_ka_segment_kernel!(_periodic_sqg_velocity_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
                                       cache.α, δ, domain.Lx, domain.Ly, cache.n_images,
@@ -118,6 +132,9 @@ end
                                      kernel::QGKernel{T}, domain::PeriodicDomain{T},
                                      dev::AbstractDevice, ws=nothing) where {T}
     cache = _ka_periodic_cache(domain, kernel)
+    _qg_uses_direct_images(inv(kernel.Ld^2), cache.α) &&
+        return _ka_periodic_qg_direct_velocity!(vel_x, vel_y, target_x, target_y, seg,
+                                                domain, kernel.Ld, dev)
     _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, dev, ws)
     _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg, domain, cache,
                                 kernel.Ld, dev, ws)

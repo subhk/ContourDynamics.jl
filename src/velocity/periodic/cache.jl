@@ -4,6 +4,11 @@
 Precomputed data for Ewald summation in periodic domains. The cache stores the
 splitting parameter, Fourier wavenumbers and coefficients, and the real-space
 image radius used by periodic velocity and energy evaluations.
+
+`fourier_coeffs` are the velocity Green's-function coefficients (periodic Euler
+coefficients for the QG cache), `corr_coeffs` the Gaussian-damped QG-minus-Euler
+velocity correction (QG only), and `energy_coeffs` the Fourier coefficients of
+the periodic contour-energy potential. All tables are aligned to `kx` × `ky`.
 """
 struct EwaldCache{T<:AbstractFloat}
     α::T
@@ -11,12 +16,18 @@ struct EwaldCache{T<:AbstractFloat}
     ky::Vector{T}
     fourier_coeffs::Matrix{T}
     n_images::Int
-    # QG-only: precomputed correction coefficients κ²/(k²(k²+κ²)A) aligned to
-    # `kx`/`ky`, so the periodic QG velocity/energy correction reads them instead
-    # of recomputing a division per wavenumber per quadrature point. Empty
-    # (0×0) for the Euler and SQG caches, which do not use a correction series.
+    # QG only: Fourier coefficients κ²ĉ_k of the Ewald-split QG-minus-Euler
+    # velocity correction (see numerics/periodic_ewald.jl). Empty (0×0) for the
+    # Euler and SQG caches.
     corr_coeffs::Matrix{T}
+    energy_coeffs::Matrix{T}
 end
+
+# Six-field form kept for callers that build a cache by hand; it carries no
+# energy table.
+EwaldCache(α::T, kx::Vector{T}, ky::Vector{T}, fourier_coeffs::Matrix{T},
+           n_images::Integer, corr_coeffs::Matrix{T}) where {T<:AbstractFloat} =
+    EwaldCache(α, kx, ky, fourier_coeffs, Int(n_images), corr_coeffs, zeros(T, 0, 0))
 
 # ASCII spelling retained for backwards compatibility.
 function Base.getproperty(cache::EwaldCache, name::Symbol)
@@ -25,7 +36,7 @@ function Base.getproperty(cache::EwaldCache, name::Symbol)
 end
 
 Base.propertynames(::EwaldCache; private::Bool=false) =
-    (:α, :alpha, :kx, :ky, :fourier_coeffs, :n_images, :corr_coeffs)
+    (:α, :alpha, :kx, :ky, :fourier_coeffs, :n_images, :corr_coeffs, :energy_coeffs)
 
 @inline function _validate_ewald_truncation(n_fourier::Int, n_images::Int)
     n_fourier >= 0 || throw(ArgumentError(
@@ -49,22 +60,37 @@ end
 
 # Per-kernel Ewald Fourier coefficient at squared wavenumber `k2`:
 # - Euler: exp(-k²/4α²)/(k²A), the standard Ewald split of the 2-D log kernel.
-# - SQG:   (2π/|k|) erfc(|k|/2α)/A, reflecting the fractional Laplacian's
-#          half-order (1/|k| vs Euler's 1/k²).
+# - SQG:   the 2-D transform of erf(α r_δ)/r_δ over A, the quasi-2-D Ewald
+#          split of the regularized kernel 1/r_δ; at δ = 0 it reduces to
+#          (2π/|k|) erfc(|k|/2α)/A, the fractional Laplacian's half-order
+#          (1/|k| vs Euler's 1/k²). The erfcx form keeps e^{|k|δ} finite.
 @inline _ewald_fourier_coefficient(::EulerKernel, k2::T, α::T, area::T) where {T} =
     exp(-k2 / (4 * α^2)) / (k2 * area)
-@inline function _ewald_fourier_coefficient(::SQGKernel{T}, k2::T, α::T,
+@inline function _ewald_fourier_coefficient(kernel::SQGKernel{T}, k2::T, α::T,
                                             area::T) where {T}
-    k_mag = sqrt(k2)
-    return 2 * T(π) * erfc(k_mag / (2 * α)) / (k_mag * area)
+    k = sqrt(k2)
+    δ = kernel.δ
+    y = k / (2 * α)
+    return T(π) / (k * area) *
+           (exp(-y * y - α * α * δ * δ) * erfcx(y + α * δ) + exp(-k * δ) * erfc(y - α * δ))
 end
+
+# Fourier coefficient of the periodic contour-energy potential at k ≠ 0 (see
+# numerics/periodic_ewald.jl): 4π times the scaled QG correction, whose κ = 0
+# limit is the Euler potential, and the neutralized SQG potential.
+@inline _ewald_energy_coefficient(::EulerKernel, k2::T, α::T, area::T) where {T} =
+    _scaled_qg_correction_coefficient(k2, zero(T), α, area, 4 * T(π))
+@inline _ewald_energy_coefficient(kernel::QGKernel{T}, k2::T, α::T, area::T) where {T} =
+    _scaled_qg_correction_coefficient(k2, inv(kernel.Ld^2), α, area, 4 * T(π))
+@inline _ewald_energy_coefficient(kernel::SQGKernel{T}, k2::T, α::T, area::T) where {T} =
+    _sqg_energy_fourier_coefficient(k2, α, kernel.δ, area)
 
 """
     build_ewald_cache(domain::PeriodicDomain, kernel; n_fourier=8, n_images=2)
 
 Precompute Fourier-space coefficients for Ewald summation. The Euler and SQG
-caches differ only in the coefficient formula (`_ewald_fourier_coefficient`);
-the QG cache additionally carries the QG correction table (see its method).
+caches differ only in the coefficient formulas; the QG cache additionally
+carries the QG correction table (see its method).
 """
 function build_ewald_cache(domain::PeriodicDomain{T},
                            kernel::Union{EulerKernel, SQGKernel{T}};
@@ -73,6 +99,7 @@ function build_ewald_cache(domain::PeriodicDomain{T},
     α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
+    energy_coeffs = zeros(T, nk, nk)
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
@@ -80,10 +107,11 @@ function build_ewald_cache(domain::PeriodicDomain{T},
             # as the numeric domain lengths grow.
             if !iszero(k2)
                 fourier_coeffs[mi, ni] = _ewald_fourier_coefficient(kernel, k2, α, area)
+                energy_coeffs[mi, ni] = _ewald_energy_coefficient(kernel, k2, α, area)
             end
         end
     end
-    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0))
+    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, zeros(T, 0, 0), energy_coeffs)
 end
 
 """
@@ -91,12 +119,14 @@ end
 
 Ewald cache for the QG kernel in a periodic domain.
 
-The periodic QG velocity/energy decompose as `G_QG = G_Euler - G_correction`, so
-this cache carries **two** coefficient tables: `fourier_coeffs` are the periodic
-Euler coefficients (identical to the Euler cache, for the `G_Euler` part), and
-`corr_coeffs` are the QG correction coefficients `κ²/(k²(k²+κ²)A)` with `κ=1/Ld`.
-Precomputing the correction here lets the velocity/energy hot loops read it
-instead of recomputing a division per wavenumber per quadrature point.
+The periodic QG velocity is the periodic Euler velocity plus a smooth
+QG-minus-Euler correction, so `fourier_coeffs` are the periodic Euler
+coefficients and `corr_coeffs` the Fourier part of the Ewald-split correction
+(see numerics/periodic_ewald.jl); `energy_coeffs` hold the Fourier part of the
+periodic QG contour-energy potential. When the deformation radius is short
+compared with the domain (`κ² > 16α²`, κ = 1/Ld), the velocity and energy sum
+the QG kernel directly over periodic images instead and use only the Euler
+tables.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
                            n_fourier::Int=8, n_images::Int=2) where {T}
@@ -106,16 +136,19 @@ function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
     corr_coeffs = zeros(T, nk, nk)
+    energy_coeffs = zeros(T, nk, nk)
     for (mi, kxi) in enumerate(kx)
         for (ni, kyi) in enumerate(ky)
             k2 = kxi^2 + kyi^2
             if !iszero(k2)
-                fourier_coeffs[mi, ni] = exp(-k2 / (4 * α^2)) / (k2 * area)
-                corr_coeffs[mi, ni] = kappa2 / (k2 * (k2 + kappa2) * area)
+                fourier_coeffs[mi, ni] = _ewald_fourier_coefficient(EulerKernel(), k2, α, area)
+                corr_coeffs[mi, ni] = _scaled_qg_correction_coefficient(
+                    k2, kappa2, α, area, kappa2)
+                energy_coeffs[mi, ni] = _ewald_energy_coefficient(kernel, k2, α, area)
             end
         end
     end
-    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, corr_coeffs)
+    return EwaldCache(α, kx, ky, fourier_coeffs, n_images, corr_coeffs, energy_coeffs)
 end
 
 # Cache storage — keyed by (Lx, Ly, kernel_type, Ld) tuples with snapped values.
@@ -142,17 +175,28 @@ const _ewald_caches_generic = Dict{Any,Any}()
 const _ewald_key_order_generic = Any[]
 const _ewald_cache_lock = ReentrantLock()
 const _EWALD_CACHE_MAX = 64  # prevent unbounded growth
+# Keys configured through `setup_ewald_cache!` are never evicted, so a custom
+# truncation cannot silently revert to the defaults after many other domains
+# or deformation radii have been cached.
+const _ewald_pinned_f64 = Set{_EwaldCacheKey{Float64}}()
+const _ewald_pinned_f32 = Set{_EwaldCacheKey{Float32}}()
+const _ewald_pinned_generic = Set{Any}()
 
-# Insert `cache` under `key`, evicting oldest FIFO entries past the cap.
-# Caller holds _ewald_cache_lock. Order is only touched for new keys, so
+# Insert `cache` under `key`, evicting the oldest unpinned FIFO entries past the
+# cap. Caller holds _ewald_cache_lock. Order is only touched for new keys, so
 # overwriting an existing key leaves its FIFO position unchanged.
-function _store_ewald_cache!(caches::AbstractDict, order::AbstractVector, key, cache)
+function _store_ewald_cache!(caches::AbstractDict, order::AbstractVector, key, cache,
+                             pinned::AbstractSet; pin::Bool=false)
     if !haskey(caches, key)
-        while length(caches) >= _EWALD_CACHE_MAX && !isempty(order)
-            delete!(caches, popfirst!(order))
+        while length(caches) >= _EWALD_CACHE_MAX
+            victim = findfirst(k -> !(k in pinned), order)
+            victim === nothing && break
+            delete!(caches, order[victim])
+            deleteat!(order, victim)
         end
         push!(order, key)
     end
+    pin && push!(pinned, key)
     caches[key] = cache
     return cache
 end
@@ -171,6 +215,8 @@ _ewald_cache_dict(::Type{Float64}) = _ewald_caches_f64
 _ewald_cache_dict(::Type{Float32}) = _ewald_caches_f32
 _ewald_key_order(::Type{Float64}) = _ewald_key_order_f64
 _ewald_key_order(::Type{Float32}) = _ewald_key_order_f32
+_ewald_pinned(::Type{Float64}) = _ewald_pinned_f64
+_ewald_pinned(::Type{Float32}) = _ewald_pinned_f32
 
 @inline _kernel_value_precision(::EulerKernel) = 0
 @inline _kernel_value_precision(kernel::QGKernel) = precision(kernel.Ld)
@@ -198,7 +244,7 @@ function _get_ewald_cache(domain::PeriodicDomain{T}, kernel::AbstractKernel) whe
         # Double-check: another thread may have built it while we were computing.
         existing = get(caches, key, nothing)
         existing !== nothing && return existing
-        return _store_ewald_cache!(caches, order, key, new_cache)
+        return _store_ewald_cache!(caches, order, key, new_cache, _ewald_pinned(T))
     end
 end
 
@@ -216,7 +262,8 @@ function _get_ewald_cache(domain::PeriodicDomain{T},
         existing = get(_ewald_caches_generic, key, nothing)
         existing !== nothing && return existing::EwaldCache{T}
         return _store_ewald_cache!(_ewald_caches_generic,
-                                   _ewald_key_order_generic, key, new_cache)
+                                   _ewald_key_order_generic, key, new_cache,
+                                   _ewald_pinned_generic)
     end
 end
 
@@ -227,14 +274,14 @@ _prefetch_ewald(domain::PeriodicDomain,
                 kernel::Union{EulerKernel, QGKernel, SQGKernel}) =
     _get_ewald_cache(domain, kernel)
 
-# Store `cache` for (domain, kernel) in the precision-appropriate registry.
+# Store and pin `cache` for (domain, kernel) in the precision-appropriate registry.
 function _store_ewald!(domain::PeriodicDomain{T}, kernel::AbstractKernel,
                        cache) where {T<:Union{Float64, Float32}}
     key = _cache_key(domain, kernel)
     caches = _ewald_cache_dict(T)
     order = _ewald_key_order(T)
     lock(_ewald_cache_lock) do
-        _store_ewald_cache!(caches, order, key, cache)
+        _store_ewald_cache!(caches, order, key, cache, _ewald_pinned(T); pin=true)
     end
     return nothing
 end
@@ -244,7 +291,8 @@ function _store_ewald!(domain::PeriodicDomain{T}, kernel::AbstractKernel,
     key = _generic_cache_key(domain, kernel)
     lock(_ewald_cache_lock) do
         _store_ewald_cache!(_ewald_caches_generic,
-                            _ewald_key_order_generic, key, cache)
+                            _ewald_key_order_generic, key, cache,
+                            _ewald_pinned_generic; pin=true)
     end
     return nothing
 end
@@ -260,7 +308,12 @@ the same domain/kernel combination.
 For `QGKernel` the stored cache carries both the Euler periodic coefficients
 and the QG correction coefficients (see [`build_ewald_cache`](@ref)), and an
 Euler-keyed cache is also stored so pure-Euler evaluations on the same domain
-share the warmed `n_fourier`/`n_images` setup.
+share the warmed `n_fourier`/`n_images` setup. For `MultiLayerQGKernel` the
+caches of every vertical mode are configured: the Euler cache for the
+barotropic mode and a QG cache per baroclinic deformation radius.
+
+Configured caches are kept until [`clear_ewald_cache!`](@ref); they are exempt
+from the eviction that bounds the number of automatically built caches.
 """
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
                             n_fourier::Int=8,
@@ -268,9 +321,20 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
     _validate_ewald_truncation(n_fourier, n_images)
     _store_ewald!(domain, kernel,
         build_ewald_cache(domain, kernel; n_fourier=n_fourier, n_images=n_images))
-    # The QG velocity path reads the Euler-keyed cache for its G_Euler part.
     kernel isa QGKernel &&
         setup_ewald_cache!(domain, EulerKernel(); n_fourier=n_fourier, n_images=n_images)
+    return nothing
+end
+
+function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::MultiLayerQGKernel;
+                            n_fourier::Int=8,
+                            n_images::Int=2) where {T<:AbstractFloat}
+    _validate_ewald_truncation(n_fourier, n_images)
+    for λ in kernel.eigenvalues
+        _dispatch_qg_mode(kernel, T(λ)) do mode_kernel
+            setup_ewald_cache!(domain, mode_kernel; n_fourier=n_fourier, n_images=n_images)
+        end
+    end
     return nothing
 end
 
@@ -283,6 +347,9 @@ function clear_ewald_cache!()
         empty!(_ewald_key_order_f32)
         empty!(_ewald_caches_generic)
         empty!(_ewald_key_order_generic)
+        empty!(_ewald_pinned_f64)
+        empty!(_ewald_pinned_f32)
+        empty!(_ewald_pinned_generic)
     end
 end
 
@@ -310,23 +377,26 @@ function _expint_e1(x::T) where {T<:AbstractFloat}
         end
         return s
     else
-        # Continued fraction for x ≥ 2.
-        # Convergence ratio ≈ 1/(x+1); at x=2 need ~54 terms for Float64.
-        # Cap at 300 terms: for x ≥ 2 the CF converges well within this.
-        # For very large x, E₁(x) ≈ exp(-x)/x underflows to zero; short-circuit
-        # to avoid InexactError from ceil(Int, Inf) when log(x/(x+1)) rounds to 0.
+        # Continued fraction e^{-x}/(x+1- 1²/(x+3- 2²/(x+5- ...))) by the
+        # modified Lentz method, stopped once converged: about 50 terms at
+        # x = 2 and fewer than 10 beyond x ≈ 30. For very large x, E₁(x)
+        # underflows to zero.
         ex = exp(-x)
         ex == zero(T) && return zero(T)
-        cf = zero(T)
-        log_ratio = log(T(x) / (T(x) + one(T)))
-        n_cf = if log_ratio < -eps(T)
-            min(300, max(60, ceil(Int, -log(eps(T)) / (-log_ratio))))
-        else
-            60  # x so large the CF converges trivially
+        tiny = floatmin(T) / eps(T)
+        b = x + one(T)
+        c = one(T) / tiny
+        d = one(T) / b
+        h = d
+        for i in 1:500
+            a = -T(i)^2
+            b += T(2)
+            d = one(T) / (a * d + b)
+            c = b + a / c
+            del = c * d
+            h *= del
+            abs(del - one(T)) <= eps(T) && break
         end
-        for k in n_cf:-1:1
-            cf = T(k) / (one(T) + T(k) / (x + cf))
-        end
-        return ex / (x + cf)
+        return h * ex
     end
 end

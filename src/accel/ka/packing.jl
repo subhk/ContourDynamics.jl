@@ -160,6 +160,7 @@ mutable struct _GPUWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatrix{T}}
     dev_vel_x::DA; dev_vel_y::DA
     dev_ewald_kx::DA; dev_ewald_ky::DA
     dev_ewald_fourier::DMA
+    dev_ewald_corr::DMA
     # CPU copy-back buffers
     cpu_vx::Vector{T}; cpu_vy::Vector{T}
     last_ewald::Union{Nothing, EwaldCache{T}}
@@ -188,6 +189,7 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
         device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_vel_x, dev_vel_y
         device_zeros(dev, T, 0), device_zeros(dev, T, 0),  # dev_ewald_kx, dev_ewald_ky
         dev_fourier,                                        # dev_ewald_fourier
+        device_zeros(dev, T, 0, 0),                         # dev_ewald_corr
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_vx, cpu_vy
         nothing,                                   # last_ewald
         N,
@@ -207,11 +209,11 @@ mutable struct _MultilayerWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatri
     vel_x::DA; vel_y::DA                                    # accumulated flat output
     flat_vel::VDA                                            # packed device output for host API
     host_flat::Vector{SVector{2,T}}                          # reusable device-to-host target
-    # Device Ewald tables for periodic domains. All modes of the modal loop
-    # resolve to the domain's Euler Ewald cache, so one slot suffices; without
-    # it every mode of every RK stage re-uploads the tables.
+    # Device Ewald tables for periodic domains, re-uploaded only when the
+    # host cache object changes.
     dev_ewald_kx::DA; dev_ewald_ky::DA
     dev_ewald_fourier::DMA
+    dev_ewald_corr::DMA
     last_ewald::Union{Nothing, EwaldCache{T}}
     n::Int
 end
@@ -231,7 +233,8 @@ function _create_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int
                                           flat_vel, Vector{SVector{2,T}}(undef, total),
                                           device_zeros(dev, T, 0),
                                           device_zeros(dev, T, 0),
-                                          dev_fourier, nothing, total)
+                                          dev_fourier, device_zeros(dev, T, 0, 0),
+                                          nothing, total)
 end
 
 function _ensure_device_ewald!(ws::Union{_GPUWorkspace{T}, _MultilayerWorkspace{T}},
@@ -245,26 +248,22 @@ function _ensure_device_ewald!(ws::Union{_GPUWorkspace{T}, _MultilayerWorkspace{
         ws.dev_ewald_kx = to_device(dev, cache.kx)
         ws.dev_ewald_ky = to_device(dev, cache.ky)
         ws.dev_ewald_fourier = to_device(dev, cache.fourier_coeffs)
+        ws.dev_ewald_corr = to_device(dev, cache.corr_coeffs)
         ws.last_ewald = cache
     end
-    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier
+    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier, ws.dev_ewald_corr
 end
 
 @inline function _periodic_ewald_data(::Nothing, cache::EwaldCache{T},
                                       dev::AbstractDevice) where {T}
     return to_device(dev, cache.kx),
            to_device(dev, cache.ky),
-           to_device(dev, cache.fourier_coeffs)
+           to_device(dev, cache.fourier_coeffs),
+           to_device(dev, cache.corr_coeffs)
 end
 
 @inline _periodic_ewald_data(ws, cache::EwaldCache{T}, dev::AbstractDevice) where {T} =
     _ensure_device_ewald!(ws, cache, dev)
-
-@inline function _periodic_ewald_vectors(maybe_ws, cache::EwaldCache{T},
-                                         dev::AbstractDevice) where {T}
-    dev_kx, dev_ky, _ = _periodic_ewald_data(maybe_ws, cache, dev)
-    return dev_kx, dev_ky
-end
 
 # In-place segment packing into a reused workspace's device buffers (avoids the
 # per-evaluation allocation of `_state_segment_data`). The workspace must be

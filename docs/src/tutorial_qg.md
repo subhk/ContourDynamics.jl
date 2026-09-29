@@ -76,9 +76,10 @@ using ContourDynamics
 
 Ld = 2.0
 R, N, pv = 1.0, 32, 1.0
-contour = circular_patch(R, N, pv)
-prob_euler = Problem(; contours=[contour], dt=0.05)
-prob_qg    = Problem(; contours=[contour], dt=0.05, kernel=:qg, Ld=Ld)
+# Each problem gets its own contour: Problem uses contours in place, so a
+# shared contour would be moved by whichever problem is evolved.
+prob_euler = Problem(; contours=[circular_patch(R, N, pv)], dt=0.05)
+prob_qg    = Problem(; contours=[circular_patch(R, N, pv)], dt=0.05, kernel=:qg, Ld=Ld)
 
 # Low-level velocity! call with explicit SVector buffers
 vel_euler = zeros(SVector{2, Float64}, N)

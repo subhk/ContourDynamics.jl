@@ -23,20 +23,22 @@ function _segment_min_dist2(a1::SVector{2,T}, b1::SVector{2,T},
 
     ε = eps(T)
 
-    # Both segments degenerate to points
-    if a <= ε && e <= ε
+    # Both segments degenerate to points. Only exact zeros count: an absolute
+    # floor on squared lengths would treat every short segment as a point in
+    # small-scale coordinates.
+    if iszero(a) && iszero(e)
         return r[1]^2 + r[2]^2
     end
 
     local s::T, t::T
 
-    if a <= ε
+    if iszero(a)
         # First segment degenerates to a point
         s = zero(T)
         t = clamp(f / e, zero(T), one(T))
     else
         c = d1[1] * r[1] + d1[2] * r[2]  # d1 · r
-        if e <= ε
+        if iszero(e)
             # Second segment degenerates to a point
             t = zero(T)
             s = clamp(-c / a, zero(T), one(T))
@@ -46,7 +48,7 @@ function _segment_min_dist2(a1::SVector{2,T}, b1::SVector{2,T},
             denom = a * e - b_dot * b_dot            # always >= 0
 
             # Closest point on the infinite lines
-            if denom > ε * a
+            if denom > ε * a * e
                 s = clamp((b_dot * f - c * e) / denom, zero(T), one(T))
             else
                 # Segments are nearly parallel

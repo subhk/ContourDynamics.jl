@@ -36,12 +36,24 @@ function Adapt.adapt_structure(to, prob::ContourDynamics.MultiLayerContourProble
     ContourDynamics.MultiLayerContourProblem(prob.kernel, prob.domain, host_layers; dev=new_dev)
 end
 
-# Detect GPU from Adapt.jl adaptors.  CuArrayAdaptor may not exist in all
-# CUDA.jl 5.x releases, so wrap in a try/catch to avoid load-time errors.
-try
-    @eval _detect_device(::CUDA.CuArrayAdaptor) = ContourDynamics.GPU()
-catch
-    # CuArrayAdaptor not available in this CUDA version; fall through to catch-all.
+# The Problem wrapper moves its contour problem and rebuilds the stepper's
+# buffers on the target device (Problem requires both on one device).
+function Adapt.adapt_structure(to, prob::ContourDynamics.Problem)
+    contour_problem = Adapt.adapt_structure(to, prob.contour_problem)
+    stepper = prob.stepper
+    stepper isa ContourDynamics.RK4Stepper || throw(ArgumentError(
+        "cannot move a Problem with a $(typeof(stepper)) to another device"))
+    new_stepper = ContourDynamics.RK4Stepper(
+        stepper.dt, ContourDynamics.total_nodes(contour_problem); dev=contour_problem.dev)
+    return ContourDynamics.Problem(contour_problem, new_stepper, prob.surgery_params)
+end
+
+# Detect GPU from Adapt.jl adaptors. `cu` adapts with `CuArrayAdaptor` in
+# CUDA.jl 5.0 and `CuArrayKernelAdaptor` from 5.1 on; register whichever exist.
+for adaptor in (:CuArrayAdaptor, :CuArrayKernelAdaptor)
+    if isdefined(CUDA, adaptor)
+        @eval _detect_device(::CUDA.$adaptor) = ContourDynamics.GPU()
+    end
 end
 _detect_device(::Type{T}) where {T<:CuArray} = ContourDynamics.GPU()
 _detect_device(::Type{T}) where {T<:Array} = ContourDynamics.CPU()

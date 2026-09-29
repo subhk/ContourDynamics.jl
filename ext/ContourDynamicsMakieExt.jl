@@ -8,6 +8,15 @@ module ContourDynamicsMakieExt
 using ContourDynamics
 using Makie
 
+# Colour range for the diverging :RdBu map, centred on zero so each PV sign
+# keeps its hue and a single PV level is drawn at a saturated end of the map
+# rather than at its near-white midpoint.
+function _pv_colorrange(pv_vals)
+    m = isempty(pv_vals) ? 0.0 : Float64(maximum(abs, pv_vals))
+    m > 0 || (m = 1.0)
+    return (-m, m)
+end
+
 """
     record_evolution(prob::ContourProblem, stepper, params; nsteps, frameskip=10, filename="contour_evolution.mp4", callbacks=nothing)
 
@@ -27,12 +36,7 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
     initial_contours = snapshot_contours(prob)
 
     # Fix colorrange from initial PV values so colors are consistent across frames.
-    pv_vals = [c.pv for c in initial_contours]
-    pv_lo, pv_hi = isempty(pv_vals) ? (-1.0, 1.0) : (minimum(pv_vals), maximum(pv_vals))
-    if pv_lo == pv_hi
-        pv_lo -= one(pv_lo)
-        pv_hi += one(pv_hi)
-    end
+    pv_lo, pv_hi = _pv_colorrange([c.pv for c in initial_contours])
 
     # Include frame 0 (initial state), intermediate frames, and always the final
     # state so output videos document the exact requested integration interval.
@@ -75,6 +79,10 @@ function ContourDynamics.record_evolution(prob::ContourProblem, stepper, params;
             Makie.lines!(ax, xs, ys; color=c.pv, colormap=:RdBu,
                          colorrange=(pv_lo, pv_hi))
         end
+        # Fit the axis to this frame. Backends that render off screen (e.g.
+        # CairoMakie) do not refit limits after `empty!`, which otherwise
+        # leaves every frame at the empty axis's default box.
+        Makie.reset_limits!(ax)
     end
 
     return fig
@@ -98,12 +106,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
     initial_layers = snapshot_contours(prob)
 
     # Fix colorrange from initial PV values across all layers.
-    pv_vals = [c.pv for layer in initial_layers for c in layer]
-    pv_lo, pv_hi = isempty(pv_vals) ? (-1.0, 1.0) : (minimum(pv_vals), maximum(pv_vals))
-    if pv_lo == pv_hi
-        pv_lo -= one(pv_lo)
-        pv_hi += one(pv_hi)
-    end
+    pv_lo, pv_hi = _pv_colorrange([c.pv for layer in initial_layers for c in layer])
 
     # Distinct line styles make layer identity visible even when PV colors
     # overlap or are identical across layers.
@@ -151,6 +154,7 @@ function ContourDynamics.record_evolution(prob::MultiLayerContourProblem{N}, ste
                 first_in_layer = false
             end
         end
+        Makie.reset_limits!(ax)
     end
 
     return fig

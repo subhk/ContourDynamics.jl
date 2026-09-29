@@ -10,6 +10,10 @@
 # The smooth correction for each kernel is computed at a single quadrature point
 # by `_periodic_{euler,qg,sqg}_green_correction`; both the straight and curved
 # segment paths call those helpers, so the correction math has exactly one home.
+#
+# QG with a deformation radius short compared with the domain instead sums the
+# unbounded QG kernel directly over the few periodic images that matter
+# (`_qg_uses_direct_images`), where the Ewald correction would lose accuracy.
 
 @inline function _nearest_periodic_segment_image(domain::PeriodicDomain{T},
                                                  x::SVector{2,T},
@@ -74,6 +78,29 @@ end
 function segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                            x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                            cache::EwaldCache{T}) where {T}
+    return _split_segment_velocity(kernel, domain, x, a, b, cache)
+end
+
+function segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+                          x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                          cache::EwaldCache{T}) where {T}
+    _qg_uses_direct_images(inv(kernel.Ld^2), cache.α) &&
+        return _direct_qg_segment_velocity(kernel, domain, x, a, b, zero(T), zero(T))
+    return _split_segment_velocity(kernel, domain, x, a, b, cache)
+end
+
+function _direct_qg_segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+                                     x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                     κa::T, κb::T) where {T}
+    a, b = _nearest_periodic_segment_image(domain, x, a, b)
+    return SVector{2,T}(_periodic_qg_direct_contribution_scalar(
+        x[1], x[2], a[1], a[2], b[1], b[2], one(T), κa, κb, kernel.Ld,
+        domain.Lx, domain.Ly, one(T) / (2 * T(π)), one(T) / (4 * T(π))))
+end
+
+function _split_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
+                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                 cache::EwaldCache{T}) where {T}
     a, b = _nearest_periodic_segment_image(domain, x, a, b)
     ds = b - a
     sqrt(ds[1]^2 + ds[2]^2) < eps(T) && return zero(SVector{2,T})
@@ -114,16 +141,16 @@ Euler decomposition (Ewald):
         one(T) / (T(4) * T(π)), T(Base.MathConstants.eulergamma))
 end
 
-# QG–Euler decomposition: G_QG_per = G_Euler_per - G_correction, where the
-# correction is a smooth, rapidly convergent Fourier series
-#   G_corr(r) = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²)),  κ = 1/Ld.
-# Coefficients decay as 1/k⁴, so the truncated sum converges without damping.
+# QG–Euler decomposition: G_QG_per = G_Euler_per + κ²Ĝ, where the smooth
+#   κ²Ĝ(r) = -(1/A) Σ_{k≠0} cos(k·r) κ²/(k²(k²+κ²)),  κ = 1/Ld,
+# is Ewald split (numerics/periodic_ewald.jl). Undamped, its coefficients decay
+# only like 1/k² until k exceeds κ, so a truncated series converges slowly.
 @inline function _periodic_green_correction(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                                        cache::EwaldCache{T},
                                        x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     return _periodic_qg_green_correction_scalar(
-        x[1], x[2], s_pt[1], s_pt[2], inv(kernel.Ld^2), T(4) * domain.Lx * domain.Ly,
-        cache.kx, cache.ky, cache.corr_coeffs)
+        x[1], x[2], s_pt[1], s_pt[2], inv(kernel.Ld^2), cache.α,
+        domain.Lx, domain.Ly, cache.n_images, cache.kx, cache.ky, cache.corr_coeffs)
 end
 
 # SQG Ewald decomposition of the regularized kernel over every periodic image:
@@ -162,12 +189,27 @@ end
 function curved_segment_velocity(kernel::_PeriodicPointKernel{T}, domain::PeriodicDomain{T},
                                   x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
                                   κa::T, κb::T, cache::EwaldCache{T}) where {T}
+    return _split_curved_segment_velocity(kernel, domain, x, a, b, κa, κb, cache)
+end
+
+function curved_segment_velocity(kernel::QGKernel{T}, domain::PeriodicDomain{T},
+                                 x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                 κa::T, κb::T, cache::EwaldCache{T}) where {T}
+    _qg_uses_direct_images(inv(kernel.Ld^2), cache.α) &&
+        return _direct_qg_segment_velocity(kernel, domain, x, a, b, κa, κb)
+    return _split_curved_segment_velocity(kernel, domain, x, a, b, κa, κb, cache)
+end
+
+function _split_curved_segment_velocity(kernel::_PeriodicPointKernel{T},
+                                        domain::PeriodicDomain{T},
+                                        x::SVector{2,T}, a::SVector{2,T}, b::SVector{2,T},
+                                        κa::T, κb::T, cache::EwaldCache{T}) where {T}
     a, b = _nearest_periodic_segment_image(domain, x, a, b)
     ds = b - a
     ds_len = sqrt(ds[1]^2 + ds[2]^2)
     ds_len < eps(T) && return zero(SVector{2,T})
     max(abs(κa), abs(κb)) * ds_len <= sqrt(eps(T)) &&
-        return segment_velocity(kernel, domain, x, a, b, cache)
+        return _split_segment_velocity(kernel, domain, x, a, b, cache)
 
     g_nodes, g_weights = _gl5_nodes_weights(T)
     corr_integral = zero(SVector{2,T})

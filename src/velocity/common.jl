@@ -364,18 +364,20 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
                   x::SVector{2,S}) where {N,T,S}
     # Single-point multilayer velocity is evaluated in vertical modes, then
     # projected back to physical layers. Each mode behaves like an Euler or QG
-    # single-layer problem depending on its eigenvalue.
+    # single-layer problem depending on its eigenvalue. Point queries keep
+    # their curvatures and result in call-local storage (not the problem's
+    # velocity scratch), so concurrent queries on one problem are safe.
     kernel = prob.kernel
     domain = prob.domain
     xT = SVector{2,T}(x)
     evals = kernel.eigenvalues
-    scratch = prob.velocity_scratch
-    to_physical, to_modal = _prepare_modal_transforms!(scratch, kernel)
-    source_curvatures = _prepare_layer_curvature_buffers!(
-        scratch.layer_curvatures, _host_contours(prob))
+    layers = _host_contours(prob)
+    to_physical = kernel.modal_to_physical
+    to_modal = kernel.physical_to_modal
+    source_curvatures = ntuple(
+        layer -> [_signed_node_curvatures(c) for c in layers[layer]], Val(N))
 
-    vel = resize!(scratch.mode_vel, N)
-    fill!(vel, zero(SVector{2,T}))
+    vel = ntuple(_ -> zero(SVector{2,T}), Val(N))
 
     for mode in 1:N
         lam = evals[mode]
@@ -384,18 +386,18 @@ function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
         # dispatch per segment). Each mode fetches its own cache: QG modes need
         # their Ld-specific correction coefficients, the Euler mode does not.
         v_mode = _dispatch_qg_mode(
-            _accumulate_mode_node_velocity, kernel, lam, domain, _host_contours(prob),
+            _accumulate_mode_node_velocity, kernel, lam, domain, layers,
             source_curvatures, to_modal, mode, xT)
 
         # Project the completed modal velocity back onto each physical layer.
-        for target_layer in 1:N
+        vel = ntuple(Val(N)) do target_layer
             projection_weight = to_physical[target_layer, mode]
-            abs(projection_weight) < eps(T) && continue
-            vel[target_layer] = vel[target_layer] + projection_weight * v_mode
+            abs(projection_weight) < eps(T) ? vel[target_layer] :
+                vel[target_layer] + projection_weight * v_mode
         end
     end
 
-    return ntuple(i -> vel[i], Val(N))
+    return vel
 end
 
 function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
@@ -410,7 +412,7 @@ end
 # segment_velocity fully specialized inside the loop.
 @inline function _accumulate_mode_node_velocity(
         mode_kernel::K, domain, layers::NTuple{N, Vector{PVContour{T}}},
-        source_curvatures, to_modal::Matrix{T}, mode::Int,
+        source_curvatures, to_modal::AbstractMatrix{T}, mode::Int,
         x::SVector{2,T}) where {N,T,K}
     ewald = _prefetch_ewald(domain, mode_kernel)
     return _accumulate_mode_node_velocity_cached(
@@ -420,7 +422,7 @@ end
 
 @inline function _accumulate_mode_node_velocity_cached(
         mode_kernel::K, domain, layers::NTuple{N, Vector{PVContour{T}}},
-        source_curvatures, ewald, to_modal::Matrix{T}, mode::Int,
+        source_curvatures, ewald, to_modal::AbstractMatrix{T}, mode::Int,
         x::SVector{2,T}) where {N,T,K}
     v_mode = zero(SVector{2,T})
     for source_layer in 1:N

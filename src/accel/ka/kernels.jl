@@ -132,14 +132,14 @@ end
                                              target_x, target_y,
                                              seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                              seg_ka, seg_kb,
-                                             Ld, Lx, Ly, kx, ky,
+                                             Ld, α, Lx, Ly, n_images,
+                                             kx, ky, corr_coeffs,
                                              n_seg)
     i = @index(Global)
     T = eltype(vel_x)
     xi = target_x[i]
     yi = target_y[i]
     kappa2 = one(T) / (Ld * Ld)
-    area = T(4) * Lx * Ly
     g_nodes, g_weights = _gl5_nodes_weights(T)
     vx = vel_x[i]
     vy = vel_y[i]
@@ -161,7 +161,7 @@ end
                     ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_qg_green_correction_scalar(
-                    xi, yi, sx, sy, kappa2, area, kx, ky)
+                    xi, yi, sx, sy, kappa2, α, Lx, Ly, n_images, kx, ky, corr_coeffs)
                 coeff = seg_pv[j] * (g5_weights[q] / T(2)) * G_corr
                 vx += coeff * tx_curve
                 vy += coeff * ty_curve
@@ -179,12 +179,41 @@ end
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
             G_corr = _periodic_qg_green_correction_scalar(
-                xi, yi, sx, sy, kappa2, area, kx, ky)
+                xi, yi, sx, sy, kappa2, α, Lx, Ly, n_images, kx, ky, corr_coeffs)
             corr_integral += g_weights[q] * G_corr
         end
 
         vx += seg_pv[j] * half_dsx * corr_integral
         vy += seg_pv[j] * half_dsy * corr_integral
+    end
+
+    vel_x[i] = vx
+    vel_y[i] = vy
+end
+
+# Device twin of the direct periodic-image QG path (`_qg_uses_direct_images`).
+@kernel function _periodic_qg_direct_velocity_ka!(vel_x, vel_y,
+                                                  target_x, target_y,
+                                                  seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
+                                                  seg_ka, seg_kb,
+                                                  Ld, Lx, Ly, n_seg)
+    i = @index(Global)
+    T = eltype(vel_x)
+    xi = target_x[i]
+    yi = target_y[i]
+    vx = zero(T)
+    vy = zero(T)
+    inv2pi = one(T) / (T(2) * T(pi))
+    inv4pi = one(T) / (T(4) * T(pi))
+
+    @inbounds for j in 1:n_seg
+        ax, ay, bx, by = _nearest_periodic_segment_image_scalar(
+            xi, yi, seg_ax[j], seg_ay[j], seg_bx[j], seg_by[j], Lx, Ly)
+        dvx, dvy = _periodic_qg_direct_contribution_scalar(
+            xi, yi, ax, ay, bx, by, seg_pv[j], seg_ka[j], seg_kb[j],
+            Ld, Lx, Ly, inv2pi, inv4pi)
+        vx += dvx
+        vy += dvy
     end
 
     vel_x[i] = vx

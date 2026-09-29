@@ -47,10 +47,13 @@ ContourDynamics.unflatten_nodes!(::ContourProblem{<:Any,<:Any,<:Any,GPU},
 
 function ContourDynamics.unflatten_nodes!(prob::ContourProblem{K,D,Tc}, u::AbstractVector) where {K,D,Tc}
     # Convert back to the contour element type; solvers may pass views or arrays
-    # whose element type differs from the problem's coordinate type.
+    # whose element type differs from the problem's coordinate type. A length
+    # mismatch means the state belongs to a different contour topology (for
+    # example one from before a surgery pass), so it is never silently truncated.
     expected = 2 * total_nodes(prob)
-    length(u) >= expected || throw(DimensionMismatch(
-        "u length ($(length(u))) must be >= 2 * total_nodes ($(expected))"))
+    length(u) == expected || throw(DimensionMismatch(
+        "u length ($(length(u))) must equal 2 * total_nodes ($(expected)); " *
+        "the state does not match the problem's current contours"))
     idx = 1
     for c in ContourDynamics._host_contours(prob)
         for i in 1:nnodes(c)
@@ -72,8 +75,8 @@ function _make_rhs(prob::ContourProblem{K,D,T}) where {K,D,T}
         if length(vel) != Ncur
             resize!(vel, Ncur)
         end
-        length(du) >= 2 * Ncur || throw(DimensionMismatch(
-            "du length ($(length(du))) too small for $Ncur nodes (need $(2*Ncur))"))
+        length(du) == 2 * Ncur || throw(DimensionMismatch(
+            "du length ($(length(du))) does not match $Ncur nodes (need $(2*Ncur))"))
         velocity!(vel, p)
         idx = 1
         for i in 1:Ncur
@@ -146,6 +149,11 @@ The surgery interval is determined by:
     RHS closure.  Do **not** use the same problem with parallel ensemble solvers
     (`EnsembleThreads()`) — each thread would write to the shared buffer
     concurrently.  Create a separate `to_ode_problem` call per thread instead.
+
+With surgery, each `solve` starts from the contours `prob` held when
+`to_ode_problem` was called: the callback restores them, and resets the surgery
+schedule, at initialization. Surgery during a solve still changes `prob` in
+place, so after `solve` returns `prob` holds the final state.
 """
 function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
                                          surgery_params::Union{Nothing,SurgeryParams}=nothing,
@@ -177,6 +185,10 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
     t_start + dt_surgery > t_start || throw(ArgumentError(
         "surgery_dt=$dt_surgery is too small to advance time from t=$(t_start)"))
 
+    # Surgery rewrites `prob` in place, so the initial topology matching `u0`
+    # is kept to restart every solve from the same state.
+    initial_contours = deepcopy(ContourDynamics._host_contours(prob))
+
     # Time-based surgery condition (works with both fixed and adaptive solvers)
     next_surgery_time = Ref(t_start + dt_surgery)
     function condition(u, t, integrator)
@@ -206,10 +218,26 @@ function ContourDynamics.to_ode_problem(prob::ContourProblem, tspan;
             next_surgery_time[] > integrator.t && break
         end
     end
-    # Guard adaptivity at initialization (fires regardless of whether/when the
-    # surgery condition triggers); `_guard_initialize` also preserves the
-    # default `u_modified!(false)` so the initial point is not double-saved.
-    cb = DiscreteCallback(condition, affect!; initialize = _guard_initialize)
+    # Every solve (re-solves and ensemble trajectories included) must start
+    # from the topology `u0` was flattened from and from a fresh surgery
+    # schedule; a previous solve's surgery changed both.
+    function initialize(c, u, t, integrator)
+        p = integrator.p
+        if p === prob
+            contours = ContourDynamics._host_contours(p)
+            empty!(contours)
+            append!(contours, deepcopy(initial_contours))
+        end
+        length(u) == 2 * total_nodes(p) || throw(DimensionMismatch(
+            "initial state length $(length(u)) does not match the $(total_nodes(p)) " *
+            "nodes of the problem; build a new ODE problem with to_ode_problem"))
+        next_surgery_time[] = t + dt_surgery
+        # Guard adaptivity (fires regardless of whether/when the surgery
+        # condition triggers); `_guard_initialize` also preserves the default
+        # `u_modified!(false)` so the initial point is not double-saved.
+        return _guard_initialize(c, u, t, integrator)
+    end
+    cb = DiscreteCallback(condition, affect!; initialize = initialize)
 
     return (ode_prob=ODEProblem(rhs!, u0, tspan, prob), callback=cb)
 end
@@ -219,9 +247,25 @@ function ContourDynamics.to_ode_problem(::ContourProblem{<:Any,<:Any,<:Any,GPU},
     throw(ArgumentError(_GPU_ODE_MSG))
 end
 
-# Forwarder so the high-level `Problem` wrapper can be passed directly.
-ContourDynamics.to_ode_problem(prob::ContourDynamics.Problem, tspan; kwargs...) =
-    ContourDynamics.to_ode_problem(prob.contour_problem, tspan; kwargs...)
+"""
+    to_ode_problem(prob::Problem, tspan; surgery_params=prob.surgery_params, surgery_dt=nothing)
+
+Wrap the contour problem of a [`Problem`](@ref). Like `evolve!(prob)`, it uses
+the bundled `SurgeryParams` (pass `surgery_params=nothing` to integrate without
+surgery), and by default schedules surgery every `n_surgery` steps of the
+bundled stepper, `surgery_dt = n_surgery * prob.stepper.dt`.
+"""
+function ContourDynamics.to_ode_problem(prob::ContourDynamics.Problem, tspan;
+                                         surgery_params::Union{Nothing,SurgeryParams}=prob.surgery_params,
+                                         surgery_dt::Union{Nothing,Real}=nothing)
+    if surgery_params !== nothing && surgery_dt === nothing &&
+       hasproperty(prob.stepper, :dt)
+        surgery_dt = surgery_params.n_surgery * prob.stepper.dt
+    end
+    return ContourDynamics.to_ode_problem(prob.contour_problem, tspan;
+                                          surgery_params=surgery_params,
+                                          surgery_dt=surgery_dt)
+end
 
 # Informative errors for unsupported multi-layer problems
 const _MULTILAYER_MSG = "MultiLayerContourProblem is not yet supported by the OrdinaryDiffEq extension. Use evolve!() with the built-in time steppers instead."

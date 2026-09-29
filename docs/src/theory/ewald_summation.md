@@ -90,8 +90,11 @@ term is `_periodic_base_velocity` and the per-quadrature-point correction is
   correction is ``G_{\text{per}} - G_\infty``, where ``G_\infty`` is the
   corresponding unbounded-space Green's function.
 - **QG**: the base is the *periodic Euler* (Ewald) velocity itself, and the
-  correction is the smooth QG–Euler Fourier series described in the next
-  section (its coefficients are precomputed in `EwaldCache.corr_coeffs`).
+  correction is the smooth QG–Euler difference described in the next section,
+  itself Ewald split (its Fourier coefficients are precomputed in
+  `EwaldCache.corr_coeffs`). For deformation radii short compared with the
+  domain, the unbounded QG kernel is instead summed directly over the few
+  periodic images that matter.
 
 The unbounded Euler and regularized SQG contributions are analytic for straight
 segments. For cubic arcs, the base contribution also uses quadrature, as
@@ -120,10 +123,30 @@ as described in [Diagnostics](../api/diagnostics.md).
 The key idea is that the QG periodic kernel can be written as:
 
 - an Euler-like periodic part, which already has a validated Ewald treatment
-- a smooth correction, which is easier to evaluate as a Fourier series
+- a smooth correction ``\kappa^2\hat G``, with
+  ``\hat G(\mathbf r) = -A^{-1}\sum_{\mathbf k\neq 0}\cos(\mathbf k\cdot\mathbf r)/(|\mathbf k|^2(|\mathbf k|^2+\kappa^2))``
 
-That correction decays like ``|\mathbf{k}|^{-4}``, so it converges much faster than the
-raw periodic Green's function would.
+The correction's coefficients decay only like ``|\mathbf{k}|^{-2}`` until
+``|\mathbf k|`` exceeds ``\kappa``, so a truncated series converges slowly once
+``L_d`` is comparable to the Fourier cutoff scale. The correction is therefore
+Ewald split as well. Writing
+``1/(k^2(k^2+\kappa^2)) = \int_0^\infty s\,\varphi_1(\kappa^2 s)\,e^{-k^2 s}\,ds``
+with ``\varphi_1(x) = (1-e^{-x})/x`` and splitting at ``s_0 = 1/(4\alpha^2)`` gives
+
+```math
+\hat G(\mathbf r) = \frac{s_0}{4\pi}\sum_{\mathbf n} P\!\left(\frac{|\mathbf r-\mathbf L_{\mathbf n}|^2}{4 s_0}, x\right)
+- \frac{1}{A}\sum_{\mathbf k\neq 0}\frac{e^{-k^2 s_0}\,(1+k^2 s_0\varphi_1(x))}{k^2(k^2+\kappa^2)}\cos(\mathbf k\cdot\mathbf r)
++ \frac{s_0^2\,\psi_2(x)}{A},
+```
+
+where ``x=\kappa^2 s_0``, ``\psi_2(x)=(x-1+e^{-x})/x^2``, and
+``P(u,x)=\sum_{n\ge 1}(-1)^n x^{n-1}E_{n+1}(u)/n!`` in terms of generalized
+exponential integrals. Both sums now decay like Gaussians, so the Euler
+truncation (`n_fourier`, `n_images`) also converges the correction. The series
+for ``P`` is used while ``x\le 4``; beyond that, ``\kappa`` is so large that
+``K_0`` decays within a few periods, and the velocity sums the unbounded QG
+segment contribution over images directly (keeping the zero-mean convention by
+removing ``1/(A\kappa^2)``).
 
 ## SQG Periodic Decomposition
 
@@ -149,15 +172,28 @@ with the mean-free convention, are given by
 [Holzmann & Bernu (2005), Eqs. (6)–(7)](https://doi.org/10.1016/j.jcp.2004.11.037).
 Their mean-free ``1/r`` potential subtracts ``2\sqrt{\pi}/(\alpha A)`` from
 the two sums above; multiplying by ``1/(2\pi)`` gives the SQG contour-kernel
-normalization. For the softened kernel used by the package,
-the Ewald representative carries the constant coefficient
+normalization.
+
+The package applies the analogous split to the softened kernel
+``1/r_\delta`` itself, the potential of a unit charge at height ``\delta``
+above the plane (the quasi-2-D Ewald sum): real-space terms
+``\operatorname{erfc}(\alpha r_\delta)/r_\delta`` and Fourier coefficients
 
 ```math
-C_0=\frac{1}{A}\left(\frac{1}{\alpha\sqrt{\pi}}-\delta\right).
+\frac{\pi}{A|\mathbf k|}\left[e^{|\mathbf k|\delta}\operatorname{erfc}\!\left(\frac{|\mathbf k|}{2\alpha}+\alpha\delta\right)
++ e^{-|\mathbf k|\delta}\operatorname{erfc}\!\left(\frac{|\mathbf k|}{2\alpha}-\alpha\delta\right)\right],
 ```
 
-The periodic energy diagnostic subtracts ``C_0\Gamma^2/2`` so that its
-Hamiltonian corresponds to the mean-free, nonzero-``k`` inversion.
+both of which decay like Gaussians, so the softening needs no separate image
+sum. The mean-free convention removes the constant
+
+```math
+C_0=\frac{1}{A}\left(\frac{e^{-\alpha^2\delta^2}}{\alpha\sqrt{\pi}}-\delta\,\operatorname{erfc}(\alpha\delta)\right)
+```
+
+(in the ``1/(2\pi)`` normalization) from the velocity kernel. Closed contours
+are insensitive to it, but spanning contours with ``\sum \mathrm{pv}\cdot\mathrm{wrap}\neq 0``
+would otherwise drift with a uniform velocity that depends on ``\alpha``.
 
 The Fourier coefficients contain an ``\operatorname{erfc}(|\mathbf{k}|/(2\alpha))`` damping factor and a leading ``1/|\mathbf{k}|`` behavior (compared to ``1/k^2`` for Euler), reflecting the fractional Laplacian's half-order nature. In practical terms, this means SQG is less smooth than Euler in Fourier space and therefore needs a bit more care numerically.
 
@@ -169,21 +205,38 @@ The periodic segment velocity again uses singular subtraction:
 
 Regularization is applied to every periodic image. For the central image, the
 regularized unbounded contribution is supplied by the base velocity and the Ewald
-correction is ``-\operatorname{erf}(\alpha r)/r``. This correction remains
-bounded at coincidence, where its limit is ``-2\alpha/\sqrt{\pi}``. Each
-non-central real-space image adds
+correction is ``-\operatorname{erf}(\alpha r_\delta)/r_\delta``, which remains
+bounded at coincidence. Each non-central real-space image adds
+``\operatorname{erfc}(\alpha r_\delta)/r_\delta`` with
+``r_\delta=\sqrt{r^2+\delta^2}``.
 
-```math
-\frac{\operatorname{erfc}(\alpha r)}{r}
-+ \left(\frac{1}{r_\delta}-\frac{1}{r}\right),
-\qquad r_\delta=\sqrt{r^2+\delta^2}.
-```
-
-Thus the combined real-space and Fourier sums approximate the periodic
-softened kernel ``1/r_\delta`` with the configured truncations. Its nonzero
-Fourier modes include the softening factor ``e^{-\delta|\mathbf k|}`` derived
-in [Contour Dynamics](contour_dynamics.md#SQG-Kernel); finite ``\delta`` changes
+Thus the combined real-space and Fourier sums represent the periodic softened
+kernel ``1/r_\delta`` with the configured truncations. Its nonzero Fourier modes
+carry the softening factor ``e^{-\delta|\mathbf k|}`` derived in
+[Contour Dynamics](contour_dynamics.md#SQG-Kernel); finite ``\delta`` changes
 the inversion from the unregularized SQG model.
+
+## Periodic Energy Potentials
+
+The energy diagnostic integrates a contour potential ``\Phi`` with
+``\nabla^2\Phi`` proportional to the Green's function. Its Fourier
+coefficients decay two powers of ``|\mathbf k|`` faster than the Green's
+function's, but a plain truncated series still misses the high-``k`` energy of
+contours smaller than the cutoff scale. The periodic potentials are therefore
+Ewald split too, and are zero-mean:
+
+- **Euler and QG**: ``\Phi = 4\pi\hat G`` with ``\hat G`` as above (``\kappa=0``
+  for Euler, where ``P(u,0)=-E_2(u)``); QG with short ``L_d`` combines the direct
+  QG image sum with the periodic Euler Ewald sum.
+- **SQG**: the real-space part of each image is neutralized, subtracting a
+  Gaussian charge of the same total (carried in Fourier space instead), and the
+  ``-\delta^2/(2r)`` tail of the softening is moved to Fourier space through
+  ``\operatorname{erf}(\alpha r)/r``. What remains decays fast enough that a
+  finite image block around the minimum image is exact and periodic.
+
+A finite image block of a potential that grows like ``\log r``, which is what
+the unneutralized real-space SQG terms do, is not periodic: its value jumps
+where the minimum image changes, at half-period separations.
 
 Here ``r=|\mathbf r|``, ``r_\delta`` is the regularized distance, and
 ``\delta`` is `SQGKernel.δ` (the `δ_sqg` constructor keyword), not the

@@ -21,6 +21,9 @@ boundaries have positive ``A_i`` and clockwise inner boundaries have negative
 ``A_i``. Spanning contours are excluded because they do not enclose a finite
 area. For arbitrary nested multi-jump contours, `enstrophy` omits cross-terms
 from squaring the reconstructed piecewise PV field; see its docstring below.
+Multi-layer problems sum ``\Gamma`` and ``Z`` over layers and weight each
+layer's ``I`` by its thickness ``H_l``: layers exchange angular momentum through
+the coupling, and only ``\sum_l H_l I_l`` is conserved.
 
 `energy` evaluates the kernel- and domain-specific symmetric double contour
 integral. Its normalization, Green's function, and regularization therefore

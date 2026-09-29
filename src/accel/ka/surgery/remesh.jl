@@ -16,7 +16,7 @@ end
 
 @inline function _flat_fixed_span_interval_count(total_length, q, current::Int,
                                                  μ, Δ_max)
-    if total_length <= eps(typeof(total_length))
+    if iszero(total_length)
         return max(1, current)
     end
     min_intervals = max(1, Int(ceil(total_length / Δ_max)))
@@ -150,8 +150,9 @@ end
         off = offsets[ci]
         n = lengths[ci]
         T = eltype(perimeters)
-        ox = x[off]
-        oy = y[off]
+        # An empty (spanning) contour has no node at `off` to read.
+        ox = n > 0 ? x[off] : zero(T)
+        oy = n > 0 ? y[off] : zero(T)
         perimeter = zero(T)
         area2 = zero(T)
         scale = max(abs(wrapx[ci]), abs(wrapy[ci]))
@@ -196,7 +197,7 @@ end
             sli = local_index[sg]
             off = offsets[sc]
             ei = seg_lengths[sg]
-            ei <= eps(typeof(ei)) && continue
+            iszero(ei) && continue
             mx = sli < lengths[sc] ? (x[sg] + x[sg + 1]) / 2 :
                  (x[sg] + x[off] + wrapx[sc]) / 2
             my = sli < lengths[sc] ? (y[sg] + y[sg + 1]) / 2 :
@@ -209,7 +210,8 @@ end
             numerator += weight * abs_curvatures[sg]
         end
 
-        K_j = denominator <= eps(typeof(denominator)) ? zero(denominator) : numerator / denominator
+        # Units of |pv|/length: see the CPU `_dritschel_segment_densities`.
+        K_j = iszero(denominator) ? zero(denominator) : numerator / denominator
         α = eltype(x)(2) / eltype(x)(3)
         sqrt2 = sqrt(eltype(x)(2))
         # Public μ is a length; the dimensionless density parameter is μ/L.
@@ -228,7 +230,7 @@ end
         next_g = li < lengths[ci] ? g + 1 : offsets[ci]
         sqrt2 = sqrt(eltype(x)(2))
         κ̃ = (node_density_curvatures[g] + node_density_curvatures[next_g]) / 2
-        raw_densities[g] = κ̃ <= eps(typeof(κ̃)) ? zero(κ̃) :
+        raw_densities[g] = κ̃ <= zero(κ̃) ? zero(κ̃) :
                            κ̃ / (one(κ̃) + δ * κ̃ / sqrt2)
     end
 end
@@ -291,7 +293,12 @@ end
         end
 
         fixed_corners = corner_count > 0 && iszero(in_wrapx[ci]) && iszero(in_wrapy[ci])
-        if fixed_corners
+        if n < 3
+            # Like the CPU `remesh`, contours too short to define a curve
+            # (possible for spanning contours) are copied unchanged.
+            remesh_mode[ci] = UInt8(2)
+            out_lengths[ci] = n
+        elseif fixed_corners
             total_out = 0
             first_corner = 0
             prev_corner = 0
@@ -531,7 +538,13 @@ end
                                                 out_x, out_y, out_offsets,
                                                 out_lengths, ncontours)
     ci = @index(Global)
-    if ci <= ncontours
+    if ci <= ncontours && out_lengths[ci] == 0
+        T = eltype(out_area)
+        out_area[ci] = zero(T)
+        out_area_tolerance[ci] = zero(T)
+        out_centroid_x[ci] = zero(T)
+        out_centroid_y[ci] = zero(T)
+    elseif ci <= ncontours
         off = out_offsets[ci]
         n = out_lengths[ci]
         T = eltype(out_area)

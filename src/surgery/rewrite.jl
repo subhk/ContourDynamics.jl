@@ -10,7 +10,10 @@ condition.
 
 Each sub-contour produced by a split contains both pinch-point nodes as
 its first and last vertices, ensuring a well-formed closing segment.
-Merged contours are stitched so that traversal orientation is preserved.
+Split daughters and merged contours keep the traversal direction of the parent
+nodes. A split that traps outside fluid therefore yields a clockwise daughter,
+the inner boundary of the region it encloses, and a merge never reverses one
+of its contours, which would flip the sign of the PV region it bounds.
 
 !!! warning
     Reconnection produces near-duplicate nodes at stitch points.
@@ -56,10 +59,6 @@ function reconnect!(contours::Vector{PVContour{T}},
     end
 end
 
-# Signed area of a raw node vector (shoelace formula, no PVContour needed).
-_shoelace_area(nodes::AbstractVector{SVector{2,T}}) where {T} =
-    _raw_polygon_area(nodes)
-
 function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::Int,
                         domain::AbstractDomain=UnboundedDomain()) where {T}
     c = contours[ci]
@@ -86,25 +85,12 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
     corners2 = vcat(corners[hi:nc], corners[1:(lo - 1)])
 
     if length(nodes1) >= 3 && length(nodes2) >= 3
-        # Preserve the parent's orientation: if the parent was CCW (positive area),
-        # each daughter should also be CCW.  Reverse nodes if the sign flips.
-        orig_sign = sign(vortex_area(c))
-        corner1_idx = 1
-        corner2_idx = 1
-        if orig_sign != 0
-            if sign(_shoelace_area(nodes1)) != orig_sign
-                reverse!(nodes1)
-                reverse!(corners1)
-                corner1_idx = length(nodes1)
-            end
-            if sign(_shoelace_area(nodes2)) != orig_sign
-                reverse!(nodes2)
-                reverse!(corners2)
-                corner2_idx = length(nodes2)
-            end
-        end
-        corners1[corner1_idx] = true
-        corners2[corner2_idx] = true
+        # Keep the parent's traversal direction. A pinched neck yields two
+        # daughters with the parent's orientation, while a closing gap that
+        # traps outside fluid yields an oppositely oriented inner boundary:
+        # the hole. Reversing that daughter would turn the hole into a patch.
+        corners1[1] = true
+        corners2[1] = true
         contours[ci] = PVContour(nodes1, c.pv, c.wrap, corners1)
         push!(contours, PVContour(nodes2, c.pv, c.wrap, corners2))
     else
@@ -112,35 +98,19 @@ function _reconnect_split!(contours::Vector{PVContour{T}}, ci::Int, i::Int, j::I
     end
 end
 
-# Squared local extent of a contour: the relative floor for sign decisions on
-# the translation-stable shoelace area.
-@inline _shoelace_noise_scale(c::PVContour) = _raw_polygon_scale2(c.nodes, c.wrap)
-
 function _reconnect_merge!(contours::Vector{PVContour{T}}, ci::Int, i::Int, cj::Int, j::Int,
                            domain::AbstractDomain=UnboundedDomain()) where {T}
     c1 = contours[ci]
     c2 = contours[cj]
 
-    # Check orientation consistency: both contours should have the same
-    # sign of signed area. If they differ, reverse c2's node order so
-    # the merged contour has consistent winding.
-    # Use a robust threshold: only reverse if both signed areas are well above
-    # the shoelace formula's rounding noise, which scales with each contour's
-    # squared coordinate magnitude (an absolute eps floor would silently skip
-    # the check for physically small contours).
-    a1 = vortex_area(c1)
-    a2 = vortex_area(c2)
-
-    tol1 = eps(T) * T(1000) * _shoelace_noise_scale(c1)
-    tol2 = eps(T) * T(1000) * _shoelace_noise_scale(c2)
-
-    reversed = abs(a1) > tol1 && abs(a2) > tol2 && sign(a1) != sign(a2)
-    c2_nodes = reversed ? reverse(c2.nodes) : c2.nodes
-    c2_corners = reversed ? reverse(c2.corners) : copy(c2.corners)
-
-    n2_orig = nnodes(c2)
-    j_seg = reversed ? mod1(n2_orig - j, n2_orig) : j
-    c2_eff = PVContour(c2_nodes, c2.pv, reversed ? -c2.wrap : c2.wrap, c2_corners)
+    # Admissible pairs bound the same fluid levels, so their contact parts run
+    # antiparallel whatever the global orientations (a clockwise hole boundary
+    # merging with a counter-clockwise patch included), and stitching the two
+    # loops in their own traversal directions yields a consistent contour.
+    c2_nodes = c2.nodes
+    c2_corners = copy(c2.corners)
+    j_seg = j
+    c2_eff = c2
 
     # For periodic domains, shift c2 into the image closest to the contact
     # point on c1 BEFORE choosing the stitch node. The stitch node is a copy of

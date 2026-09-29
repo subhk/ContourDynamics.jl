@@ -6,6 +6,21 @@
     return a == b || abs(a - b) <= sqrt(eps(T)) * max(abs(a), abs(b))
 end
 
+# Local PV levels are sums of contour jumps. Their rounding error scales with
+# the magnitude of the summed jumps (`scale`), not with the possibly cancelled
+# result, so a level that should be zero (inside a hole) may carry a residue
+# whose size depends on summation order.
+@inline function _same_surgery_pv(a::T, b::T, scale::T) where {T}
+    return a == b || abs(a - b) <= sqrt(eps(T)) * max(abs(a), abs(b), scale)
+end
+
+# Side of segment a→b facing away from point (ox, oy): +1 for the left side
+# (the point lies to the right of or on the segment line), -1 for the right.
+@inline function _flat_far_side(ax, ay, bx, by, ox, oy)
+    cross = (bx - ax) * (oy - ay) - (by - ay) * (ox - ax)
+    return cross > zero(cross) ? -one(cross) : one(cross)
+end
+
 @inline _flat_point_segment_dist2(px, py, ax, ay, bx, by) =
     first(_flat_point_segment_closest(px, py, ax, ay, bx, by))
 
@@ -13,7 +28,10 @@ end
     sx = bx - ax
     sy = by - ay
     len2 = sx * sx + sy * sy
-    if len2 <= eps(typeof(len2))
+    # Only an exactly degenerate segment is a point: t is clamped below, and an
+    # absolute floor on len2 would collapse every short segment in small-scale
+    # (e.g. Float32) coordinates.
+    if iszero(len2)
         dx = px - ax
         dy = py - ay
         return dx * dx + dy * dy, ax, ay

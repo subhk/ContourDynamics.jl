@@ -199,7 +199,9 @@ end
         contours_in = [c1, c2]
         state = DeviceContourState(contours_in, CPU())
         seg = ContourDynamics._state_segment_data(state, CPU())
-        packed = ContourDynamics.pack_segments(ContourProblem(EulerKernel(), UnboundedDomain(), contours_in), CPU())
+        # c2 spans a period-1 domain; packing itself does not depend on the domain.
+        packed = ContourDynamics.pack_segments(
+            ContourProblem(EulerKernel(), PeriodicDomain(0.5, 2.0), contours_in), CPU())
 
         for name in (:ax, :ay, :bx, :by, :pv, :ka, :kb)
             @test to_cpu(getproperty(seg, name)) ≈ to_cpu(getproperty(packed, name))
@@ -670,10 +672,15 @@ end
             contours_same, δ, UnboundedDomain(), CPU())
         admissible_pairs = Set(ContourDynamics._unpack_close_pair_candidates(admissible_buffer))
 
+        # Raw candidates include right-angle contacts at the squares' corners,
+        # where the two parts' far sides lie in different fluid; admissibility
+        # drops those on both backends and keeps every facing-side contact.
+        facing = Set(p for p in dev_pairs if 7 <= p[2] <= 12 && 19 <= p[4] <= 24)
         @test !isempty(cpu_pairs)
-        @test cpu_pairs == dev_pairs
+        @test cpu_pairs == admissible_pairs
+        @test issubset(cpu_pairs, dev_pairs)
+        @test issubset(facing, cpu_pairs)
         @test buffered_pairs == dev_pairs
-        @test admissible_pairs == dev_pairs
         @test length(to_cpu(buffer.ci)) == length(dev_pairs)
 
         contours_different_pv = [
@@ -874,8 +881,12 @@ end
             for pair in device_selected
         ]
 
+        admissible_pairs = ContourDynamics._unpack_close_pair_candidates(
+            ContourDynamics._device_admissible_close_segment_buffer(
+                contours, δ, UnboundedDomain(), CPU()))
         @test !isempty(close_pairs)
-        @test Set(buffer_pairs) == Set(close_pairs)
+        @test Set(admissible_pairs) == Set(close_pairs)
+        @test issubset(Set(close_pairs), Set(buffer_pairs))
         @test device_selected == cpu_selected
         @test Set(buffer_selected) == Set(device_selected)
         @test Set(selected_buffer_pairs) == Set(device_selected)
@@ -1062,7 +1073,7 @@ end
                               SVector(1.0, 0.2), SVector(-1.0, 0.2)],
                              0.25, SVector(2.0, 0.0))
         contours_in = [closed1, closed2, spanning]
-        prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours_in); dev=CPU())
+        prob = ContourProblem(EulerKernel(), PeriodicDomain(1.0, 2.0), deepcopy(contours_in); dev=CPU())
         state = DeviceContourState(deepcopy(contours_in), CPU())
 
         @test to_cpu(ContourDynamics._state_vortex_area(state, CPU())) ≈ vortex_area(prob)
@@ -1680,5 +1691,115 @@ end
             a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
                 all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-10))
         end
+    end
+end
+
+@testset "Device surgery and remesh regressions" begin
+    circle_nodes(cx, cy, R, n) = [SVector(cx + R * cos(2π * k / n), cy + R * sin(2π * k / n))
+                                  for k in 0:(n - 1)]
+    function device_surgery(cs, params, domain)
+        state = DeviceContourState(deepcopy(cs), CPU())
+        ContourDynamics._device_surgery_pipeline!(state, params, domain, CPU())
+        return materialize_contours(state)
+    end
+    net_circulation(cs) = sum(c.pv * vortex_area(c) for c in cs; init=0.0)
+
+    @testset "merges compare physical far-side PV levels" begin
+        params = SurgeryParams(0.005, 0.02, 0.1, 1e-6, 1)
+        opposite = [PVContour(circle_nodes(-0.5015, 0.0, 0.5, 128), 1.0),
+                    PVContour(reverse(circle_nodes(0.5015, 0.0, 0.5, 128)), 1.0)]
+        out = device_surgery(opposite, params, UnboundedDomain())
+        @test length(out) == 2
+        @test abs(net_circulation(out)) < 1e-12
+
+        ring = [PVContour(circle_nodes(0.0, 0.0, 1.0, 256), 1.0),
+                PVContour(reverse(circle_nodes(0.197, 0.0, 0.8, 256)), 1.0)]
+        out = device_surgery(ring, params, UnboundedDomain())
+        @test length(out) == 1
+        @test net_circulation(out) ≈ net_circulation(ring) rtol=2e-3
+    end
+
+    @testset "splits keep the trapped hole clockwise" begin
+        # C-shape with a narrow gap between its tips.
+        function cshape(r1, r2, θ0, h)
+            nodes = SVector{2,Float64}[]
+            nout = ceil(Int, r2 * (2π - 2θ0) / h)
+            for k in 0:(nout - 1)
+                θ = θ0 + (2π - 2θ0) * k / nout
+                push!(nodes, SVector(r2 * cos(θ), r2 * sin(θ)))
+            end
+            ntip = max(2, ceil(Int, (r2 - r1) / h))
+            for k in 0:(ntip - 1)
+                ρ = r2 - (r2 - r1) * k / ntip
+                push!(nodes, SVector(ρ * cos(2π - θ0), ρ * sin(2π - θ0)))
+            end
+            nin = ceil(Int, r1 * (2π - 2θ0) / h)
+            for k in 0:(nin - 1)
+                θ = (2π - θ0) - (2π - 2θ0) * k / nin
+                push!(nodes, SVector(r1 * cos(θ), r1 * sin(θ)))
+            end
+            for k in 0:(ntip - 1)
+                ρ = r1 + (r2 - r1) * k / ntip
+                push!(nodes, SVector(ρ * cos(θ0), ρ * sin(θ0)))
+            end
+            return PVContour(nodes, 1.0)
+        end
+        c = cshape(0.5, 0.8, 0.01, 0.03)
+        params = SurgeryParams(0.02, 0.08, 0.1, 1e-6, 10)
+        out = device_surgery([c], params, UnboundedDomain())
+        host = ContourProblem(EulerKernel(), UnboundedDomain(), [deepcopy(c)])
+        surgery!(host, params)
+        @test length(out) == 2
+        @test count(d -> vortex_area(d) < 0, out) == 1
+        @test net_circulation(out) ≈ net_circulation([c]) rtol=5e-3
+        @test sort(vortex_area.(out)) ≈ sort(vortex_area.(contours(host))) rtol=1e-10
+    end
+
+    @testset "periodic self-image contacts are left alone" begin
+        nodes = SVector{2,Float64}[]
+        for k in 0:49; push!(nodes, SVector(-0.995 + 1.99 * k / 50, -0.1)); end
+        for k in 0:4; push!(nodes, SVector(0.995, -0.1 + 0.2 * k / 5)); end
+        for k in 0:49; push!(nodes, SVector(0.995 - 1.99 * k / 50, 0.1)); end
+        for k in 0:4; push!(nodes, SVector(-0.995, 0.1 - 0.2 * k / 5)); end
+        band = PVContour(nodes, 1.0)
+        out = device_surgery([band], SurgeryParams(0.02, 0.08, 0.1, 1e-6, 10),
+                             PeriodicDomain(1.0, 1.0))
+        @test length(out) == 1
+        @test net_circulation(out) ≈ net_circulation([band]) rtol=1e-6
+    end
+
+    @testset "remesh leaves contours too short for a curve unchanged" begin
+        domain_period = SVector(2.0, 0.0)
+        short = PVContour([SVector(-0.5, 0.1), SVector(0.5, 0.15)], 1.0, domain_period)
+        empty_spanning = PVContour(SVector{2,Float64}[], 1.0, domain_period)
+        patch = circular_patch(0.3, 48, 1.0)
+        params = SurgeryParams(0.005, 0.02, 0.1, 1e-6, 1)
+        state = DeviceContourState([short, empty_spanning, patch], CPU())
+        ContourDynamics._device_remesh_state!(state, params, CPU())
+        out = materialize_contours(state)
+        host = deepcopy([short, empty_spanning, patch])
+        ContourDynamics._remesh_all!(host, params, SVector{2,Float64}[], Float64[],
+                                     SVector{2,Float64}[])
+        @test nnodes(out[1]) == 2
+        @test out[1].nodes == short.nodes
+        @test nnodes(out[2]) == 0
+        @test nnodes.(out) == nnodes.(host)
+    end
+
+    @testset "multi-layer periodic energy reads each mode's cache" begin
+        # setup_ewald_cache! for a single-layer QG problem also configures the
+        # domain's Euler cache; the baroclinic mode below keeps its own cache.
+        clear_ewald_cache!()
+        domain = PeriodicDomain(Float64(π))
+        setup_ewald_cache!(domain, QGKernel(0.7); n_fourier=16, n_images=4)
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)), SMatrix{2,2}(-F, F, F, -F))
+        layers = ([circular_patch(0.4, 48, 1.0; cx=0.3)],
+                  [circular_patch(0.3, 40, -0.8; cx=-0.4, cy=0.2)])
+        prob = MultiLayerContourProblem(kernel, domain, deepcopy(layers))
+        states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
+        @test ContourDynamics._ka_multilayer_energy_from_states(
+            states, kernel, domain, CPU()) ≈ energy(prob) rtol=1e-12
+        clear_ewald_cache!()
     end
 end
