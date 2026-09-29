@@ -116,8 +116,6 @@ mutable struct _EnergyWorkspace{T, DA<:AbstractVector{T}, IA<:AbstractVector{Int
     partial::DA
     host_count::Vector{Int}
     host_partial::Vector{T}
-    dev_ewald_kx::DA
-    dev_ewald_ky::DA
     dev_ewald_fourier::DMA
     dev_ewald_energy::DMA
     last_ewald::Union{Nothing,EwaldCache{T}}
@@ -140,8 +138,7 @@ function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
         device_zeros(dev, Int, 1),
         da, mk_t(), mk_t(), mk_t(), mk_t(), mk_t(),
         zeros(Int, 1), Vector{T}(undef, total_nodes),
-        device_zeros(dev, T, 0), device_zeros(dev, T, 0), dma,
-        device_zeros(dev, T, 0, 0), nothing, ncontours, total_nodes)
+        dma, device_zeros(dev, T, 0, 0), nothing, ncontours, total_nodes)
 end
 
 const _ENERGY_WS_KEY = :contourdynamics_energy_workspace
@@ -196,13 +193,12 @@ end
 function _ensure_energy_ewald!(ws::_EnergyWorkspace{T}, cache::EwaldCache{T},
                                dev::AbstractDevice) where {T}
     if ws.last_ewald !== cache
-        ws.dev_ewald_kx = to_device(dev, cache.kx)
-        ws.dev_ewald_ky = to_device(dev, cache.ky)
-        ws.dev_ewald_fourier = to_device(dev, cache.fourier_coeffs)
-        ws.dev_ewald_energy = to_device(dev, cache.energy_coeffs)
+        ws.dev_ewald_fourier = to_device(dev, cache.fourier_cos)
+        ws.dev_ewald_energy = to_device(
+            dev, _required_ewald_table(cache, cache.energy_cos, :energy_coeffs))
         ws.last_ewald = cache
     end
-    return ws.dev_ewald_kx, ws.dev_ewald_ky, ws.dev_ewald_fourier, ws.dev_ewald_energy
+    return ws.dev_ewald_fourier, ws.dev_ewald_energy
 end
 
 @inline function _energy_segment_geometry(ax, ay, bx, by, i, ::Type{T}) where {T}
@@ -227,34 +223,54 @@ end
     return T(2) * (r_δ - δ * log(δ + r_δ))
 end
 
-# All six kernels use the same straight-segment 3×3 Gauss–Legendre rule.
+# Term pv[j] ∫∫ Φ ds·ds' of segment pair (i, j), with segment i's geometry
+# `gi` precomputed. All six kernels use the same straight-segment 3×3
+# Gauss–Legendre rule.
+@inline function _energy_segment_pair(gi, j, ax, ay, bx, by, pv, g_nodes, g_weights,
+                                      potential::F) where {F}
+    T = eltype(pv)
+    dsix, dsiy, midix, midiy, half_dsix, half_dsiy = gi
+    dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
+        _energy_segment_geometry(ax, ay, bx, by, j, T)
+    dot_ds = dsix * dsjx + dsiy * dsjy
+
+    quad = zero(T)
+    for qi in 1:3
+        pix = midix + g_nodes[qi] * half_dsix
+        piy = midiy + g_nodes[qi] * half_dsiy
+        for qj in 1:3
+            pjx = midjx + g_nodes[qj] * half_dsjx
+            pjy = midjy + g_nodes[qj] * half_dsjy
+            dx = pix - pjx
+            dy = piy - pjy
+            quad += g_weights[qi] * g_weights[qj] *
+                    potential(dx, dy)
+        end
+    end
+    return pv[j] * quad * dot_ds / T(4)
+end
+
+# Row i of the segment double sum. The pair integrand is symmetric, so the row
+# takes its diagonal term, twice the terms at cyclic offsets 1…⌈n/2⌉-1, and,
+# for even n, the opposite segment once: the rows still add up to the ordered
+# double sum, at half the cost, and every work item does the same amount.
 @inline function _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg,
                                       potential::F) where {F}
     T = eltype(pv)
-    dsix, dsiy, midix, midiy, half_dsix, half_dsiy =
-        _energy_segment_geometry(ax, ay, bx, by, i, T)
+    gi = _energy_segment_geometry(ax, ay, bx, by, i, T)
     g_nodes, g_weights = _gl3_nodes_weights(T)
-    local_s = zero(T)
+    local_s = _energy_segment_pair(gi, i, ax, ay, bx, by, pv, g_nodes, g_weights, potential)
 
-    @inbounds for j in 1:n_seg
-        dsjx, dsjy, midjx, midjy, half_dsjx, half_dsjy =
-            _energy_segment_geometry(ax, ay, bx, by, j, T)
-        dot_ds = dsix * dsjx + dsiy * dsjy
-
-        quad = zero(T)
-        for qi in 1:3
-            pix = midix + g_nodes[qi] * half_dsix
-            piy = midiy + g_nodes[qi] * half_dsiy
-            for qj in 1:3
-                pjx = midjx + g_nodes[qj] * half_dsjx
-                pjy = midjy + g_nodes[qj] * half_dsjy
-                dx = pix - pjx
-                dy = piy - pjy
-                quad += g_weights[qi] * g_weights[qj] *
-                        potential(dx, dy)
-            end
-        end
-        local_s += pv[j] * quad * dot_ds / T(4)
+    @inbounds for d in 1:(cld(n_seg, 2) - 1)
+        j = i + d > n_seg ? i + d - n_seg : i + d
+        local_s += 2 * _energy_segment_pair(gi, j, ax, ay, bx, by, pv,
+                                            g_nodes, g_weights, potential)
+    end
+    if iseven(n_seg)
+        half = n_seg ÷ 2
+        j = i > half ? i - half : i + half
+        local_s += _energy_segment_pair(gi, j, ax, ay, bx, by, pv,
+                                        g_nodes, g_weights, potential)
     end
 
     return pv[i] * local_s
@@ -280,30 +296,30 @@ end
 end
 
 @kernel function _periodic_euler_energy_ka!(partial, ax, ay, bx, by, pv,
-                                            α, Lx, Ly, n_images, kx, ky,
-                                            fourier_coeffs, energy_coeffs, n_seg)
+                                            α, Lx, Ly, n_images, dkx, dky,
+                                            fourier_table, energy_table, n_seg)
     i = @index(Global)
     T = eltype(partial)
     potential = (dx, dy) -> _periodic_energy_potential_scalar(
-        dx, dy, zero(T), α, Lx, Ly, n_images, kx, ky, fourier_coeffs, energy_coeffs)
+        dx, dy, zero(T), α, Lx, Ly, n_images, dkx, dky, fourier_table, energy_table)
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
 @kernel function _periodic_qg_energy_ka!(partial, ax, ay, bx, by, pv,
-                                         kappa2, α, Lx, Ly, n_images, kx, ky,
-                                         fourier_coeffs, energy_coeffs, n_seg)
+                                         kappa2, α, Lx, Ly, n_images, dkx, dky,
+                                         fourier_table, energy_table, n_seg)
     i = @index(Global)
     potential = (dx, dy) -> _periodic_energy_potential_scalar(
-        dx, dy, kappa2, α, Lx, Ly, n_images, kx, ky, fourier_coeffs, energy_coeffs)
+        dx, dy, kappa2, α, Lx, Ly, n_images, dkx, dky, fourier_table, energy_table)
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
 @kernel function _periodic_sqg_energy_ka!(partial, ax, ay, bx, by, pv,
                                           α, δ, Lx, Ly, n_images,
-                                          kx, ky, energy_coeffs, n_seg)
+                                          dkx, dky, energy_table, n_seg)
     i = @index(Global)
     potential = (dx, dy) -> _sqg_periodic_energy_potential_scalar(
-        dx, dy, α, Lx, Ly, δ, n_images, kx, ky, energy_coeffs)
+        dx, dy, α, Lx, Ly, δ, n_images, dkx, dky, energy_table)
     partial[i] = _energy_segment_sum(i, ax, ay, bx, by, pv, n_seg, potential)
 end
 
@@ -345,10 +361,10 @@ end
     return γ
 end
 
-# Upload the Ewald tables once per call: (kx, ky, fourier_coeffs, energy_coeffs).
+# Upload the Ewald cosine tables once per call: (fourier, energy).
 @inline function _device_ewald_tables(cache::EwaldCache, dev::AbstractDevice)
-    return (to_device(dev, cache.kx), to_device(dev, cache.ky),
-            to_device(dev, cache.fourier_coeffs), to_device(dev, cache.energy_coeffs))
+    return (to_device(dev, cache.fourier_cos),
+            to_device(dev, _required_ewald_table(cache, cache.energy_cos, :energy_coeffs)))
 end
 
 # GPU problems keep their nodes in `device_state`, CPU-device problems in the
@@ -371,18 +387,18 @@ end
 @inline _periodic_energy_recipe(::EulerKernel, domain::PeriodicDomain{T},
                                 cache::EwaldCache{T}, tables) where {T} =
     (_periodic_euler_energy_ka!, (cache.α, domain.Lx, domain.Ly, cache.n_images,
-                                  tables[1], tables[2], tables[3], tables[4]))
+                                  cache.dkx, cache.dky, tables[1], tables[2]))
 @inline function _periodic_energy_recipe(kernel::QGKernel{T}, domain::PeriodicDomain{T},
                                          cache::EwaldCache{T}, tables) where {T}
     kappa2 = one(T) / (kernel.Ld * kernel.Ld)
     return (_periodic_qg_energy_ka!, (kappa2, cache.α, domain.Lx, domain.Ly,
-                                      cache.n_images, tables[1], tables[2],
-                                      tables[3], tables[4]))
+                                      cache.n_images, cache.dkx, cache.dky,
+                                      tables[1], tables[2]))
 end
 @inline _periodic_energy_recipe(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                 cache::EwaldCache{T}, tables) where {T} =
     (_periodic_sqg_energy_ka!, (cache.α, kernel.δ, domain.Lx, domain.Ly,
-                                cache.n_images, tables[1], tables[2], tables[4]))
+                                cache.n_images, cache.dkx, cache.dky, tables[2]))
 
 # `circulation_fn` is a thunk so only the kernels whose zero mode needs the
 # circulation pay for it (on the GPU path it is a device reduction).

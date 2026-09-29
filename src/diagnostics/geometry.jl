@@ -46,23 +46,31 @@ function _max_valid_energy_nnodes(contours)
 end
 
 """
-    @_valid_contour_pairs ci cj partial contours scratch begin ... end
+    @_valid_contour_pairs ci cj mult partial contours scratch begin ... end
 
-Loop over valid closed contour pairs, reusing the caller-owned `scratch` vector
-as the per-pair workspace `partial`, resized to the largest valid contour.
+Loop over the unordered pairs of valid closed contours, each contour also
+paired with itself, reusing the caller-owned `scratch` vector as the per-pair
+workspace `partial`, resized to the largest valid contour. Pair integrands are
+symmetric, so weighting each pair by `mult` (1 for a contour with itself, 2
+otherwise) recovers the ordered double sum at half the cost.
 """
-macro _valid_contour_pairs(ci, cj, partial, contours, scratch, body)
+macro _valid_contour_pairs(ci, cj, mult, partial, contours, scratch, body)
     contours_var = gensym(:contours)
+    a = gensym(:a)
+    b = gensym(:b)
     quote
         local $contours_var = $(esc(contours))
         # Reuse the caller's scratch buffer instead of allocating a fresh
         # workspace on every energy() call.
         local $(esc(partial)) = $(esc(scratch))
         resize!($(esc(partial)), _max_valid_energy_nnodes($contours_var))
-        for $(esc(ci)) in $contours_var
+        for $a in eachindex($contours_var)
+            local $(esc(ci)) = $contours_var[$a]
             _valid_energy_contour($(esc(ci))) || continue
-            for $(esc(cj)) in $contours_var
+            for $b in $a:lastindex($contours_var)
+                local $(esc(cj)) = $contours_var[$b]
                 _valid_energy_contour($(esc(cj))) || continue
+                local $(esc(mult)) = $a == $b ? 1 : 2
                 $(esc(body))
             end
         end
@@ -130,6 +138,21 @@ would show up as a regression in `test_allocations.jl`.
     return quad
 end
 
+# Midpoint, half vector, and vector of segment `i` of contour `c`.
+@inline function _contour_energy_segment(c::PVContour, i::Int)
+    a = c.nodes[i]
+    b = next_node(c, i)
+    ds = b - a
+    return (mid=(a + b) / 2, half_ds=ds / 2, ds=ds)
+end
+
+# ∫∫ Φ(r) ds·ds' over one pair of straight segments.
+@inline function _segment_pair_energy(si, sj, g_nodes, g_weights, Φ::F) where {F}
+    quad = _gl3_pair_quad(si.mid, si.half_ds, sj.mid, sj.half_ds, g_nodes, g_weights, Φ)
+    # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
+    return quad / 4 * (si.ds[1] * sj.ds[1] + si.ds[2] * sj.ds[2])
+end
+
 """
     _energy_contour_pair(ci, cj, Φ; _partial)
 
@@ -139,28 +162,43 @@ this same O(N²) loop with a different integrand, so only `Φ` varies.
 """
 function _energy_contour_pair(ci::PVContour{T}, cj::PVContour{T}, Φ::F;
                               _partial::Vector{T}=zeros(T, nnodes(ci))) where {T,F}
+    ci === cj && return _energy_contour_self(ci, Φ, _partial)
     nci = nnodes(ci)
     ncj = nnodes(cj)
     # 3-point Gauss-Legendre nodes/weights on [-1,1]
     g_nodes, g_weights = _gl3_nodes_weights(T)
     # Thread over outer segments, each thread accumulates a partial sum.
     return @_energy_segment_loop partial _partial nci for i in 1:nci
-        ai = ci.nodes[i]
-        bi = next_node(ci, i)
-        dsi = bi - ai
-        midi = (ai + bi) / 2
-        half_dsi = dsi / 2
+        si = _contour_energy_segment(ci, i)
         local_s = zero(T)
         for j in 1:ncj
-            aj = cj.nodes[j]
-            bj = next_node(cj, j)
-            dsj = bj - aj
-            midj = (aj + bj) / 2
-            half_dsj = dsj / 2
-            dot_ds = dsi[1] * dsj[1] + dsi[2] * dsj[2]
-            quad = _gl3_pair_quad(midi, half_dsi, midj, half_dsj, g_nodes, g_weights, Φ)
-            # Jacobian: each ∫₋₁¹ → ½ ∫₀¹, two of them → ¼
-            local_s += quad / 4 * dot_ds
+            local_s += _segment_pair_energy(
+                si, _contour_energy_segment(cj, j), g_nodes, g_weights, Φ)
+        end
+        partial[i] = local_s
+    end
+end
+
+# A contour with itself. The segment-pair integrand is symmetric, so row i
+# takes its diagonal term, twice the terms at cyclic offsets 1…⌈n/2⌉-1, and,
+# for even n, the opposite segment once: the ordered double sum at half the
+# cost, with every row equally long so the threaded rows stay balanced.
+function _energy_contour_self(c::PVContour{T}, Φ::F, _partial::Vector{T}) where {T,F}
+    n = nnodes(c)
+    doubled = cld(n, 2) - 1
+    g_nodes, g_weights = _gl3_nodes_weights(T)
+    return @_energy_segment_loop partial _partial n for i in 1:n
+        si = _contour_energy_segment(c, i)
+        local_s = _segment_pair_energy(si, si, g_nodes, g_weights, Φ)
+        for d in 1:doubled
+            j = i + d > n ? i + d - n : i + d
+            local_s += 2 * _segment_pair_energy(
+                si, _contour_energy_segment(c, j), g_nodes, g_weights, Φ)
+        end
+        if iseven(n)
+            j = i + n ÷ 2 > n ? i - n ÷ 2 : i + n ÷ 2
+            local_s += _segment_pair_energy(
+                si, _contour_energy_segment(c, j), g_nodes, g_weights, Φ)
         end
         partial[i] = local_s
     end

@@ -29,6 +29,34 @@ const _QG_EWALD_X_MAX = 4
 # u exceeds -log(eps) + 5; such images are skipped.
 @inline _ewald_real_cutoff(::Type{T}) where {T} = -log(eps(T)) + 5
 
+# Fourier part Σ_{k≠0} c_k cos(k·r) of every periodic Ewald kernel. The
+# coefficients depend on |k| only, so they are even in kx and in ky, the
+# sin(kx·x)sin(ky·y) halves of cos(k·r) cancel, and the sum folds onto the
+# modes m, n ≥ 0 (the `EwaldCache` cosine tables, weights included):
+#
+#     Σ_{m,n≥0} w[m+1, n+1] cos(mθx) cos(nθy),   θ = (dkx·rx, dky·ry).
+#
+# cos(mθ) follows from the Chebyshev recurrence
+# cos((m+1)θ) = 2cosθ·cos(mθ) - cos((m-1)θ), so a point costs two cosines
+# rather than two trigonometric calls per mode.
+@inline function _ewald_cosine_sum(w, dkx::T, dky::T, rx::T, ry::T) where {T}
+    cθx = cos(dkx * rx)
+    cθy = cos(dky * ry)
+    total = zero(T)
+    cx, cx_prev = one(T), cθx
+    @inbounds for m in 1:size(w, 1)
+        row = zero(T)
+        cy, cy_prev = one(T), cθy
+        for n in 1:size(w, 2)
+            row += w[m, n] * cy
+            cy, cy_prev = 2 * cθy * cy - cy_prev, cy
+        end
+        total += cx * row
+        cx, cx_prev = 2 * cθx * cx - cx_prev, cx
+    end
+    return total
+end
+
 @inline _ewald_qg_x(kappa2::T, α::T) where {T} = kappa2 / (4 * α * α)
 @inline _qg_uses_direct_images(kappa2::T, α::T) where {T} = _ewald_qg_x(kappa2, α) > _QG_EWALD_X_MAX
 
@@ -96,12 +124,12 @@ end
     return s
 end
 
-# Ewald evaluation of `scale · Ĝ(r)` given Fourier coefficients already
-# multiplied by `scale` (`coeffs[m, n] = scale · ĉ_k`). The velocity uses
+# Ewald evaluation of `scale · Ĝ(r)` given a cosine table of Fourier
+# coefficients already multiplied by `scale` (scale · ĉ_k). The velocity uses
 # scale = κ² and the energy potential scale = 4π.
 @inline function _scaled_qg_correction_scalar(rx::T, ry::T, scale::T, α::T, x::T,
                                               Lx::T, Ly::T, n_images::Int,
-                                              kx, ky, coeffs) where {T}
+                                              dkx::T, dky::T, table) where {T}
     s0 = one(T) / (4 * α * α)
     real_sum = zero(T)
     for px in -n_images:n_images
@@ -112,19 +140,7 @@ end
         end
     end
 
-    fourier = zero(T)
-    for mi in eachindex(kx)
-        kxi = kx[mi]
-        cx = cos(kxi * rx)
-        snx = sin(kxi * rx)
-        for ni in eachindex(ky)
-            coeff = coeffs[mi, ni]
-            iszero(coeff) && continue
-            kyi = ky[ni]
-            fourier += coeff * (cx * cos(kyi * ry) - snx * sin(kyi * ry))
-        end
-    end
-
+    fourier = _ewald_cosine_sum(table, dkx, dky, rx, ry)
     area = 4 * Lx * Ly
     return scale * (s0 / (4 * T(π)) * real_sum + s0 * s0 * _ewald_psi2(x) / area) + fourier
 end
@@ -215,8 +231,8 @@ end
 # minimum image; valid because the neutralized real-space terms decay.
 @inline function _sqg_periodic_energy_potential_scalar(dx::T, dy::T, α::T,
                                                        Lx::T, Ly::T, δ::T,
-                                                       n_images::Int, kx, ky,
-                                                       energy_coeffs) where {T}
+                                                       n_images::Int, dkx::T, dky::T,
+                                                       energy_table) where {T}
     Lx2 = 2 * Lx
     Ly2 = 2 * Ly
     rx = dx - round(dx / Lx2) * Lx2
@@ -229,28 +245,18 @@ end
             phi += 2 * _sqg_neutral_real_potential(sqrt(sx * sx + sy * sy), α, δ)
         end
     end
-    for mi in eachindex(kx)
-        kxi = kx[mi]
-        cx = cos(kxi * rx)
-        snx = sin(kxi * rx)
-        for ni in eachindex(ky)
-            coeff = energy_coeffs[mi, ni]
-            iszero(coeff) && continue
-            kyi = ky[ni]
-            phi += coeff * (cx * cos(kyi * ry) - snx * sin(kyi * ry))
-        end
-    end
+    phi += _ewald_cosine_sum(energy_table, dkx, dky, rx, ry)
     return phi + _sqg_energy_zero_mean_constant(α, δ, 4 * Lx * Ly)
 end
 
 # Periodic Euler (κ² = 0) or QG contour-energy potential 4πĜ at separation
 # (dx, dy), wrapped to the minimum image so the finite image block is centred.
-# The QG direct-image regime needs the Euler velocity tables for the periodic
+# The QG direct-image regime needs the Euler velocity table for the periodic
 # Euler correction; the Ewald regime uses the cache's energy table.
 @inline function _periodic_energy_potential_scalar(dx::T, dy::T, kappa2::T, α::T,
                                                    Lx::T, Ly::T, n_images::Int,
-                                                   kx, ky, fourier_coeffs,
-                                                   energy_coeffs) where {T}
+                                                   dkx::T, dky::T, fourier_table,
+                                                   energy_table) where {T}
     Lx2 = 2 * Lx
     Ly2 = 2 * Ly
     rx = dx - round(dx / Lx2) * Lx2
@@ -258,11 +264,11 @@ end
     fourpi = 4 * T(π)
     if _qg_uses_direct_images(kappa2, α)
         euler_corr = _periodic_euler_green_correction_scalar(
-            rx, ry, zero(T), zero(T), α, Lx, Ly, n_images, kx, ky, fourier_coeffs,
+            rx, ry, zero(T), zero(T), α, Lx, Ly, n_images, dkx, dky, fourier_table,
             one(T) / fourpi, T(Base.MathConstants.eulergamma))
         return fourpi * _direct_scaled_qg_correction_scalar(
             rx, ry, kappa2, one(T) / sqrt(kappa2), Lx, Ly, euler_corr)
     end
     return _scaled_qg_correction_scalar(rx, ry, fourpi, α, _ewald_qg_x(kappa2, α),
-                                        Lx, Ly, n_images, kx, ky, energy_coeffs)
+                                        Lx, Ly, n_images, dkx, dky, energy_table)
 end

@@ -28,22 +28,30 @@ function _multilayer_mode_pair_energy(
         mode::Int, partial::Vector{T}) where {N,K,D,T,MK}
     to_modal = prob.kernel.physical_to_modal
     cache = _modal_energy_cache(prob.domain, mode_kernel)
+    layers = _host_contours(prob)
     result = zero(T)
 
+    # The pair integrand is symmetric, so each unordered pair of (layer,
+    # contour) sources is visited once and pairs of distinct contours count
+    # twice, as in `@_valid_contour_pairs`.
     for source_layer in 1:N
         source_weight = to_modal[mode, source_layer]
         abs(source_weight) < eps(T) && continue
-        for target_layer in 1:N
-            target_weight = to_modal[mode, target_layer]
-            abs(target_weight) < eps(T) && continue
-            modal_weight = source_weight * target_weight
-            for source in _host_contours(prob)[source_layer]
-                _valid_energy_contour(source) || continue
-                for target in _host_contours(prob)[target_layer]
+        for (si, source) in pairs(layers[source_layer])
+            _valid_energy_contour(source) || continue
+            for target_layer in source_layer:N
+                target_weight = to_modal[mode, target_layer]
+                abs(target_weight) < eps(T) && continue
+                targets = layers[target_layer]
+                first_target = target_layer == source_layer ? si : firstindex(targets)
+                for ti in first_target:lastindex(targets)
+                    target = targets[ti]
                     _valid_energy_contour(target) || continue
+                    mult = target_layer == source_layer && ti == si ? 1 : 2
                     pair_energy = _modal_pair_energy(
                         source, target, mode_kernel, prob.domain, cache, partial)
-                    result += modal_weight * source.pv * target.pv * pair_energy
+                    result += mult * source_weight * target_weight *
+                              source.pv * target.pv * pair_energy
                 end
             end
         end

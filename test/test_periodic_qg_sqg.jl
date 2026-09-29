@@ -315,7 +315,7 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
         phi(rv) = ContourDynamics._sqg_periodic_energy_potential_scalar(
             rv[1], rv[2], cache.α, domain.Lx, domain.Ly, kernel.δ,
-            cache.n_images, cache.kx, cache.ky, cache.energy_coeffs)
+            cache.n_images, cache.dkx, cache.dky, cache.energy_cos)
         h = 1e-3
         ex = SVector(h, 0.0)
         ey = SVector(0.0, h)
@@ -519,6 +519,71 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         end
         @test ContourDynamics._get_ewald_cache(domain, baroclinic).n_images == 3
         @test ContourDynamics._get_ewald_cache(domain, EulerKernel()).n_images == 3
+        clear_ewald_cache!()
+    end
+
+    @testset "Ewald cosine tables reproduce the full Fourier sums" begin
+        # Every table is folded onto m, n ≥ 0 and summed by the Chebyshev
+        # recurrence; compare with the direct sum over the full kx × ky grid,
+        # including separations beyond the central cell.
+        direct(c, kx, ky, r) = sum(c[i, j] * cos(kx[i] * r[1] + ky[j] * r[2])
+                                   for i in eachindex(kx), j in eachindex(ky))
+        folded(w, cache, r) = ContourDynamics._ewald_cosine_sum(
+            w, cache.dkx, cache.dky, r[1], r[2])
+        points = (SVector(0.3, -0.2), SVector(-1.6, 1.1), SVector(3.3, -2.3), SVector(0.0, 0.0))
+        domain = PeriodicDomain(1.7, 1.2)
+        for kernel in (EulerKernel(), QGKernel(0.8), SQGKernel(0.2))
+            cache = build_ewald_cache(domain, kernel; n_fourier=12, n_images=1)
+            for (full, w) in ((cache.fourier_coeffs, cache.fourier_cos),
+                              (cache.corr_coeffs, cache.corr_cos),
+                              (cache.energy_coeffs, cache.energy_cos))
+                isempty(full) && continue
+                for r in points
+                    @test folded(w, cache, r) ≈ direct(full, cache.kx, cache.ky, r) atol=1e-14 * sum(abs, full)
+                end
+            end
+        end
+
+        # Grids with different kx and ky extents fold the same way.
+        kx = [π * m / 1.7 for m in -3:3]
+        ky = [π * n / 1.2 for n in -5:5]
+        c = [iszero(a^2 + b^2) ? 0.0 : exp(-(a^2 + b^2) / 8) / (a^2 + b^2) for a in kx, b in ky]
+        cache = EwaldCache(1.0, kx, ky, c, 1, zeros(0, 0))
+        for r in points
+            @test folded(cache.fourier_cos, cache, r) ≈ direct(c, kx, ky, r) atol=1e-14 * sum(abs, c)
+        end
+    end
+
+    @testset "EwaldCache rejects tables it cannot fold" begin
+        kx = [π * m for m in -2:2]
+        c = [iszero(a^2 + b^2) ? 0.0 : 1 / (a^2 + b^2) for a in kx, b in kx]
+        @test EwaldCache(1.0, kx, kx, c, 1, zeros(0, 0)) isa EwaldCache
+        @test_throws ArgumentError EwaldCache(1.0, kx[1:4], kx, c[1:4, :], 1, zeros(0, 0))
+        @test_throws ArgumentError EwaldCache(1.0, kx .^ 3 ./ π^2, kx, c, 1, zeros(0, 0))
+        @test_throws DimensionMismatch EwaldCache(1.0, kx, kx, c[:, 1:4], 1, zeros(0, 0))
+        # Even under k → -k (a valid cos(k·r) series) but not under kx → -kx
+        # alone, so no cos(kx·x)cos(ky·y) table represents it.
+        anisotropic = [c[i, j] * (1 + sign(kx[i] * kx[j]) / 10) for i in 1:5, j in 1:5]
+        @test_throws ArgumentError EwaldCache(1.0, kx, kx, anisotropic, 1, zeros(0, 0))
+
+        # A hand-built cache without an energy or QG correction table fails
+        # loudly instead of dropping that Fourier part.
+        clear_ewald_cache!()
+        domain = PeriodicDomain(2.0)
+        base = build_ewald_cache(domain, EulerKernel())
+        partial_cache = EwaldCache(base.α, base.kx, base.ky, base.fourier_coeffs,
+                                   base.n_images, zeros(0, 0))
+        ContourDynamics._store_ewald!(domain, EulerKernel(), partial_cache)
+        prob = ContourProblem(EulerKernel(), domain, [circular_patch(0.4, 16, 1.0)])
+        @test all(v -> all(isfinite, v), velocity!(zeros(SVector{2,Float64}, 16), prob))
+        @test_throws ArgumentError energy(prob)
+        @test_throws ArgumentError ContourDynamics._ka_energy(prob, CPU())
+        qg = QGKernel(1.0)
+        ContourDynamics._store_ewald!(domain, qg, partial_cache)
+        qprob = ContourProblem(qg, domain, [circular_patch(0.4, 16, 1.0)])
+        @test_throws ArgumentError velocity(qprob, SVector(0.1, 0.2))
+        @test_throws ArgumentError ContourDynamics._ka_velocity!(
+            zeros(SVector{2,Float64}, 16), qprob, CPU())
         clear_ewald_cache!()
     end
 end

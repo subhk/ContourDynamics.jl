@@ -8,7 +8,9 @@ image radius used by periodic velocity and energy evaluations.
 `fourier_coeffs` are the velocity Green's-function coefficients (periodic Euler
 coefficients for the QG cache), `corr_coeffs` the Gaussian-damped QG-minus-Euler
 velocity correction (QG only), and `energy_coeffs` the Fourier coefficients of
-the periodic contour-energy potential. All tables are aligned to `kx` × `ky`.
+the periodic contour-energy potential. All tables are aligned to `kx` × `ky`,
+which must be uniform grids symmetric about zero, and must be even in `kx` and
+in `ky`, as every coefficient that depends on `|k|` only is.
 """
 struct EwaldCache{T<:AbstractFloat}
     α::T
@@ -21,6 +23,25 @@ struct EwaldCache{T<:AbstractFloat}
     # Euler and SQG caches.
     corr_coeffs::Matrix{T}
     energy_coeffs::Matrix{T}
+    # Derived by the constructor for `_ewald_cosine_sum`: the grid spacings
+    # and each table folded onto the modes m, n ≥ 0 (0×0 when absent).
+    dkx::T
+    dky::T
+    fourier_cos::Matrix{T}
+    corr_cos::Matrix{T}
+    energy_cos::Matrix{T}
+
+    function EwaldCache(α::T, kx::Vector{T}, ky::Vector{T}, fourier_coeffs::Matrix{T},
+                        n_images::Integer, corr_coeffs::Matrix{T},
+                        energy_coeffs::Matrix{T}) where {T<:AbstractFloat}
+        fold(table, name) = _fold_ewald_table(table, length(kx), length(ky), name)
+        return new{T}(α, kx, ky, fourier_coeffs, Int(n_images), corr_coeffs,
+                      energy_coeffs,
+                      _ewald_grid_spacing(kx, :kx), _ewald_grid_spacing(ky, :ky),
+                      fold(fourier_coeffs, :fourier_coeffs),
+                      fold(corr_coeffs, :corr_coeffs),
+                      fold(energy_coeffs, :energy_coeffs))
+    end
 end
 
 # Six-field form kept for callers that build a cache by hand; it carries no
@@ -35,8 +56,55 @@ function Base.getproperty(cache::EwaldCache, name::Symbol)
     return getfield(cache, name)
 end
 
-Base.propertynames(::EwaldCache; private::Bool=false) =
-    (:α, :alpha, :kx, :ky, :fourier_coeffs, :n_images, :corr_coeffs, :energy_coeffs)
+Base.propertynames(::EwaldCache, private::Bool=false) =
+    (:α, :alpha, :kx, :ky, :fourier_coeffs, :n_images, :corr_coeffs, :energy_coeffs,
+     (private ? (:dkx, :dky, :fourier_cos, :corr_cos, :energy_cos) : ())...)
+
+# Spacing dk of a wavenumber grid dk·(-K:K); zero when it has no nonzero mode.
+function _ewald_grid_spacing(k::Vector{T}, name::Symbol) where {T}
+    isempty(k) && return zero(T)
+    isodd(length(k)) || throw(ArgumentError(
+        "EwaldCache `$name` must be symmetric about zero; got $(length(k)) wavenumbers"))
+    K = length(k) ÷ 2
+    dk = K == 0 ? zero(T) : k[K + 2]
+    for m in -K:K
+        abs(k[K + 1 + m] - m * dk) <= 16 * eps(T) * abs(m * dk) || throw(ArgumentError(
+            "EwaldCache `$name` must be a uniform grid dk·(-K:K)"))
+    end
+    return dk
+end
+
+# Fold a table aligned to the kx × ky grid onto the modes m, n ≥ 0 for
+# `_ewald_cosine_sum`. Summing the distinct sign variants (±m, ±n) gives the
+# exact cos·cos coefficient; the sin·sin remainder must vanish.
+function _fold_ewald_table(c::Matrix{T}, nkx::Int, nky::Int, name::Symbol) where {T}
+    isempty(c) && return zeros(T, 0, 0)
+    size(c) == (nkx, nky) || throw(DimensionMismatch(
+        "EwaldCache `$name` is $(size(c, 1))×$(size(c, 2)) but the wavenumber grid is $nkx×$nky"))
+    Kx, Ky = nkx ÷ 2, nky ÷ 2
+    tol = 1024 * eps(T) * maximum(abs, c)
+    w = zeros(T, Kx + 1, Ky + 1)
+    for n in 0:Ky, m in 0:Kx
+        pp = c[Kx + 1 + m, Ky + 1 + n]
+        mp = c[Kx + 1 - m, Ky + 1 + n]
+        pm = c[Kx + 1 + m, Ky + 1 - n]
+        mm = c[Kx + 1 - m, Ky + 1 - n]
+        w[m + 1, n + 1] = m == 0 ? (n == 0 ? pp : pp + pm) :
+                          n == 0 ? pp + mp : pp + mp + pm + mm
+        m > 0 && n > 0 && abs(pp - mp - pm + mm) > tol && throw(ArgumentError(
+            "EwaldCache `$name` must be even in kx and in ky"))
+    end
+    return w
+end
+
+# Cosine table pulled out of `cache` for an evaluation that needs it. A cache
+# built by hand may lack the QG correction or energy table, and summing with
+# its empty stand-in would silently drop that Fourier part.
+@inline function _required_ewald_table(cache::EwaldCache, table::Matrix, name::Symbol)
+    isempty(table) && !isempty(cache.kx) && throw(ArgumentError(
+        "EwaldCache has no `$name` table; build the cache with build_ewald_cache"))
+    return table
+end
 
 @inline function _validate_ewald_truncation(n_fourier::Int, n_images::Int)
     n_fourier >= 0 || throw(ArgumentError(

@@ -78,6 +78,23 @@ This Fourier-space sum represents the smooth long-range part of the periodic
 interaction. It is the part that would be awkward to compute accurately by
 adding many distant image copies directly.
 
+Every Fourier coefficient used by the package depends on ``|\mathbf{k}|`` only,
+so it is even in ``k_x`` and in ``k_y``. The ``\sin(k_xr_x)\sin(k_yr_y)`` halves
+of ``\cos(\mathbf{k}\cdot\mathbf{r})`` then cancel between the modes
+``(\pm p,\pm s)``, and the code evaluates each such sum as
+
+```math
+\sum_{p,s\ge 0} w_{ps}\cos(p\theta_x)\cos(s\theta_y),
+\qquad \theta_x=\pi r_x/L_x,\quad \theta_y=\pi r_y/L_y,
+```
+
+where ``w_{ps}`` collects the coefficients of the modes ``(\pm p,\pm s)``. The
+cosines of multiples of ``\theta`` follow from the Chebyshev recurrence
+``\cos((p+1)\theta)=2\cos\theta\cos(p\theta)-\cos((p-1)\theta)``, so an
+evaluation needs two cosines rather than two trigonometric calls per mode.
+`EwaldCache` derives these folded tables from its coefficient tables and
+rejects tables without this symmetry.
+
 ### Singular Subtraction for Periodic Velocity
 
 Every periodic segment velocity is built by singular subtraction: a

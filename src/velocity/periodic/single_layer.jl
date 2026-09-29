@@ -137,7 +137,7 @@ Euler decomposition (Ewald):
                                           x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     return _periodic_euler_green_correction_scalar(
         x[1], x[2], s_pt[1], s_pt[2], cache.α, domain.Lx, domain.Ly,
-        cache.n_images, cache.kx, cache.ky, cache.fourier_coeffs,
+        cache.n_images, cache.dkx, cache.dky, cache.fourier_cos,
         one(T) / (T(4) * T(π)), T(Base.MathConstants.eulergamma))
 end
 
@@ -150,7 +150,8 @@ end
                                        x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     return _periodic_qg_green_correction_scalar(
         x[1], x[2], s_pt[1], s_pt[2], inv(kernel.Ld^2), cache.α,
-        domain.Lx, domain.Ly, cache.n_images, cache.kx, cache.ky, cache.corr_coeffs)
+        domain.Lx, domain.Ly, cache.n_images, cache.dkx, cache.dky,
+        _required_ewald_table(cache, cache.corr_cos, :corr_coeffs))
 end
 
 # SQG Ewald decomposition of the regularized kernel over every periodic image:
@@ -163,7 +164,7 @@ end
                                         x::SVector{2,T}, s_pt::SVector{2,T}) where {T}
     return _periodic_sqg_green_correction_scalar(
         x[1], x[2], s_pt[1], s_pt[2], cache.α, kernel.δ^2, domain.Lx, domain.Ly,
-        cache.n_images, cache.kx, cache.ky, cache.fourier_coeffs, one(T) / (T(2) * T(π)))
+        cache.n_images, cache.dkx, cache.dky, cache.fourier_cos, one(T) / (T(2) * T(π)))
 end
 
 

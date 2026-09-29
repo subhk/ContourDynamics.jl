@@ -6,8 +6,8 @@ function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     E = zero(T)
 
-    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
-        E += ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
+    @_valid_contour_pairs ci cj mult partial contours prob.velocity_scratch.energy_partial begin
+        E += mult * ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
     end
 
     return _normalize_energy(E)
@@ -19,8 +19,8 @@ function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {
     cache = _get_ewald_cache(prob.domain, prob.kernel)
     E = zero(T)
 
-    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
-        E += ci.pv * cj.pv * _energy_contour_pair_qg_periodic(
+    @_valid_contour_pairs ci cj mult partial contours prob.velocity_scratch.energy_partial begin
+        E += mult * ci.pv * cj.pv * _energy_contour_pair_qg_periodic(
             ci, cj, cache, prob.domain, prob.kernel.Ld; _partial=partial)
     end
 
@@ -39,8 +39,8 @@ function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where 
 
     # The potential is zero-mean (periodic SQG inversion acts on the mean-free
     # scalar), so no k = 0 term enters the Hamiltonian.
-    @_valid_contour_pairs ci cj partial contours prob.velocity_scratch.energy_partial begin
-        E += ci.pv * cj.pv *
+    @_valid_contour_pairs ci cj mult partial contours prob.velocity_scratch.energy_partial begin
+        E += mult * ci.pv * cj.pv *
              _energy_contour_pair_sqg_periodic(ci, cj, cache, prob.domain, δ; _partial=partial)
     end
 

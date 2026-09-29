@@ -143,6 +143,47 @@ using Test, ContourDynamics, StaticArrays
         @test L ≈ π / 2 rtol=0.02
     end
 
+    @testset "Energy double sums fold symmetric pairs" begin
+        # Energy visits each unordered segment and contour pair once. Compare
+        # with ordered double sums: a copy of a contour is not identical to it,
+        # so pairing with the copy runs the full rectangular loop.
+        Φ = rv -> ContourDynamics._euler_energy_potential_scalar(rv[1]^2 + rv[2]^2)
+        pair(ci, cj) = ContourDynamics._energy_contour_pair(ci, cj, Φ)
+        for n in (3, 4, 7, 10, 65, 66)   # odd and even; 65+ runs the threaded loop
+            c = elliptical_patch(0.8, 0.5, n, 1.0)
+            @test pair(c, c) ≈ pair(c, deepcopy(c)) rtol=1e-13
+        end
+
+        cs = [elliptical_patch(0.8, 0.5, 31, 1.0), circular_patch(0.3, 20, -0.6; cx=1.5),
+              circular_patch(0.2, 12, 0.4; cy=-1.4)]
+        ordered = ContourDynamics._normalize_energy(
+            sum(ci.pv * cj.pv * pair(ci, deepcopy(cj)) for ci in cs, cj in cs))
+        prob = ContourProblem(EulerKernel(), UnboundedDomain(), cs)
+        @test energy(prob) ≈ ordered rtol=1e-13
+        @test ContourDynamics._ka_energy(prob, CPU()) ≈ ordered rtol=1e-13
+
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1.0), SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers = (cs[1:2], cs[3:3])
+        raw = 0.0
+        for (mode, λ) in pairs(kernel.eigenvalues)
+            raw += ContourDynamics._dispatch_qg_mode(kernel, λ) do mode_kernel
+                s = 0.0
+                for la in 1:2, lb in 1:2, ci in layers[la], cj in layers[lb]
+                    w = kernel.physical_to_modal[mode, la] * kernel.physical_to_modal[mode, lb]
+                    s += w * ci.pv * cj.pv * ContourDynamics._modal_pair_energy(
+                        ci, deepcopy(cj), mode_kernel, UnboundedDomain(), nothing, zeros(64))
+                end
+                s
+            end
+        end
+        ml = MultiLayerContourProblem(kernel, UnboundedDomain(), layers)
+        @test energy(ml) ≈ ContourDynamics._normalize_energy(raw) rtol=1e-12
+        states = map(layer -> DeviceContourState(layer, CPU()), layers)
+        @test ContourDynamics._ka_multilayer_energy_from_states(
+            states, kernel, UnboundedDomain(), CPU()) ≈ energy(ml) rtol=1e-12
+    end
+
     @testset "Node Management" begin
         nodes = SVector{2, Float64}[
             SVector(0.0, 0.0), SVector(0.001, 0.0), SVector(0.002, 0.0),

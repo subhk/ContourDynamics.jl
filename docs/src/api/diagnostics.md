@@ -32,7 +32,8 @@ universal scalar formula. See [Contour Dynamics](../theory/contour_dynamics.md)
 and the [notation glossary](../theory/notation.md).
 
 Both CPU and GPU energy paths join the stored nodes with **straight segments**
-and apply **3×3 Gauss–Legendre quadrature** to each segment pair. Velocity
+and apply **3×3 Gauss–Legendre quadrature** to each segment pair; the
+integrand is symmetric, so each unordered pair is evaluated once. Velocity
 evaluation generally uses cubic Dritschel arcs. Energy therefore approximates
 the continuum Hamiltonian on the polygonal geometry; it is not an exact
 invariant of the discrete velocity and RK4 update. When assessing conservation,

@@ -260,7 +260,7 @@ end
 @inline function _periodic_euler_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
                                                          α::T, Lx::T, Ly::T,
                                                          n_images::Int,
-                                                         kx, ky, fourier_coeffs,
+                                                         dkx::T, dky::T, fourier_table,
                                                          inv4pi::T,
                                                          γ_euler::T) where {T}
     r0x = xi - sx
@@ -287,33 +287,20 @@ end
         end
     end
 
-    nkx = length(kx)
-    nky = length(ky)
-    for mi in 1:nkx
-        kxi = kx[mi]
-        cx = cos(kxi * r0x)
-        sx_trig = sin(kxi * r0x)
-        for ni in 1:nky
-            coeff = fourier_coeffs[mi, ni]
-            iszero(coeff) && continue
-            kyi = ky[ni]
-            G_corr += coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
-        end
-    end
-
+    G_corr += _ewald_cosine_sum(fourier_table, dkx, dky, r0x, r0y)
     return G_corr - _periodic_euler_zero_mode_scalar(α, Lx, Ly)
 end
 
 # Smooth periodic QG-minus-Euler correction G̃_QG - G̃_E = κ²Ĝ at one
 # quadrature point, via the Ewald split of numerics/periodic_ewald.jl.
-# `corr_coeffs` are the cache's κ²ĉ_k.
+# `corr_table` is the cache's cosine table of κ²ĉ_k.
 @inline function _periodic_qg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
                                                       kappa2::T, α::T, Lx::T, Ly::T,
-                                                      n_images::Int, kx, ky,
-                                                      corr_coeffs) where {T}
+                                                      n_images::Int, dkx::T, dky::T,
+                                                      corr_table) where {T}
     return _scaled_qg_correction_scalar(xi - sx, yi - sy, kappa2, α,
                                         _ewald_qg_x(kappa2, α), Lx, Ly,
-                                        n_images, kx, ky, corr_coeffs)
+                                        n_images, dkx, dky, corr_table)
 end
 
 # Periodic QG segment velocity by direct summation over periodic images, used
@@ -349,14 +336,14 @@ end
 # for the regularized kernel 1/(2π r_δ), r_δ = √(r² + δ²). The quasi-2-D Ewald
 # split of 1/r_δ (the Coulomb potential of a charge at height δ) treats the
 # softening exactly: real-space terms erfc(α r_δ)/r_δ and Fourier coefficients
-# (`fourier_coeffs`, see `_ewald_fourier_coefficient`) both decay like
+# (`fourier_table`, see `_ewald_fourier_coefficient`) both decay like
 # Gaussians. The zero-mean inversion removes the k = 0 content of the real-space
 # sum, 2π[e^{-α²δ²}/(α√π) - δ erfc(αδ)]/A; without it spanning contours with
 # Σ pv·wrap ≠ 0 drift with a uniform velocity that depends on α.
 @inline function _periodic_sqg_green_correction_scalar(xi::T, yi::T, sx::T, sy::T,
                                                        α::T, δ_sq::T,
                                                        Lx::T, Ly::T, n_images::Int,
-                                                       kx, ky, fourier_coeffs,
+                                                       dkx::T, dky::T, fourier_table,
                                                        inv2pi::T) where {T}
     r0x = xi - sx
     r0y = yi - sy
@@ -380,20 +367,7 @@ end
         end
     end
 
-    nkx = length(kx)
-    nky = length(ky)
-    for mi in 1:nkx
-        kxi = kx[mi]
-        cx = cos(kxi * r0x)
-        sx_trig = sin(kxi * r0x)
-        for ni in 1:nky
-            coeff = fourier_coeffs[mi, ni]
-            iszero(coeff) && continue
-            kyi = ky[ni]
-            G_corr += inv2pi * coeff * (cx * cos(kyi * r0y) - sx_trig * sin(kyi * r0y))
-        end
-    end
-
+    G_corr += inv2pi * _ewald_cosine_sum(fourier_table, dkx, dky, r0x, r0y)
     δ = sqrt(δ_sq)
     area = T(4) * Lx * Ly
     zero_mode = (exp(-α * α * δ_sq) / (α * sqrt(T(π))) - δ * erfc(α * δ)) / area

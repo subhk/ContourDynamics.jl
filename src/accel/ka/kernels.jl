@@ -30,7 +30,7 @@ end
                                               seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                               seg_ka, seg_kb,
                                               α, Lx, Ly, n_images,
-                                              kx, ky, fourier_coeffs,
+                                              dkx, dky, fourier_table,
                                               n_seg)
     i = @index(Global)
     T = eltype(vel_x)
@@ -66,7 +66,7 @@ end
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_euler_green_correction_scalar(
                     xi, yi, sx, sy, α, Lx, Ly, n_images,
-                    kx, ky, fourier_coeffs, inv4pi, γ_euler)
+                    dkx, dky, fourier_table, inv4pi, γ_euler)
                 coeff = seg_pv[j] * (g5_weights[q] / T(2)) * G_corr
                 vx += coeff * tx_curve
                 vy += coeff * ty_curve
@@ -90,7 +90,7 @@ end
             sy = mid_y + g_nodes[q] * half_dsy
             G_corr = _periodic_euler_green_correction_scalar(
                 xi, yi, sx, sy, α, Lx, Ly, n_images,
-                kx, ky, fourier_coeffs, inv4pi, γ_euler)
+                dkx, dky, fourier_table, inv4pi, γ_euler)
             corr_integral += g_weights[q] * G_corr
         end
 
@@ -133,7 +133,7 @@ end
                                              seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                              seg_ka, seg_kb,
                                              Ld, α, Lx, Ly, n_images,
-                                             kx, ky, corr_coeffs,
+                                             dkx, dky, corr_table,
                                              n_seg)
     i = @index(Global)
     T = eltype(vel_x)
@@ -161,7 +161,7 @@ end
                     ax, ay, bx, by,
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_qg_green_correction_scalar(
-                    xi, yi, sx, sy, kappa2, α, Lx, Ly, n_images, kx, ky, corr_coeffs)
+                    xi, yi, sx, sy, kappa2, α, Lx, Ly, n_images, dkx, dky, corr_table)
                 coeff = seg_pv[j] * (g5_weights[q] / T(2)) * G_corr
                 vx += coeff * tx_curve
                 vy += coeff * ty_curve
@@ -179,7 +179,7 @@ end
             sx = mid_x + g_nodes[q] * half_dsx
             sy = mid_y + g_nodes[q] * half_dsy
             G_corr = _periodic_qg_green_correction_scalar(
-                xi, yi, sx, sy, kappa2, α, Lx, Ly, n_images, kx, ky, corr_coeffs)
+                xi, yi, sx, sy, kappa2, α, Lx, Ly, n_images, dkx, dky, corr_table)
             corr_integral += g_weights[q] * G_corr
         end
 
@@ -225,7 +225,7 @@ end
                                             seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
                                             seg_ka, seg_kb,
                                             α, δ, Lx, Ly, n_images,
-                                            kx, ky, fourier_coeffs,
+                                            dkx, dky, fourier_table,
                                             n_seg)
     i = @index(Global)
     T = eltype(vel_x)
@@ -261,7 +261,7 @@ end
                     seg_ka[j], seg_kb[j], p)
                 G_corr = _periodic_sqg_green_correction_scalar(
                     xi, yi, sx, sy, α, δ_sq, Lx, Ly, n_images,
-                    kx, ky, fourier_coeffs, inv2pi)
+                    dkx, dky, fourier_table, inv2pi)
                 coeff = seg_pv[j] * (g5_weights[q] / T(2)) * G_corr
                 vx += coeff * tx_curve
                 vy += coeff * ty_curve
@@ -297,7 +297,7 @@ end
             sy = mid_y + g_nodes[q] * half_dsy
             G_corr = _periodic_sqg_green_correction_scalar(
                 xi, yi, sx, sy, α, δ_sq, Lx, Ly, n_images,
-                kx, ky, fourier_coeffs, inv2pi)
+                dkx, dky, fourier_table, inv2pi)
             corr_integral += g_weights[q] * G_corr
         end
 
