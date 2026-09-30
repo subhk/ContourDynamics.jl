@@ -114,10 +114,24 @@ end
     return nothing
 end
 
+# Splitting parameter for `n_fourier` modes and `n_images` image rings. Both
+# sums stop where their Gaussian factor falls below e^{-cutoff}: the largest α
+# whose first omitted Fourier mode k does keeps the real-space sums as short
+# as the Fourier table allows (their reach is √cutoff/α). When the image block
+# cannot reach that far (few images, or high precision), α instead balances
+# the two truncation errors, e^{-α²R²} = e^{-k²/4α²} at the block edge R.
+function _ewald_alpha(Lx::T, Ly::T, n_fourier::Int, n_images::Int) where {T}
+    k_omitted = T(π) * (n_fourier + 1) / max(Lx, Ly)
+    block = (2 * n_images + 1) * min(Lx, Ly)
+    return max(k_omitted / (2 * sqrt(_ewald_real_cutoff(T))),
+               sqrt(k_omitted / (2 * block)))
+end
+
 # Shared Ewald setup: splitting parameter, Fourier wavenumbers, and domain area.
-function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int) where {T}
+function _ewald_wavenumbers(domain::PeriodicDomain{T}, n_fourier::Int,
+                            n_images::Int) where {T}
     Lx, Ly = domain.Lx, domain.Ly
-    α = sqrt(T(π)) / sqrt(Lx * Ly)
+    α = _ewald_alpha(Lx, Ly, n_fourier, n_images)
     # `2π * m` would contaminate extended-precision types with a Float64
     # product, so convert π to T before touching the integer index.
     kx = [T(π) * m / Lx for m in -n_fourier:n_fourier]
@@ -154,17 +168,23 @@ end
     _sqg_energy_fourier_coefficient(k2, α, kernel.δ, area)
 
 """
-    build_ewald_cache(domain::PeriodicDomain, kernel; n_fourier=8, n_images=2)
+    build_ewald_cache(domain::PeriodicDomain, kernel; n_fourier=16, n_images=2)
 
 Precompute Fourier-space coefficients for Ewald summation. The Euler and SQG
 caches differ only in the coefficient formulas; the QG cache additionally
 carries the QG correction table (see its method).
+
+The splitting parameter `α` is chosen from the truncation: the largest value
+whose first omitted Fourier mode is negligible at the working precision, so
+more Fourier modes make the real-space image sums shorter-ranged. If the
+`n_images` block cannot then keep the real-space truncation equally small, `α`
+balances the two truncation errors instead.
 """
 function build_ewald_cache(domain::PeriodicDomain{T},
                            kernel::Union{EulerKernel, SQGKernel{T}};
-                           n_fourier::Int=8, n_images::Int=2) where {T}
+                           n_fourier::Int=16, n_images::Int=2) where {T}
     _validate_ewald_truncation(n_fourier, n_images)
-    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
+    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier, n_images)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
     energy_coeffs = zeros(T, nk, nk)
@@ -183,7 +203,7 @@ function build_ewald_cache(domain::PeriodicDomain{T},
 end
 
 """
-    build_ewald_cache(domain::PeriodicDomain, kernel::QGKernel; n_fourier=8, n_images=2)
+    build_ewald_cache(domain::PeriodicDomain, kernel::QGKernel; n_fourier=16, n_images=2)
 
 Ewald cache for the QG kernel in a periodic domain.
 
@@ -197,10 +217,10 @@ the QG kernel directly over periodic images instead and use only the Euler
 tables.
 """
 function build_ewald_cache(domain::PeriodicDomain{T}, kernel::QGKernel{T};
-                           n_fourier::Int=8, n_images::Int=2) where {T}
+                           n_fourier::Int=16, n_images::Int=2) where {T}
     _validate_ewald_truncation(n_fourier, n_images)
     kappa2 = one(T) / kernel.Ld^2
-    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier)
+    α, kx, ky, area = _ewald_wavenumbers(domain, n_fourier, n_images)
     nk = length(kx)
     fourier_coeffs = zeros(T, nk, nk)
     corr_coeffs = zeros(T, nk, nk)
@@ -366,10 +386,10 @@ function _store_ewald!(domain::PeriodicDomain{T}, kernel::AbstractKernel,
 end
 
 """
-    setup_ewald_cache!(domain, kernel; n_fourier=8, n_images=2)
+    setup_ewald_cache!(domain, kernel; n_fourier=16, n_images=2)
 
 Pre-build and store an Ewald cache with custom parameters.  Call this before
-`evolve!` to override the default `n_fourier=8`, `n_images=2`.  The cached
+`evolve!` to override the default `n_fourier=16`, `n_images=2`.  The cached
 result is used automatically by all subsequent velocity computations on
 the same domain/kernel combination.
 
@@ -384,7 +404,7 @@ Configured caches are kept until [`clear_ewald_cache!`](@ref); they are exempt
 from the eviction that bounds the number of automatically built caches.
 """
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
-                            n_fourier::Int=8,
+                            n_fourier::Int=16,
                             n_images::Int=2) where {T<:AbstractFloat}
     _validate_ewald_truncation(n_fourier, n_images)
     _store_ewald!(domain, kernel,
@@ -395,7 +415,7 @@ function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::AbstractKernel;
 end
 
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::MultiLayerQGKernel;
-                            n_fourier::Int=8,
+                            n_fourier::Int=16,
                             n_images::Int=2) where {T<:AbstractFloat}
     _validate_ewald_truncation(n_fourier, n_images)
     for λ in kernel.eigenvalues

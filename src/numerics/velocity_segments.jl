@@ -67,11 +67,22 @@ end
 
 @inline function _qg_smooth_correction_scalar(rr::T, r::T, Ld::T) where {T}
     # QG = Euler logarithmic kernel plus a smooth finite deformation-radius
-    # correction. The small-r branch uses the same regularized limit as CPU code.
-    if rr < T(0.5)
-        return _besselk0_correction(rr) + log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
+    # correction K₀(r/Ld) + log r, summed as a series without cancellation
+    # where K₀ is logarithmic.
+    rr <= 2 && return _besselk0_correction(rr) + log(2 * Ld) - T(Base.MathConstants.eulergamma)
+    return _besselk0_scalar(rr) + log(r)
+end
+
+# K₀(rr) and the smooth QG correction K₀(rr) + log r (rr = r/Ld), sharing one
+# evaluation.
+@inline function _qg_k0_and_smooth(rr::T, r::T, Ld::T) where {T}
+    if rr <= 2
+        c = _besselk0_correction(rr)
+        γ = T(Base.MathConstants.eulergamma)
+        return c - log(rr / 2) - γ, c + log(2 * Ld) - γ
     end
-    return _besselk0_approx_scalar(rr) + log(r)
+    k0 = _besselk0_scalar(rr)
+    return k0, k0 + log(r)
 end
 
 @inline function _curved_qg_contribution_scalar(xi::T, yi::T,
@@ -104,7 +115,7 @@ end
                 rx = sx - xi
                 ry = sy - yi
                 direct += g_weights[q] *
-                          _besselk0_approx_scalar(sqrt(rx * rx + ry * ry) / Ld)
+                          _besselk0_scalar(sqrt(rx * rx + ry * ry) / Ld)
             end
             coeff = inv2pi * pv * direct / T(2)
             return coeff * dsx, coeff * dsy
@@ -132,7 +143,8 @@ end
         return vx + corr * dsx, vy + corr * dsy
     end
 
-    evx, evy = _curved_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, κa, κb, inv4pi)
+    # One K₀ per quadrature point serves both the direct far-field sum and
+    # the smooth correction of the near-field split.
     g_nodes, g_weights = _gl5_nodes_weights(T)
     cvx = zero(T)
     cvy = zero(T)
@@ -147,22 +159,19 @@ end
         r2 = rx * rx + ry * ry
         r = sqrt(r2)
         min_r = min(min_r, r)
-        if r2 > eps(T)^2
-            direct_coeff = inv2pi * pv * (g_weights[q] / T(2)) *
-                           _besselk0_approx_scalar(r / Ld)
-            direct_x += direct_coeff * tx
-            direct_y += direct_coeff * ty
-        end
-        val = if r2 < eps(T)^2
-            log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
+        weight = inv2pi * pv * (g_weights[q] / T(2))
+        if r2 < eps(T)^2
+            val = log(T(2) * Ld) - T(Base.MathConstants.eulergamma)
         else
-            _qg_smooth_correction_scalar(r / Ld, r, Ld)
+            k0, val = _qg_k0_and_smooth(r / Ld, r, Ld)
+            direct_x += weight * k0 * tx
+            direct_y += weight * k0 * ty
         end
-        coeff = inv2pi * pv * (g_weights[q] / T(2)) * val
-        cvx += coeff * tx
-        cvy += coeff * ty
+        cvx += weight * val * tx
+        cvy += weight * val * ty
     end
     min_r > T(4) * max(Ld, ds_len) && return direct_x, direct_y
+    evx, evy = _curved_euler_contribution_scalar(xi, yi, ax, ay, bx, by, pv, κa, κb, inv4pi)
     return evx + cvx, evy + cvy
 end
 
@@ -265,23 +274,26 @@ end
                                                          γ_euler::T) where {T}
     r0x = xi - sx
     r0y = yi - sy
-    G_corr = zero(T)
+    cutoff = _ewald_real_cutoff(T)
 
-    for px in -n_images:n_images
-        shiftx = T(2) * Lx * T(px)
-        for py in -n_images:n_images
-            shifty = T(2) * Ly * T(py)
-            rx = r0x - shiftx
-            ry = r0y - shifty
+    # Central image: E₁(α²r²) + log r², whose r → 0 limit is -γ - 2 log α.
+    r2 = r0x * r0x + r0y * r0y
+    G_corr = if r2 <= eps(T)
+        inv4pi * (-γ_euler - T(2) * log(α))
+    elseif α^2 * r2 <= cutoff
+        inv4pi * (_expint_e1(α^2 * r2) + log(r2))
+    else
+        inv4pi * log(r2)
+    end
+
+    reach = sqrt(cutoff) / α
+    for px in _ewald_image_range(r0x, Lx, reach, n_images)
+        rx = r0x - T(2) * Lx * T(px)
+        for py in _ewald_image_range(r0y, Ly, reach, n_images)
+            (px == 0 && py == 0) && continue
+            ry = r0y - T(2) * Ly * T(py)
             r2 = rx * rx + ry * ry
-
-            if px == 0 && py == 0
-                if r2 > eps(T)
-                    G_corr += inv4pi * (_expint_e1(α^2 * r2) + log(r2))
-                else
-                    G_corr += inv4pi * (-γ_euler - T(2) * log(α))
-                end
-            elseif r2 > eps(T) && α^2 * r2 <= _ewald_real_cutoff(T)
+            if r2 > eps(T) && α^2 * r2 <= cutoff
                 G_corr += inv4pi * _expint_e1(α^2 * r2)
             end
         end
@@ -347,20 +359,21 @@ end
                                                        inv2pi::T) where {T}
     r0x = xi - sx
     r0y = yi - sy
-    G_corr = zero(T)
+    cutoff = _ewald_real_cutoff(T)
 
-    for px in -n_images:n_images
-        shiftx = T(2) * Lx * T(px)
-        for py in -n_images:n_images
-            shifty = T(2) * Ly * T(py)
-            rx = r0x - shiftx
-            ry = r0y - shifty
+    # Central image: erfc(α r_δ)/r_δ - 1/r_δ, finite for δ = 0 as well.
+    G_corr = -inv2pi * _sqg_erf_over_r(α, r0x * r0x + r0y * r0y + δ_sq)
+
+    # Other images: erfc(α r_δ)/r_δ ≤ e^{-α²r_δ²}/(α√π r_δ²), negligible past
+    # the cutoff.
+    reach = sqrt(cutoff) / α
+    for px in _ewald_image_range(r0x, Lx, reach, n_images)
+        rx = r0x - T(2) * Lx * T(px)
+        for py in _ewald_image_range(r0y, Ly, reach, n_images)
+            (px == 0 && py == 0) && continue
+            ry = r0y - T(2) * Ly * T(py)
             r2_δ = rx * rx + ry * ry + δ_sq
-
-            if px == 0 && py == 0
-                # erfc(α r_δ)/r_δ - 1/r_δ, finite for δ = 0 as well.
-                G_corr -= inv2pi * _sqg_erf_over_r(α, r2_δ)
-            else
+            if α^2 * r2_δ <= cutoff
                 r_δ = sqrt(r2_δ)
                 G_corr += inv2pi * erfc(α * r_δ) / r_δ
             end

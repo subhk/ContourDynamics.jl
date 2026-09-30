@@ -41,33 +41,32 @@ end
 """
     _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, dev)
 
-Launch the KA periodic Euler velocity kernel on the given device.
+Launch the KA periodic Euler velocity kernel on the given device: the
+real-space part of the Ewald sum, to which [`_ka_ewald_far_field!`](@ref) adds
+the Fourier part.
 """
 function _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                       domain::PeriodicDomain{T}, cache::EwaldCache{T},
-                                      dev::AbstractDevice, ws=nothing) where {T}
-    dev_fourier, _ = _periodic_ewald_data(ws, cache, dev)
+                                      dev::AbstractDevice, far=nothing) where {T}
     return _launch_ka_segment_kernel!(_periodic_euler_velocity_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
                                       cache.α, domain.Lx, domain.Ly, cache.n_images,
-                                      cache.dkx, cache.dky, dev_fourier)
+                                      cache.dkx, cache.dky, _device_far_field(far, dev, T).empty)
 end
 
 """
     _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg, domain, cache, Ld, dev)
 
-Apply the Ewald-split periodic QG-minus-Euler correction on top of the periodic
-Euler velocity already stored in `vel_x`/`vel_y`.
+Add the real-space part of the Ewald-split periodic QG-minus-Euler correction
+to the periodic Euler velocity already stored in `vel_x`/`vel_y`.
 """
 function _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                      domain::PeriodicDomain{T}, cache::EwaldCache{T},
-                                     Ld::T, dev::AbstractDevice, ws=nothing) where {T}
-    _required_ewald_table(cache, cache.corr_cos, :corr_coeffs)
-    _, dev_corr = _periodic_ewald_data(ws, cache, dev)
+                                     Ld::T, dev::AbstractDevice, far=nothing) where {T}
     return _launch_ka_segment_kernel!(_periodic_qg_correction_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
                                       Ld, cache.α, domain.Lx, domain.Ly, cache.n_images,
-                                      cache.dkx, cache.dky, dev_corr)
+                                      cache.dkx, cache.dky, _device_far_field(far, dev, T).empty)
 end
 
 """
@@ -86,16 +85,47 @@ end
 """
     _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, δ, dev)
 
-Launch the KA periodic SQG velocity kernel on the given device.
+Launch the KA periodic SQG velocity kernel on the given device: the real-space
+part of the Ewald sum, to which [`_ka_ewald_far_field!`](@ref) adds the
+Fourier part.
 """
 function _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                     domain::PeriodicDomain{T}, cache::EwaldCache{T},
-                                    δ::T, dev::AbstractDevice, ws=nothing) where {T}
-    dev_fourier, _ = _periodic_ewald_data(ws, cache, dev)
+                                    δ::T, dev::AbstractDevice, far=nothing) where {T}
     return _launch_ka_segment_kernel!(_periodic_sqg_velocity_ka!,
                                       vel_x, vel_y, target_x, target_y, seg, dev,
                                       cache.α, δ, domain.Lx, domain.Ly, cache.n_images,
-                                      cache.dkx, cache.dky, dev_fourier)
+                                      cache.dkx, cache.dky, _device_far_field(far, dev, T).empty)
+end
+
+"""
+    _ka_ewald_far_field!(vel_x, vel_y, target_x, target_y, seg, kernel, cache, dev, far)
+
+Add the Fourier part of the periodic Ewald velocity: build the structure factor
+of all segments, then sum it over the modes at every target (see
+velocity/periodic/far_field.jl).
+"""
+function _ka_ewald_far_field!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
+                              kernel::AbstractKernel, cache::EwaldCache{T},
+                              dev::AbstractDevice, far::_DeviceFarField{T}) where {T}
+    n_seg = length(seg.ax)
+    n_targets = length(target_x)
+    coeff = _prepare_device_far_field!(far, cache, kernel, 5 * n_seg, dev)
+    K = length(cache.kx) ÷ 2
+    if n_seg > 0
+        @_ka_launch dev n_seg _ewald_sources_ka!(
+            far.src_x, far.src_y, far.src_wx, far.src_wy,
+            seg.ax, seg.ay, seg.bx, seg.by, seg.pv, seg.ka, seg.kb, n_seg)
+    end
+    @_ka_launch dev (2K + 1) * (K + 1) _ewald_structure_factor_ka!(
+        far.s_re_x, far.s_im_x, far.s_re_y, far.s_im_y,
+        far.src_x, far.src_y, far.src_wx, far.src_wy,
+        cache.dkx, cache.dky, K, 5 * n_seg)
+    n_targets > 0 && @_ka_launch dev n_targets _ewald_far_field_ka!(
+        vel_x, vel_y, target_x, target_y, coeff,
+        far.s_re_x, far.s_im_x, far.s_re_y, far.s_im_y,
+        cache.dkx, cache.dky, K, n_targets)
+    return nothing
 end
 
 # Resolve the same registry entry as the CPU path (`_prefetch_ewald`): each
@@ -122,11 +152,15 @@ end
     _ka_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, kernel.δ, dev)
 end
 
+# Periodic kernels: the pair kernels sum the real-space part, then the far
+# field adds the Fourier part once for all segments.
 @inline function _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                      kernel::EulerKernel, domain::PeriodicDomain{T},
                                      dev::AbstractDevice, ws=nothing) where {T}
     cache = _ka_periodic_cache(domain, kernel)
-    _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, dev, ws)
+    far = _device_far_field(ws, dev, T)
+    _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, dev, far)
+    _ka_ewald_far_field!(vel_x, vel_y, target_x, target_y, seg, kernel, cache, dev, far)
 end
 
 @inline function _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
@@ -136,17 +170,21 @@ end
     _qg_uses_direct_images(inv(kernel.Ld^2), cache.α) &&
         return _ka_periodic_qg_direct_velocity!(vel_x, vel_y, target_x, target_y, seg,
                                                 domain, kernel.Ld, dev)
-    _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, dev, ws)
+    far = _device_far_field(ws, dev, T)
+    _ka_periodic_euler_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache, dev, far)
     _ka_periodic_qg_correction!(vel_x, vel_y, target_x, target_y, seg, domain, cache,
-                                kernel.Ld, dev, ws)
+                                kernel.Ld, dev, far)
+    _ka_ewald_far_field!(vel_x, vel_y, target_x, target_y, seg, kernel, cache, dev, far)
 end
 
 @inline function _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg::SegmentData,
                                      kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                      dev::AbstractDevice, ws=nothing) where {T}
     cache = _ka_periodic_cache(domain, kernel)
+    far = _device_far_field(ws, dev, T)
     _ka_periodic_sqg_velocity!(vel_x, vel_y, target_x, target_y, seg, domain, cache,
-                               kernel.δ, dev, ws)
+                               kernel.δ, dev, far)
+    _ka_ewald_far_field!(vel_x, vel_y, target_x, target_y, seg, kernel, cache, dev, far)
 end
 
 """
@@ -234,8 +272,8 @@ end
 # Reused workspace for the device-resident velocity path. Reusing one workspace
 # across RK stages avoids reallocating the 7 segment buffers + 2 velocity
 # buffers every evaluation (4×/RK4 step), and — by passing the workspace to
-# `_ka_apply_velocity!` — keeps the periodic Ewald tables on-device across
-# stages (via `_ensure_device_ewald!`) instead of re-uploading them each call.
+# `_ka_apply_velocity!` — keeps the periodic far-field buffers on-device across
+# stages instead of reallocating them each call.
 #
 # The caller's ExecutionWorkspace owns these buffers. A task-local owner is
 # used only by standalone internal calls that omit the workspace keyword.

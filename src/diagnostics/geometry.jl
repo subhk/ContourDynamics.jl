@@ -106,8 +106,8 @@ end
     r2 <= eps(T)^2 && return zero(T)
     rr = sqrt(r2) / Ld
     # K₀(rr) + log(rr/2) + γ, without cancellation for small rr.
-    smooth = rr < T(0.5) ? _besselk0_correction(rr) :
-             _besselk0_approx_scalar(rr) + log(rr / 2) + T(Base.MathConstants.eulergamma)
+    smooth = rr <= 2 ? _besselk0_correction(rr) :
+             _besselk0_scalar(rr) + log(rr / 2) + T(Base.MathConstants.eulergamma)
     return T(2) * Ld * Ld * smooth
 end
 

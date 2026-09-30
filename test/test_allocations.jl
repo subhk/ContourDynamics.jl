@@ -10,22 +10,30 @@ using LinearAlgebra: norm
     # runs multithreaded so the serial regression check stays strict at -t1.
     thread_slack(per_thread=2048) = Threads.nthreads() == 1 ? 0 : Threads.nthreads() * per_thread
 
-    @testset "Bessel K0 approximation matches SpecialFunctions" begin
-        xs = exp10.(range(-12, 4; length=2_000))
-        approx = ContourDynamics._besselk0_approx_scalar.(xs)
+    @testset "Bessel K0 matches SpecialFunctions" begin
+        # SpecialFunctions itself is off by up to ~35 ulp near x = 2 (and
+        # underflows to zero before K₀ does); the package's K₀ is within a few
+        # ulps of a 256-bit reference.
+        xs = exp10.(range(-12, log10(600); length=4_000))
         exact = besselk.(0, xs)
-        abs_errors = abs.(approx .- exact)
-        rel_errors = abs_errors ./ max.(abs.(exact), eps(Float64))
+        rel_errors = abs.(ContourDynamics._besselk0_scalar.(xs) .- exact) ./ exact
+        @test maximum(rel_errors) <= 5e-14
+        @test isinf(ContourDynamics._besselk0_scalar(0.0))
+        @test ContourDynamics._besselk0_scalar(1f0) ≈ Float32(besselk(0, 1.0)) rtol=8eps(Float32)
 
-        @test maximum(abs_errors) <= 5e-8
-        @test maximum(rel_errors) <= 2e-7
-
-        small_xs = exp10.(range(-12, log10(0.5); length=1_000))
+        small_xs = exp10.(range(-12, log10(2); length=1_000))
         correction = ContourDynamics._besselk0_correction.(small_xs) .+ log(2.0) .-
                      Base.MathConstants.eulergamma
         expected = besselk.(0, small_xs) .+ log.(small_xs)
+        @test maximum(abs.(correction .- expected)) <= 5e-15
 
-        @test maximum(abs.(correction .- expected)) <= 1e-12
+        setprecision(256) do
+            # Order-zero Bessel K at x = 3 to 60 digits (K₀(3) = 0.03473950438627925...).
+            x = big"3.0"
+            reference = sum(exp(-x * cosh(k * big"0.005")) * (k == 0 ? 1 : 2)
+                            for k in 0:2000) * big"0.005" / 2
+            @test abs(ContourDynamics._besselk0_scalar(x) / reference - 1) < big"1e-60"
+        end
     end
 
     @testset "Unbounded QG velocity is allocation-light after warm-up" begin

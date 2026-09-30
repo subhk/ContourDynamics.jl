@@ -48,7 +48,7 @@ G_{\text{real}}(\mathbf{r}) = \frac{1}{4\pi} \sum_{\mathbf{n}} E_1(\alpha^2|\mat
 Here:
 
 - ``E_1(z)=\int_z^\infty e^{-t}/t\,dt`` is the exponential integral
-- ``\alpha = \sqrt{\pi}/\sqrt{L_xL_y}`` is the splitting parameter used by the implementation
+- ``\alpha`` is the splitting parameter (chosen from the truncation; see below)
 - ``\mathbf{n}=(n,m)\in\mathbb{Z}^2`` is a two-dimensional image index
 - ``\mathbf{L}_\mathbf{n} = (2nL_x, 2mL_y)`` is the corresponding lattice shift
 - ``\sum_{\mathbf n}`` is the image sum, truncated in code by `n_images`
@@ -94,6 +94,41 @@ cosines of multiples of ``\theta`` follow from the Chebyshev recurrence
 evaluation needs two cosines rather than two trigonometric calls per mode.
 `EwaldCache` derives these folded tables from its coefficient tables and
 rejects tables without this symmetry.
+
+### Choice of the Splitting Parameter
+
+The real-space terms decay like ``e^{-\alpha^2r^2}`` and the Fourier
+coefficients like ``e^{-k^2/(4\alpha^2)}``, so ``\alpha`` trades one sum against
+the other. The package takes the largest ``\alpha`` for which the first omitted
+Fourier mode, ``k=\pi(n_{\text{fourier}}+1)/\max(L_x,L_y)``, is negligible at
+the working precision: more Fourier modes make the real-space sums
+shorter-ranged, and images farther than ``\sqrt{u_c}/\alpha`` (with
+``e^{-u_c}`` below rounding) are skipped. If the `n_images` block cannot then
+keep the real-space truncation equally small, as happens for few images or
+high-precision types, ``\alpha`` instead balances the two truncation errors.
+The default `n_fourier = 16` leaves little beyond the nearest images in real
+space.
+
+### Near and Far Fields
+
+The Fourier part is linear in the sources. For the velocity of all nodes,
+
+```math
+\sum_j q_j\int_j \sum_{\mathbf k\ne 0} c_{\mathbf k}\cos(\mathbf k\cdot(\mathbf x-\mathbf s))\,\hat{\mathbf t}\,ds
+= \sum_{\mathbf k\ne 0} c_{\mathbf k}\,\operatorname{Re}\!\left[e^{i\mathbf k\cdot\mathbf x}S(\mathbf k)\right],
+\qquad
+S(\mathbf k)=\sum_j q_j\int_j e^{-i\mathbf k\cdot\mathbf s}\,\hat{\mathbf t}\,ds,
+```
+
+so `velocity!` builds the structure factor ``S`` once from every segment (with
+the same Gauss–Legendre points as the pairwise correction) and sums it over
+the modes at each node. Only the real-space part remains pairwise, which
+makes the Fourier part cost ``O(N)`` per mode rather than ``O(N^2)``. The
+periodic energy uses Parseval's identity in the same way: its Fourier part is
+``\sum_{\mathbf k\ne0}c_{\mathbf k}|T(\mathbf k)|^2`` with ``T`` built from the
+energy quadrature. Single-point queries (`velocity(prob, x)`) and
+`segment_velocity` still evaluate both parts pairwise, using the folded cosine
+tables above.
 
 ### Singular Subtraction for Periodic Velocity
 

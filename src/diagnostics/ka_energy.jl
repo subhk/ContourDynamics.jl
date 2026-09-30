@@ -116,9 +116,7 @@ mutable struct _EnergyWorkspace{T, DA<:AbstractVector{T}, IA<:AbstractVector{Int
     partial::DA
     host_count::Vector{Int}
     host_partial::Vector{T}
-    dev_ewald_fourier::DMA
-    dev_ewald_energy::DMA
-    last_ewald::Union{Nothing,EwaldCache{T}}
+    far::_DeviceFarField{T, DA, DMA}   # periodic Parseval buffers
     ncontours::Int
     total_nodes::Int
 end
@@ -128,8 +126,8 @@ function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
     da = device_zeros(dev, T, total_nodes)
     ia = device_zeros(dev, Int, ncontours)
     ba = device_zeros(dev, UInt8, ncontours)
-    dma = device_zeros(dev, T, 0, 0)
-    DA, IA, BA, DMA = typeof(da), typeof(ia), typeof(ba), typeof(dma)
+    far = _DeviceFarField(dev, T)
+    DA, IA, BA, DMA = typeof(da), typeof(ia), typeof(ba), typeof(far.empty)
     mk_t() = device_zeros(dev, T, total_nodes)
     mk_i_contours() = device_zeros(dev, Int, ncontours)
     _EnergyWorkspace{T,DA,IA,BA,DMA}(
@@ -138,7 +136,7 @@ function _create_energy_workspace(dev::AbstractDevice, ::Type{T},
         device_zeros(dev, Int, 1),
         da, mk_t(), mk_t(), mk_t(), mk_t(), mk_t(),
         zeros(Int, 1), Vector{T}(undef, total_nodes),
-        dma, device_zeros(dev, T, 0, 0), nothing, ncontours, total_nodes)
+        far, ncontours, total_nodes)
 end
 
 const _ENERGY_WS_KEY = :contourdynamics_energy_workspace
@@ -188,17 +186,6 @@ function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
         state.x, state.y, state.pv, state.wrapx, state.wrapy,
         state.offsets, state.lengths, output_offset, nvalid)
     return n
-end
-
-function _ensure_energy_ewald!(ws::_EnergyWorkspace{T}, cache::EwaldCache{T},
-                               dev::AbstractDevice) where {T}
-    if ws.last_ewald !== cache
-        ws.dev_ewald_fourier = to_device(dev, cache.fourier_cos)
-        ws.dev_ewald_energy = to_device(
-            dev, _required_ewald_table(cache, cache.energy_cos, :energy_coeffs))
-        ws.last_ewald = cache
-    end
-    return ws.dev_ewald_fourier, ws.dev_ewald_energy
 end
 
 @inline function _energy_segment_geometry(ax, ay, bx, by, i, ::Type{T}) where {T}
@@ -339,12 +326,79 @@ function _ka_energy_raw_with_workspace!(kernel!, ws::_EnergyWorkspace{T}, n::Int
                                         dev::AbstractDevice, args...) where {T}
     n == 0 && return zero(T)
     @_ka_launch dev n kernel!(ws.partial, ws.ax, ws.ay, ws.bx, ws.by, ws.pv, args..., n)
+    return _reduce_energy_partials!(ws, n)
+end
+
+function _reduce_energy_partials!(ws::_EnergyWorkspace{T}, n::Int) where {T}
     copyto!(ws.host_partial, 1, ws.partial, 1, n)
     total = zero(T)
     @inbounds for i in 1:n
         total += ws.host_partial[i]
     end
     return total
+end
+
+# ── Periodic energy: real-space pairs plus Parseval ──────────────────────
+# (velocity/periodic/far_field.jl). The pair kernel sums the real-space
+# potential into `partial`; each segment then adds its share of the Fourier
+# part, its energy quadrature sources dotted with the far field of all sources.
+
+# The energy's 3-point Gauss–Legendre points of each straight segment and
+# their pv-weighted segment vectors.
+@kernel function _energy_sources_ka!(src_x, src_y, src_wx, src_wy,
+                                     ax, ay, bx, by, pv, n_seg)
+    j = @index(Global)
+    if j <= n_seg
+        T = eltype(src_x)
+        dsx, dsy, midx, midy, half_dsx, half_dsy =
+            _energy_segment_geometry(ax, ay, bx, by, j, T)
+        g_nodes, g_weights = _gl3_nodes_weights(T)
+        @inbounds for q in 1:3
+            i = 3 * (j - 1) + q
+            w = pv[j] * g_weights[q] / T(2)
+            src_x[i] = midx + g_nodes[q] * half_dsx
+            src_y[i] = midy + g_nodes[q] * half_dsy
+            src_wx[i] = w * dsx
+            src_wy[i] = w * dsy
+        end
+    end
+end
+
+@kernel function _energy_far_field_ka!(partial, src_x, src_y, src_wx, src_wy, coeff,
+                                       s_re_x, s_im_x, s_re_y, s_im_y, dkx, dky, K, n_seg)
+    j = @index(Global)
+    if j <= n_seg
+        T = eltype(partial)
+        e = zero(T)
+        @inbounds for q in 1:3
+            i = 3 * (j - 1) + q
+            fx, fy = _ka_far_field_at(src_x[i], src_y[i], coeff,
+                                      s_re_x, s_im_x, s_re_y, s_im_y, dkx, dky, K)
+            e += src_wx[i] * fx + src_wy[i] * fy
+        end
+        partial[j] += e
+    end
+end
+
+function _ka_periodic_energy_partials!(partial, ax, ay, bx, by, pv, n::Int,
+                                       kernel, domain::PeriodicDomain{T},
+                                       cache::EwaldCache{T}, far::_DeviceFarField{T},
+                                       dev::AbstractDevice) where {T}
+    kernel!, args = _periodic_energy_recipe(kernel, domain, cache, (far.empty, far.empty))
+    @_ka_launch dev n kernel!(partial, ax, ay, bx, by, pv, args..., n)
+    coeff = _prepare_device_far_field!(far, cache, kernel, 3 * n, dev,
+                                       _energy_far_coefficients)
+    K = length(cache.kx) ÷ 2
+    @_ka_launch dev n _energy_sources_ka!(
+        far.src_x, far.src_y, far.src_wx, far.src_wy, ax, ay, bx, by, pv, n)
+    @_ka_launch dev (2K + 1) * (K + 1) _ewald_structure_factor_ka!(
+        far.s_re_x, far.s_im_x, far.s_re_y, far.s_im_y,
+        far.src_x, far.src_y, far.src_wx, far.src_wy,
+        cache.dkx, cache.dky, K, 3 * n)
+    @_ka_launch dev n _energy_far_field_ka!(
+        partial, far.src_x, far.src_y, far.src_wx, far.src_wy, coeff,
+        far.s_re_x, far.s_im_x, far.s_re_y, far.s_im_y, cache.dkx, cache.dky, K, n)
+    return partial
 end
 
 function _ka_energy_raw(kernel!, contours, dev::AbstractDevice, ::Type{T}, args...) where {T}
@@ -359,12 +413,6 @@ end
         γ += c.pv * vortex_area(c)
     end
     return γ
-end
-
-# Upload the Ewald cosine tables once per call: (fourier, energy).
-@inline function _device_ewald_tables(cache::EwaldCache, dev::AbstractDevice)
-    return (to_device(dev, cache.fourier_cos),
-            to_device(dev, _required_ewald_table(cache, cache.energy_cos, :energy_coeffs)))
 end
 
 # GPU problems keep their nodes in `device_state`, CPU-device problems in the
@@ -429,10 +477,12 @@ function _ka_energy_from_state(src::Vector{PVContour{T}},
                                dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
     cache = _get_ewald_cache(domain, kernel)
     data = _pack_energy_segments(src, dev, T)
-    length(data.ax) == 0 && return zero(T)
-    tables = _device_ewald_tables(cache, dev)
-    kernel!, args = _periodic_energy_recipe(kernel, domain, cache, tables)
-    raw = _ka_energy_raw_with_segments!(kernel!, data, dev, T, args...)
+    n = length(data.ax)
+    n == 0 && return zero(T)
+    partial = _ka_periodic_energy_partials!(
+        device_zeros(dev, T, n), data.ax, data.ay, data.bx, data.by, data.pv, n,
+        kernel, domain, cache, _DeviceFarField(dev, T), dev)
+    raw = sum(to_cpu(partial))
     return _normalize_energy(raw) + _periodic_energy_zero_mode(
         kernel, domain, cache, () -> _energy_contour_circulation(src))
 end
@@ -461,9 +511,9 @@ function _ka_energy_state_with_ws(state::DeviceContourState{T},
     cache = _get_ewald_cache(domain, kernel)
     n = _pack_energy_workspace!(ws, state, dev)
     n == 0 && return zero(T)
-    tables = _ensure_energy_ewald!(ws, cache, dev)
-    kernel!, args = _periodic_energy_recipe(kernel, domain, cache, tables)
-    raw = _ka_energy_raw_with_workspace!(kernel!, ws, n, dev, args...)
+    _ka_periodic_energy_partials!(ws.partial, ws.ax, ws.ay, ws.bx, ws.by, ws.pv, n,
+                                  kernel, domain, cache, ws.far, dev)
+    raw = _reduce_energy_partials!(ws, n)
     return _normalize_energy(raw) + _periodic_energy_zero_mode(
         kernel, domain, cache, () -> _state_circulation(state, dev))
 end
@@ -604,9 +654,10 @@ end
         mode_kernel::Union{EulerKernel, QGKernel}, energy_ws, total, dev, domain,
         to_modal, mode, layer_circulation, area)
     cache = _get_ewald_cache(domain, mode_kernel)
-    tables = _ensure_energy_ewald!(energy_ws, cache, dev)
-    kernel!, args = _periodic_energy_recipe(mode_kernel, domain, cache, tables)
-    raw = _ka_energy_raw_with_workspace!(kernel!, energy_ws, total, dev, args...)
+    _ka_periodic_energy_partials!(energy_ws.partial, energy_ws.ax, energy_ws.ay,
+                                  energy_ws.bx, energy_ws.by, energy_ws.pv, total,
+                                  mode_kernel, domain, cache, energy_ws.far, dev)
+    raw = _reduce_energy_partials!(energy_ws, total)
     zero_energy = _periodic_modal_zero_energy(
         mode_kernel, to_modal, mode, layer_circulation, area)
     return raw, zero_energy

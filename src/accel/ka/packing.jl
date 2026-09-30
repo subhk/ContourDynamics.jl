@@ -137,6 +137,75 @@ end
     end
 end
 
+# ── Device far field ─────────────────────────────────────────────
+# Buffers of the structure-factor far field (velocity/periodic/far_field.jl)
+# on the device: the half-plane coefficients of each cache in use (a
+# multi-layer problem alternates between its modes' caches), the structure
+# factor, and its Gauss–Legendre sources. `empty` is the Fourier table handed
+# to the pair kernels, which then evaluate the real-space part only.
+mutable struct _DeviceFarField{T, DA<:AbstractVector{T}, DMA<:AbstractMatrix{T}}
+    caches::Vector{EwaldCache{T}}
+    coeffs::Vector{DMA}
+    s_re_x::DMA; s_im_x::DMA
+    s_re_y::DMA; s_im_y::DMA
+    src_x::DA; src_y::DA
+    src_wx::DA; src_wy::DA
+    empty::DMA
+end
+
+function _DeviceFarField(dev::AbstractDevice, ::Type{T}) where {T}
+    da = device_zeros(dev, T, 0)
+    dma = device_zeros(dev, T, 0, 0)
+    mk() = device_zeros(dev, T, 0, 0)
+    return _DeviceFarField{T, typeof(da), typeof(dma)}(
+        EwaldCache{T}[], typeof(dma)[], dma, mk(), mk(), mk(),
+        da, device_zeros(dev, T, 0), device_zeros(dev, T, 0), device_zeros(dev, T, 0),
+        mk())
+end
+
+# Size the buffers for `n_src` source points and return the device coefficients
+# of `kernel` with `cache` (`coefficients`: velocity or energy), uploaded on
+# first use. Each cache serves one kernel, and each far field one coefficient
+# kind.
+function _prepare_device_far_field!(far::_DeviceFarField{T}, cache::EwaldCache{T},
+                                    kernel::AbstractKernel, n_src::Int,
+                                    dev::AbstractDevice,
+                                    coefficients::F=_far_field_coefficients) where {T, F}
+    index = 0
+    for (i, c) in pairs(far.caches)
+        c === cache && (index = i; break)
+    end
+    if index == 0
+        if length(far.caches) >= _MAX_FAR_FIELDS
+            popfirst!(far.caches)
+            popfirst!(far.coeffs)
+        end
+        push!(far.caches, cache)
+        push!(far.coeffs, to_device(dev, coefficients(cache, kernel)))
+        index = length(far.caches)
+    end
+    coeff = far.coeffs[index]
+    if size(far.s_re_x) != size(coeff)
+        far.s_re_x = device_zeros(dev, T, size(coeff)...)
+        far.s_im_x = device_zeros(dev, T, size(coeff)...)
+        far.s_re_y = device_zeros(dev, T, size(coeff)...)
+        far.s_im_y = device_zeros(dev, T, size(coeff)...)
+    end
+    if length(far.src_x) != n_src
+        far.src_x = device_zeros(dev, T, n_src)
+        far.src_y = device_zeros(dev, T, n_src)
+        far.src_wx = device_zeros(dev, T, n_src)
+        far.src_wy = device_zeros(dev, T, n_src)
+    end
+    return coeff
+end
+
+# The workspace's far field, or a fresh one for standalone launches.
+@inline _device_far_field(::Nothing, dev::AbstractDevice, ::Type{T}) where {T} =
+    _DeviceFarField(dev, T)
+@inline _device_far_field(far::_DeviceFarField, ::AbstractDevice, ::Type) = far
+@inline _device_far_field(ws, ::AbstractDevice, ::Type) = ws.far
+
 # ── KA workspace (CPU-backend packing buffers) ───────────────────
 # Bundles the CPU packing buffers and device arrays for one packed problem size.
 # Used by the CPU KA velocity path, which exists to validate the KA kernels
@@ -158,12 +227,10 @@ mutable struct _GPUWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatrix{T}}
     dev_ka::DA; dev_kb::DA
     dev_tx::DA; dev_ty::DA
     dev_vel_x::DA; dev_vel_y::DA
-    # Ewald cosine tables; the grid spacings travel as scalar kernel arguments.
-    dev_ewald_fourier::DMA
-    dev_ewald_corr::DMA
+    # Periodic Ewald far field, reused across RK stages.
+    far::_DeviceFarField{T, DA, DMA}
     # CPU copy-back buffers
     cpu_vx::Vector{T}; cpu_vy::Vector{T}
-    last_ewald::Union{Nothing, EwaldCache{T}}
     n::Int
 end
 
@@ -173,8 +240,8 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
     # mutable workspace fields concrete and type-stable.
     da = device_zeros(dev, T, N)  # probe device array type
     DA = typeof(da)
-    dev_fourier = device_zeros(dev, T, 0, 0)
-    DMA = typeof(dev_fourier)
+    far = _DeviceFarField(dev, T)
+    DMA = typeof(far.empty)
     _GPUWorkspace{T, DA, DMA}(
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_ax, cpu_ay
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_bx, cpu_by
@@ -187,10 +254,8 @@ function _create_gpu_workspace(dev::AbstractDevice, ::Type{T}, N::Int) where {T}
         device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_ka, dev_kb
         device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_tx, dev_ty
         device_zeros(dev, T, N), device_zeros(dev, T, N),  # dev_vel_x, dev_vel_y
-        dev_fourier,                                        # dev_ewald_fourier
-        device_zeros(dev, T, 0, 0),                         # dev_ewald_corr
+        far,                                                # far
         Vector{T}(undef, N), Vector{T}(undef, N),  # cpu_vx, cpu_vy
-        nothing,                                   # last_ewald
         N,
     )
 end
@@ -208,11 +273,9 @@ mutable struct _MultilayerWorkspace{T, DA<:AbstractVector{T}, DMA<:AbstractMatri
     vel_x::DA; vel_y::DA                                    # accumulated flat output
     flat_vel::VDA                                            # packed device output for host API
     host_flat::Vector{SVector{2,T}}                          # reusable device-to-host target
-    # Device Ewald cosine tables for periodic domains, re-uploaded only when
-    # the host cache object changes.
-    dev_ewald_fourier::DMA
-    dev_ewald_corr::DMA
-    last_ewald::Union{Nothing, EwaldCache{T}}
+    # Periodic Ewald far field; its coefficients are re-uploaded only when the
+    # modal loop switches caches.
+    far::_DeviceFarField{T, DA, DMA}
     n::Int
 end
 
@@ -221,40 +284,16 @@ function _create_multilayer_workspace(dev::AbstractDevice, ::Type{T}, total::Int
     # concrete and type-stable (Vector{T} on CPU, CuVector{T} on GPU).
     da = device_zeros(dev, T, total)
     DA = typeof(da)
-    dev_fourier = device_zeros(dev, T, 0, 0)
-    DMA = typeof(dev_fourier)
+    far = _DeviceFarField(dev, T)
+    DMA = typeof(far.empty)
     mk() = device_zeros(dev, T, total)
     flat_vel = device_zeros(dev, SVector{2,T}, total)
     VDA = typeof(flat_vel)
     _MultilayerWorkspace{T, DA, DMA, VDA}(da, mk(), mk(), mk(), mk(), mk(), mk(),
                                           mk(), mk(), mk(), mk(), mk(), mk(),
                                           flat_vel, Vector{SVector{2,T}}(undef, total),
-                                          dev_fourier, device_zeros(dev, T, 0, 0),
-                                          nothing, total)
+                                          far, total)
 end
-
-function _ensure_device_ewald!(ws::Union{_GPUWorkspace{T}, _MultilayerWorkspace{T}},
-                               cache::EwaldCache{T},
-                               dev::AbstractDevice) where {T}
-    # Fourier/Ewald data depends only on the domain/kernel cache. Reuse the
-    # previous device copy when the same cache object is used across RK stages
-    # (the multilayer modal loop calls this once per mode per stage, but the
-    # upload happens only when the host cache object changes).
-    if ws.last_ewald !== cache
-        ws.dev_ewald_fourier = to_device(dev, cache.fourier_cos)
-        ws.dev_ewald_corr = to_device(dev, cache.corr_cos)
-        ws.last_ewald = cache
-    end
-    return ws.dev_ewald_fourier, ws.dev_ewald_corr
-end
-
-@inline function _periodic_ewald_data(::Nothing, cache::EwaldCache{T},
-                                      dev::AbstractDevice) where {T}
-    return to_device(dev, cache.fourier_cos), to_device(dev, cache.corr_cos)
-end
-
-@inline _periodic_ewald_data(ws, cache::EwaldCache{T}, dev::AbstractDevice) where {T} =
-    _ensure_device_ewald!(ws, cache, dev)
 
 # In-place segment packing into a reused workspace's device buffers (avoids the
 # per-evaluation allocation of `_state_segment_data`). The workspace must be

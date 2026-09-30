@@ -334,6 +334,102 @@ end
     vel_y[i] = vy
 end
 
+# ── Structure-factor far field (velocity/periodic/far_field.jl) ────────────
+
+# The five Gauss–Legendre points of each segment and their pv-weighted
+# tangents: the sources of the structure factor, matching the pair kernels'
+# straight or cubic quadrature.
+@kernel function _ewald_sources_ka!(src_x, src_y, src_wx, src_wy,
+                                    seg_ax, seg_ay, seg_bx, seg_by, seg_pv,
+                                    seg_ka, seg_kb, n_seg)
+    j = @index(Global)
+    if j <= n_seg
+        T = eltype(src_x)
+        ax = seg_ax[j]
+        ay = seg_ay[j]
+        bx = seg_bx[j]
+        by = seg_by[j]
+        κa = seg_ka[j]
+        κb = seg_kb[j]
+        dsx = bx - ax
+        dsy = by - ay
+        ds_len = sqrt(dsx^2 + dsy^2)
+        curved = max(abs(κa), abs(κb)) * ds_len > sqrt(eps(T))
+        pv = ds_len < eps(T) ? zero(T) : seg_pv[j]
+        g_nodes, g_weights = _gl5_nodes_weights(T)
+        @inbounds for q in 1:5
+            p = (one(T) + g_nodes[q]) / T(2)
+            sx, sy, tx, ty = curved ?
+                _cubic_point_tangent_scalar(ax, ay, bx, by, κa, κb, p) :
+                (ax + p * dsx, ay + p * dsy, dsx, dsy)
+            w = pv * g_weights[q] / T(2)
+            i = 5 * (j - 1) + q
+            src_x[i] = sx
+            src_y[i] = sy
+            src_wx[i] = w * tx
+            src_wy[i] = w * ty
+        end
+    end
+end
+
+# One work item per mode k = (m·dkx, n·dky), m = -K:K, n = 0:K:
+# S(k) = Σ w e^{-ik·s} over all sources.
+@kernel function _ewald_structure_factor_ka!(s_re_x, s_im_x, s_re_y, s_im_y,
+                                             src_x, src_y, src_wx, src_wy,
+                                             dkx, dky, K, n_src)
+    idx = @index(Global)
+    nm = 2 * K + 1
+    if idx <= nm * (K + 1)
+        T = eltype(s_re_x)
+        mi = (idx - 1) % nm + 1
+        ni = (idx - 1) ÷ nm + 1
+        kx = T(mi - K - 1) * dkx
+        ky = T(ni - 1) * dky
+        re_x = zero(T)
+        im_x = zero(T)
+        re_y = zero(T)
+        im_y = zero(T)
+        @inbounds for i in 1:n_src
+            sn, cs = sincos(kx * src_x[i] + ky * src_y[i])
+            re_x += src_wx[i] * cs
+            im_x -= src_wx[i] * sn
+            re_y += src_wy[i] * cs
+            im_y -= src_wy[i] * sn
+        end
+        s_re_x[mi, ni] = re_x
+        s_im_x[mi, ni] = im_x
+        s_re_y[mi, ni] = re_y
+        s_im_y[mi, ni] = im_y
+    end
+end
+
+# Σ_k 2c_k Re[e^{ik·x} S(k)] over the half plane at (x, y).
+@inline function _ka_far_field_at(x::T, y::T, coeff, s_re_x, s_im_x, s_re_y, s_im_y,
+                                  dkx::T, dky::T, K) where {T}
+    fx = zero(T)
+    fy = zero(T)
+    @inbounds for ni in 1:(K + 1), mi in 1:(2 * K + 1)
+        c = coeff[mi, ni]
+        iszero(c) && continue
+        sn, cs = sincos(T(mi - K - 1) * dkx * x + T(ni - 1) * dky * y)
+        fx += c * (cs * s_re_x[mi, ni] - sn * s_im_x[mi, ni])
+        fy += c * (cs * s_re_y[mi, ni] - sn * s_im_y[mi, ni])
+    end
+    return fx, fy
+end
+
+# One work item per target: add the Fourier part of the velocity.
+@kernel function _ewald_far_field_ka!(vel_x, vel_y, target_x, target_y, coeff,
+                                      s_re_x, s_im_x, s_re_y, s_im_y,
+                                      dkx, dky, K, n_targets)
+    i = @index(Global)
+    if i <= n_targets
+        vx, vy = _ka_far_field_at(target_x[i], target_y[i], coeff,
+                                  s_re_x, s_im_x, s_re_y, s_im_y, dkx, dky, K)
+        vel_x[i] += vx
+        vel_y[i] += vy
+    end
+end
 
 @kernel function _beta_sawtooth_add_ka!(vel_x, y, beta, kappa, dy, Ly, total)
     # Analytic zonal velocity of `reference staircase - beta*y`, added on top

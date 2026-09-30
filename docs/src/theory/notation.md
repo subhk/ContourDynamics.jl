@@ -62,7 +62,7 @@ but the package does not identify them.
 | ``\mathbf{r}`` | Displacement from source to target | ``\mathbf{x}-\mathbf{x}'`` |
 | ``\mathbf{n}=(n,m)\in\mathbb{Z}^2`` | Periodic-image index | Truncated by `n_images` |
 | ``\mathbf{L}_{\mathbf{n}}=(2nL_x,2mL_y)`` | Image-lattice translation | Derived internally |
-| ``\alpha=\sqrt{\pi/(L_xL_y)}`` | Ewald splitting parameter used by the package | `EwaldCache.alpha` |
+| ``\alpha`` | Ewald splitting parameter, chosen from `n_fourier` and `n_images` | `EwaldCache.alpha` |
 | ``\mathbf{k}=(\pi p/L_x,\pi s/L_y)`` | Fourier wavevector, ``p,s\in\mathbb{Z}`` | `EwaldCache.kx`, `EwaldCache.ky` |
 | ``E_1(z)=\int_z^\infty e^{-t}/t\,dt`` | Exponential integral | `ContourDynamics._expint_e1` |
 | ``\operatorname{erf}``, ``\operatorname{erfc}`` | Error function and complementary error function | SQG Ewald splitting |

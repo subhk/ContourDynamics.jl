@@ -110,7 +110,7 @@ integral, we use **singular subtraction**:
 K_0(r/L_d) = -\log(r) + \underbrace{\left[K_0(r/L_d) + \log(r)\right]}_{\text{smooth at } r=0}
 ```
 
-The logarithmic singularity is handled by the exact Euler antiderivative. The smooth remainder ``K_0(r/L_d) + \log(r) \to \log(2L_d) - \gamma_E`` as ``r \to 0`` is integrated with **5-point Gauss-Legendre quadrature**.
+The logarithmic singularity is handled by the exact Euler antiderivative. The smooth remainder ``K_0(r/L_d) + \log(r) \to \log(2L_d) - \gamma_E`` as ``r \to 0`` is integrated with **5-point Gauss-Legendre quadrature**. ``K_0`` is evaluated to within a few units in the last place: by its power series for ``r \le 2L_d``, summed directly for the smooth remainder so the logarithms cancel exactly, and by a Chebyshev expansion of ``e^x\sqrt{x}\,K_0(x)`` beyond.
 
 Here:
 

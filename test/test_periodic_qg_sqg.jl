@@ -1,4 +1,5 @@
 using Test, ContourDynamics, StaticArrays, LinearAlgebra
+using SpecialFunctions: besselk
 
 extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
 
@@ -584,6 +585,139 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         @test_throws ArgumentError velocity(qprob, SVector(0.1, 0.2))
         @test_throws ArgumentError ContourDynamics._ka_velocity!(
             zeros(SVector{2,Float64}, 16), qprob, CPU())
+        clear_ewald_cache!()
+    end
+
+    # Bulk periodic velocity sums the real-space part pairwise and the Fourier
+    # part once through structure factors; single-point queries evaluate both
+    # pairwise. Closed and spanning contours, curved and straight segments.
+    function split_test_contours(domain)
+        closed = elliptical_patch(0.5, 0.3, 40, 1.0; cx=0.4, cy=-0.3, θ=0.4)
+        square = PVContour([SVector(-1.2, 0.5), SVector(-0.8, 0.5),
+                            SVector(-0.8, 0.9), SVector(-1.2, 0.9)], -0.6,
+                           zero(SVector{2,Float64}), trues(4))
+        spanning = [PVContour([SVector(p[1], p[2] + 0.15 * sin(p[1])) for p in c.nodes],
+                              c.pv, c.wrap)
+                    for c in beta_staircase(0.8, domain, 2; nodes_per_contour=24)]
+        return vcat([closed, square], spanning)
+    end
+
+    @testset "bulk periodic velocity matches the pairwise Ewald sum" begin
+        clear_ewald_cache!()
+        domain = PeriodicDomain(1.7, 1.2)
+        for kernel in (EulerKernel(), QGKernel(0.7), SQGKernel(0.05))
+            prob = ContourProblem(kernel, domain, split_test_contours(domain))
+            n = total_nodes(prob)
+            bulk = zeros(SVector{2,Float64}, n)
+            velocity!(bulk, prob)
+            nodes = reduce(vcat, [c.nodes for c in prob.contours])
+            pairwise = [velocity(prob, x) for x in nodes]
+            scale = maximum(norm, pairwise)
+            @test maximum(norm.(bulk .- pairwise)) <= 1e-12 * scale
+            device = zeros(SVector{2,Float64}, n)
+            ContourDynamics._ka_velocity!(device, prob, CPU())
+            @test maximum(norm.(device .- pairwise)) <= 1e-12 * scale
+        end
+
+        F = 1 / (2 * 0.8^2)
+        ml_kernel = MultiLayerQGKernel(SVector(0.8), SMatrix{2,2,Float64}(-F, F, F, -F))
+        cs = split_test_contours(domain)
+        ml = MultiLayerContourProblem(ml_kernel, domain, (cs[1:2], cs[3:end]))
+        vel = (zeros(SVector{2,Float64}, 44), zeros(SVector{2,Float64}, 48))
+        velocity!(vel, ml)
+        for (layer, contours) in enumerate(ml.layers)
+            for (i, x) in enumerate(reduce(vcat, [c.nodes for c in contours]))
+                @test norm(vel[layer][i] - velocity(ml, x)[layer]) <= 1e-12
+            end
+        end
+
+        staircase = beta_staircase(0.4, domain, 2; nodes_per_contour=16)
+        beta = ContourProblem(BetaPlaneQGKernel(0.4, 0.7, staircase), domain,
+                              vcat(deepcopy(staircase), [cs[1]]))
+        bulk = zeros(SVector{2,Float64}, total_nodes(beta))
+        velocity!(bulk, beta)
+        nodes = reduce(vcat, [c.nodes for c in beta.contours])
+        @test maximum(norm.(bulk .- [velocity(beta, x) for x in nodes])) <= 1e-12
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic results do not depend on the Ewald truncation" begin
+        # α follows n_fourier, so these truncations split the sums differently.
+        # (The SQG energy keeps an algebraic image tail, so n_images stays fixed.)
+        domain = PeriodicDomain(1.7, 1.2)
+        contours = split_test_contours(domain)[1:2]
+        for kernel in (EulerKernel(), QGKernel(0.7), SQGKernel(0.05))
+            results = map(((8, 2), (16, 2), (24, 2))) do (n_fourier, n_images)
+                clear_ewald_cache!()
+                setup_ewald_cache!(domain, kernel; n_fourier=n_fourier, n_images=n_images)
+                prob = ContourProblem(kernel, domain, deepcopy(contours))
+                vel = zeros(SVector{2,Float64}, total_nodes(prob))
+                velocity!(vel, prob)
+                (vel, energy(prob))
+            end
+            scale = maximum(norm, results[1][1])
+            for (vel, E) in results[2:end]
+                @test maximum(norm.(vel .- results[1][1])) <= 1e-12 * scale
+                @test E ≈ results[1][2] rtol=1e-12
+            end
+        end
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic energy by Parseval matches the pairwise Fourier sum" begin
+        # The pairwise reference evaluates the full potential (cosine tables)
+        # for every ordered pair; copies of the targets keep it off the
+        # symmetric self-pair path.
+        clear_ewald_cache!()
+        domain = PeriodicDomain(1.7, 1.2)
+        contours = split_test_contours(domain)[1:2]
+        pair(ci, cj, cache, kernel::EulerKernel) =
+            ContourDynamics._energy_contour_pair_euler_periodic(ci, cj, cache, domain)
+        pair(ci, cj, cache, kernel::QGKernel) =
+            ContourDynamics._energy_contour_pair_qg_periodic(ci, cj, cache, domain, kernel.Ld)
+        pair(ci, cj, cache, kernel::SQGKernel) =
+            ContourDynamics._energy_contour_pair_sqg_periodic(ci, cj, cache, domain, kernel.δ)
+        # QGKernel(0.05) sums the QG kernel directly over images.
+        for kernel in (EulerKernel(), QGKernel(0.7), QGKernel(0.05), SQGKernel(0.05))
+            prob = ContourProblem(kernel, domain, deepcopy(contours))
+            cache = ContourDynamics._get_ewald_cache(domain, kernel)
+            raw = sum(ci.pv * cj.pv * pair(ci, deepcopy(cj), cache, kernel)
+                      for ci in contours, cj in contours)
+            zero_mode = kernel isa QGKernel ?
+                circulation(prob)^2 * kernel.Ld^2 / (2 * 4 * domain.Lx * domain.Ly) : 0.0
+            reference = ContourDynamics._normalize_energy(raw) + zero_mode
+            @test energy(prob) ≈ reference rtol=1e-12
+            @test ContourDynamics._ka_energy(prob, CPU()) ≈ reference rtol=1e-12
+        end
+        clear_ewald_cache!()
+    end
+
+    @testset "periodic QG Ewald velocity matches an accurate-K₀ image sum" begin
+        # Straight segments and off-contour targets keep the reference
+        # integrand smooth; SpecialFunctions' K₀ is accurate to rounding.
+        clear_ewald_cache!()
+        L, Ld, n = 10.0, 1.0, 64
+        domain = PeriodicDomain(L, L)
+        nodes = [SVector(0.5cos(2π * i / n), 0.5sin(2π * i / n)) for i in 0:(n - 1)]
+        prob = ContourProblem(QGKernel(Ld), domain,
+                              [PVContour(nodes, 1.0, zero(SVector{2,Float64}), trues(n))])
+        # 20-point Gauss–Legendre rule (Golub–Welsch).
+        jacobi = eigen(SymTridiagonal(zeros(20), [k / sqrt(4k^2 - 1) for k in 1:19]))
+        g, w = jacobi.values, 2 .* jacobi.vectors[1, :] .^ 2
+        function reference(x)
+            v = zero(SVector{2,Float64})
+            for i in -2:2, j in -2:2, s in 1:n
+                a = nodes[s] + SVector(2L * i, 2L * j)
+                b = nodes[mod1(s + 1, n)] + SVector(2L * i, 2L * j)
+                acc = sum(w[q] / 2 * besselk(0, norm(x - (a + (1 + g[q]) / 2 * (b - a))) / Ld)
+                          for q in eachindex(g))
+                v += acc / (2π) * (b - a)
+            end
+            return v
+        end
+        for x in (SVector(1.5, 0.3), SVector(-2.0, 1.0), SVector(0.0, -3.0))
+            @test velocity(prob, x) ≈ reference(x) rtol=1e-12
+        end
         clear_ewald_cache!()
     end
 end

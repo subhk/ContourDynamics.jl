@@ -1,13 +1,21 @@
 # Periodic-domain single-layer diagnostics.
 
+# The Fourier part of a periodic energy double sum (by Parseval) and the
+# real-space cache that the contour pairs then evaluate the rest with.
+function _periodic_energy_split(prob::ContourProblem{K, PeriodicDomain{T}, T}) where {K, T}
+    cache = _get_ewald_cache(prob.domain, prob.kernel)
+    fourier = _parseval_energy(_energy_far_coefficients(cache, prob.kernel), cache,
+                               ((_host_contours(prob), one(T)),))
+    return fourier, _real_space_cache(cache)
+end
+
 function energy(prob::ContourProblem{EulerKernel, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = _host_contours(prob)
-    cache = _get_ewald_cache(prob.domain, prob.kernel)
-    E = zero(T)
+    E, near = _periodic_energy_split(prob)
 
     @_valid_contour_pairs ci cj mult partial contours prob.velocity_scratch.energy_partial begin
-        E += mult * ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, cache, prob.domain; _partial=partial)
+        E += mult * ci.pv * cj.pv * _energy_contour_pair_euler_periodic(ci, cj, near, prob.domain; _partial=partial)
     end
 
     return _normalize_energy(E)
@@ -16,12 +24,11 @@ end
 function energy(prob::ContourProblem{QGKernel{T}, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = _host_contours(prob)
-    cache = _get_ewald_cache(prob.domain, prob.kernel)
-    E = zero(T)
+    E, near = _periodic_energy_split(prob)
 
     @_valid_contour_pairs ci cj mult partial contours prob.velocity_scratch.energy_partial begin
         E += mult * ci.pv * cj.pv * _energy_contour_pair_qg_periodic(
-            ci, cj, cache, prob.domain, prob.kernel.Ld; _partial=partial)
+            ci, cj, near, prob.domain, prob.kernel.Ld; _partial=partial)
     end
 
     area = T(4) * prob.domain.Lx * prob.domain.Ly
@@ -33,15 +40,14 @@ end
 function energy(prob::ContourProblem{SQGKernel{T}, PeriodicDomain{T}, T}) where {T}
     prob.dev isa CPU || return _ka_energy(prob, prob.dev)
     contours = _host_contours(prob)
-    cache = _get_ewald_cache(prob.domain, prob.kernel)
     δ = prob.kernel.δ
-    E = zero(T)
+    E, near = _periodic_energy_split(prob)
 
     # The potential is zero-mean (periodic SQG inversion acts on the mean-free
     # scalar), so no k = 0 term enters the Hamiltonian.
     @_valid_contour_pairs ci cj mult partial contours prob.velocity_scratch.energy_partial begin
         E += mult * ci.pv * cj.pv *
-             _energy_contour_pair_sqg_periodic(ci, cj, cache, prob.domain, δ; _partial=partial)
+             _energy_contour_pair_sqg_periodic(ci, cj, near, prob.domain, δ; _partial=partial)
     end
 
     return _normalize_energy(E)

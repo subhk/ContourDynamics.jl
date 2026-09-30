@@ -120,13 +120,13 @@ end
         end
         reference = simpson * h / (3 * 2π)
         actual = segment_velocity(QGKernel(1.0), UnboundedDomain(), x, a, b)
-        @test actual[1] ≈ reference rtol=2e-7 atol=0
+        @test actual[1] ≈ reference rtol=1e-12 atol=0
         @test actual[2] == 0.0
 
         vx, vy = ContourDynamics._curved_qg_contribution_scalar(
             x[1], x[2], a[1], a[2], b[1], b[2], 1.0, 0.0, 0.0,
             1.0, 1 / (2π), 1 / (4π))
-        @test vx ≈ reference rtol=2e-7 atol=0
+        @test vx ≈ reference rtol=1e-12 atol=0
         @test vy == 0.0
     end
 

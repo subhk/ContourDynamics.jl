@@ -219,10 +219,20 @@ function _direct_velocity!(vel::Vector{SVector{2,T}}, prob::ContourProblem) wher
     ewald = _prefetch_ewald(domain, kernel)
     source_curvatures = _prepare_curvature_buffers!(
         prob.velocity_scratch.contour_curvatures, contours)
+    far = _prepare_far_field!(prob.velocity_scratch, kernel, ewald)
+    far === nothing ||
+        _accumulate_structure_factor!(far, contours, source_curvatures, one(T))
+    return _direct_velocity_split!(vel, prob, N, kernel, domain, contours,
+                                   source_curvatures, _near_field_ewald(ewald, far), far)
+end
 
+# Function barrier: `far` is `nothing` or a far field, known only at run time.
+function _direct_velocity_split!(vel::Vector{SVector{2,T}}, prob, N::Int, kernel, domain,
+                                 contours, source_curvatures, near, far) where {T}
     return _direct_velocity_loop!(vel, prob, N,
         xi -> _accumulate_node_velocity(kernel, domain, contours,
-                                        source_curvatures, ewald, xi))
+                                        source_curvatures, near, xi) +
+              _far_field_velocity(far, xi))
 end
 
 @inline function _validate_velocity_buffer!(vel::Vector{SVector{2,T}},
@@ -458,7 +468,32 @@ function _multilayer_mode_velocity!(mode_kernel::K,
                                     to_modal::Matrix{T}) where {N, T, K}
     domain = prob.domain
     ewald = _prefetch_ewald(domain, mode_kernel)
+    far = _prepare_far_field!(prob.velocity_scratch, mode_kernel, ewald)
+    if far !== nothing
+        for source_layer in 1:N
+            source_weight = to_modal[mode, source_layer]
+            abs(source_weight) < eps(T) && continue
+            _accumulate_structure_factor!(far, _host_contours(prob)[source_layer],
+                                          source_curvatures[source_layer], source_weight)
+        end
+    end
+    _multilayer_mode_velocity_split!(mode_kernel, vel, prob, mode, target_nodes, mode_vel,
+                                     source_curvatures, to_physical, to_modal,
+                                     _near_field_ewald(ewald, far), far)
+end
 
+# Function barrier for the modal pair loop once the far field is known.
+function _multilayer_mode_velocity_split!(mode_kernel::K,
+                                          vel::NTuple{N, Vector{SVector{2,T}}},
+                                          prob::MultiLayerContourProblem{N},
+                                          mode::Int,
+                                          target_nodes::Vector{SVector{2,T}},
+                                          mode_vel::Vector{SVector{2,T}},
+                                          source_curvatures,
+                                          to_physical::Matrix{T},
+                                          to_modal::Matrix{T},
+                                          ewald, far) where {N, T, K}
+    domain = prob.domain
     for target_layer in 1:N
         target_contours = _host_contours(prob)[target_layer]
         projection_weight = to_physical[target_layer, mode]
@@ -481,13 +516,15 @@ function _multilayer_mode_velocity!(mode_kernel::K,
             @inbounds Threads.@threads for ti in 1:n_target
                 mode_vel[ti] = _accumulate_mode_node_velocity_cached(
                     mode_kernel, domain, _host_contours(prob), source_curvatures, ewald,
-                    to_modal, mode, target_nodes[ti])
+                    to_modal, mode, target_nodes[ti]) +
+                    _far_field_velocity(far, target_nodes[ti])
             end
         else
             @inbounds for ti in 1:n_target
                 mode_vel[ti] = _accumulate_mode_node_velocity_cached(
                     mode_kernel, domain, _host_contours(prob), source_curvatures, ewald,
-                    to_modal, mode, target_nodes[ti])
+                    to_modal, mode, target_nodes[ti]) +
+                    _far_field_velocity(far, target_nodes[ti])
             end
         end
 

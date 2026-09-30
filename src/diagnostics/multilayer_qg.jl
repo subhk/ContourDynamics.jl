@@ -3,6 +3,19 @@
 @inline _modal_energy_cache(::UnboundedDomain, ::AbstractKernel) = nothing
 @inline _modal_energy_cache(domain::PeriodicDomain, mode_kernel::AbstractKernel) = _get_ewald_cache(domain, mode_kernel)
 
+# Fourier part of a periodic mode's energy (by Parseval) and the real-space
+# cache for its contour pairs; unbounded modes have neither.
+@inline _modal_energy_split(::Nothing, mode_kernel, layers, to_modal, mode, ::Type{T}) where {T} =
+    zero(T), nothing
+
+function _modal_energy_split(cache::EwaldCache{T}, mode_kernel, layers::NTuple{N},
+                             to_modal, mode::Int, ::Type{T}) where {N, T}
+    groups = ((layers[layer], T(to_modal[mode, layer])) for layer in 1:N
+              if abs(to_modal[mode, layer]) >= eps(T))
+    fourier = _parseval_energy(_energy_far_coefficients(cache, mode_kernel), cache, groups)
+    return fourier, _real_space_cache(cache)
+end
+
 @inline function _modal_pair_energy(ci, cj, ::EulerKernel,
                                     ::UnboundedDomain, ::Nothing, partial)
     return _energy_contour_pair_euler(ci, cj; _partial=partial)
@@ -27,9 +40,9 @@ function _multilayer_mode_pair_energy(
         mode_kernel::MK, prob::MultiLayerContourProblem{N,K,D,T},
         mode::Int, partial::Vector{T}) where {N,K,D,T,MK}
     to_modal = prob.kernel.physical_to_modal
-    cache = _modal_energy_cache(prob.domain, mode_kernel)
     layers = _host_contours(prob)
-    result = zero(T)
+    result, cache = _modal_energy_split(_modal_energy_cache(prob.domain, mode_kernel),
+                                        mode_kernel, layers, to_modal, mode, T)
 
     # The pair integrand is symmetric, so each unordered pair of (layer,
     # contour) sources is visited once and pairs of distinct contours count

@@ -29,6 +29,14 @@ const _QG_EWALD_X_MAX = 4
 # u exceeds -log(eps) + 5; such images are skipped.
 @inline _ewald_real_cutoff(::Type{T}) where {T} = -log(eps(T)) + 5
 
+# Indices p of the images r - 2Lp that can lie within `reach` of the origin
+# (along one axis), clipped to the configured block -n_images:n_images.
+@inline function _ewald_image_range(r::T, L::T, reach::T, n_images::Int) where {T}
+    lo = clamp((r - reach) / (2 * L), T(-n_images), T(n_images + 1))
+    hi = clamp((r + reach) / (2 * L), T(-n_images - 1), T(n_images))
+    return ceil(Int, lo):floor(Int, hi)
+end
+
 # Fourier part Σ_{k≠0} c_k cos(k·r) of every periodic Ewald kernel. The
 # coefficients depend on |k| only, so they are even in kx and in ky, the
 # sin(kx·x)sin(ky·y) halves of cos(k·r) cancel, and the sum folds onto the
@@ -40,6 +48,7 @@ const _QG_EWALD_X_MAX = 4
 # cos((m+1)θ) = 2cosθ·cos(mθ) - cos((m-1)θ), so a point costs two cosines
 # rather than two trigonometric calls per mode.
 @inline function _ewald_cosine_sum(w, dkx::T, dky::T, rx::T, ry::T) where {T}
+    isempty(w) && return zero(T)
     cθx = cos(dkx * rx)
     cθy = cos(dky * ry)
     total = zero(T)
@@ -132,9 +141,10 @@ end
                                               dkx::T, dky::T, table) where {T}
     s0 = one(T) / (4 * α * α)
     real_sum = zero(T)
-    for px in -n_images:n_images
+    reach = sqrt(_ewald_real_cutoff(T)) / α   # u = α²ρ² ≤ cutoff
+    for px in _ewald_image_range(rx, Lx, reach, n_images)
         sx = rx - 2 * Lx * T(px)
-        for py in -n_images:n_images
+        for py in _ewald_image_range(ry, Ly, reach, n_images)
             sy = ry - 2 * Ly * T(py)
             real_sum += _ewald_qg_real_kernel((sx * sx + sy * sy) / (4 * s0), x)
         end
@@ -183,7 +193,7 @@ end
         (px == 0 && py == 0) && continue
         sx = rx - 2 * Lx * T(px)
         sy = ry - 2 * Ly * T(py)
-        images += _besselk0_approx_scalar(sqrt(sx * sx + sy * sy) / Ld)
+        images += _besselk0_scalar(sqrt(sx * sx + sy * sy) / Ld)
     end
     area = 4 * Lx * Ly
     return (inv2pi * (center + images) - 1 / (area * kappa2) - euler_corr) / kappa2
@@ -196,8 +206,14 @@ end
 # erf(αρ)/ρ. What remains decays like a Gaussian plus δ⁴/(24ρ³), so a finite
 # block of images around the minimum image converges and is periodic.
 @inline function _sqg_neutral_real_potential(ρ::T, α::T, δ::T) where {T}
-    inv_α_sqrtpi = one(T) / (α * sqrt(T(π)))
     ar = α * ρ
+    if ar * ar > _ewald_real_cutoff(T)
+        # Past the cutoff the Gaussian-damped terms are below rounding and the
+        # softening reduces to δ²/(r_δ+ρ) + δ²/(2ρ) - δ·asinh(δ/ρ) ≈ δ⁴/(24ρ³).
+        r_δ = sqrt(ρ * ρ + δ * δ)
+        return δ * δ / (r_δ + ρ) + δ * δ / (2 * ρ) - δ * asinh(δ / ρ)
+    end
+    inv_α_sqrtpi = one(T) / (α * sqrt(T(π)))
     unsoftened = ρ * erfc(ar) - exp(-ar * ar) * inv_α_sqrtpi
     iszero(δ) && return unsoftened
     r_δ = sqrt(ρ * ρ + δ * δ)

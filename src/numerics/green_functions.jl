@@ -47,80 +47,112 @@ end
     return _euler_antideriv(u_a, h, h_sq) - _euler_antideriv(u_a - ds_len, h, h_sq)
 end
 
-# Compute K₀(z) + log(z/2) + γ without catastrophic cancellation for small z.
-# Uses the identity: K₀(z) = -(log(z/2) + γ)I₀(z) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
-# so K₀(z) + log(z/2) + γ = -(log(z/2) + γ)(I₀(z) - 1) + Σ_{k=1}^∞ H_k (z²/4)^k/(k!)²
-# Both terms are O(z²), avoiding the subtraction of two O(log(1/z)) quantities.
+# ── Modified Bessel function K₀ ───────────────────────────────────────────
+#
+# Float64 and Float32 evaluate precomputed tables, fitted in 512-bit arithmetic
+# against K₀(x) = ∫₀^∞ exp(-x cosh t) dt (trapezoid rule):
+#   x ≤ 2: power series in y = x²/4 (13 terms);
+#   x > 2: e^x √x K₀(x) as a 26-term Chebyshev series in t = 4/x - 1.
+# Both are accurate to a few ulps. Other float types sum the series and a
+# continued fraction to their own precision instead.
+
+# a_k = 1/(k!)² and b_k = (H_k - γ)/(k!)², k = 1:13, with H_k the harmonic
+# numbers, so that I₀(x) - 1 = Σ a_k y^k and K₀(x) + γ + log(x/2) I₀(x) = Σ b_k y^k.
+const _K0_SERIES_I0 = (
+    1.0, 0.25, 0.027777777777777776, 0.001736111111111111, 6.944444444444444e-5,
+    1.9290123456790124e-6, 3.936759889140842e-8, 6.151187326782565e-10,
+    7.594058428126624e-12, 7.594058428126623e-14, 6.276081345559193e-16,
+    4.358389823304995e-18, 2.5789288895295828e-20)
+const _K0_SERIES_K0 = (
+    0.42278433509846713, 0.23069608377461678, 0.0348921574564389,
+    0.0026147876188052093, 0.00011848039364109726, 3.6126241031992037e-6,
+    7.935096521304209e-8, 1.3167486730385647e-9, 1.709994072705808e-11,
+    1.785934656987074e-13, 1.5330343403208473e-15, 1.1009270959725744e-17,
+    6.712740659979047e-20)
+# Chebyshev coefficients of e^x √x K₀(x), t = 4/x - 1 (first term halved).
+const _K0_CHEBYSHEV = (
+    1.2201515410329777, -0.0314481013119645, 0.0015698838857300533,
+    -0.00012849549581627802, 1.3949813718876499e-5, -1.8317555227191193e-6,
+    2.766813639445015e-7, -4.660489897687947e-8, 8.574034017414225e-9,
+    -1.6975345093890614e-9, 3.5773972814003283e-10, -7.957489244477396e-11,
+    1.8559491149549264e-11, -4.514597883374519e-12, 1.1403405882073441e-12,
+    -2.9800969231481784e-13, 8.032890775068373e-14, -2.227513326746296e-14,
+    6.340076476276645e-15, -1.848593377920907e-15, 5.5120559994043335e-16,
+    -1.6782311257549006e-16, 5.210391777643554e-17, -1.6475805939842632e-17,
+    5.3004337711773354e-18, -1.7331712005821e-18)
+
+# K₀(z) + log(z/2) + γ = Σ b_k y^k - log(z/2)(I₀(z) - 1), y = z²/4, for z ≤ 2.
+# Both sums are O(z²): no subtraction of two O(log(1/z)) quantities.
+@inline function _besselk0_correction(z::T) where {T<:Union{Float32, Float64}}
+    iszero(z) && return zero(T)
+    y = z * z / 4
+    i0_minus_1 = y * evalpoly(y, map(T, _K0_SERIES_I0))
+    return y * evalpoly(y, map(T, _K0_SERIES_K0)) - log(z / 2) * i0_minus_1
+end
+
 @inline function _besselk0_correction(z::T) where {T}
-    z2_4 = (z / 2)^2
-    I0_minus_1 = zero(T)
-    S = zero(T)
+    iszero(z) && return zero(T)
+    y = z * z / 4
+    γ = T(Base.MathConstants.eulergamma)
+    i0_minus_1 = zero(T)
+    s = zero(T)
     term = one(T)
-    Hk = zero(T)
-    for k in 1:25
-        term *= z2_4 / T(k)^2
-        Hk += one(T) / T(k)
-        I0_minus_1 += term
-        S += term * Hk
-        abs(term * Hk) < eps(T) && break
+    harmonic = zero(T)
+    for k in 1:1000
+        term *= y / T(k)^2
+        harmonic += one(T) / T(k)
+        i0_minus_1 += term
+        s += term * (harmonic - γ)
+        term * harmonic < eps(T) * abs(s) && break
     end
-    log_z2_γ = log(z / 2) + T(Base.MathConstants.eulergamma)
-    return -log_z2_γ * I0_minus_1 + S
+    return s - log(z / 2) * i0_minus_1
 end
 
-@inline function _i0_approx_scalar(x::T) where {T}
-    # Numerical Recipes I0 approximation paired with _besselk0_approx_scalar.
-    ax = abs(x)
-    if ax < T(3.75)
-        y = (ax / T(3.75))^2
-        return one(T) +
-            y * (T(3.5156229) +
-            y * (T(3.0899424) +
-            y * (T(1.2067492) +
-            y * (T(0.2659732) +
-            y * (T(0.0360768) +
-                 y * T(0.0045813))))))
+# Chebyshev series Σ c_k T_{k-1}(t) (c₁ already halved), by Clenshaw's recurrence.
+@inline function _chebyshev_series(c::NTuple{N,T}, t::T) where {N, T}
+    b1 = zero(T)
+    b2 = zero(T)
+    for k in N:-1:2
+        b1, b2 = c[k] + 2 * t * b1 - b2, b1
     end
-
-    y = T(3.75) / ax
-    poly = T(0.39894228) +
-           y * (T(0.01328592) +
-           y * (T(0.00225319) +
-           y * (-T(0.00157565) +
-           y * (T(0.00916281) +
-           y * (-T(0.02057706) +
-           y * (T(0.02635537) +
-           y * (-T(0.01647633) +
-                y * T(0.00392377))))))))
-    return exp(ax) / sqrt(ax) * poly
+    return c[1] + t * b1 - b2
 end
 
-@inline function _besselk0_approx_scalar(x::T) where {T}
-    # Allocation-free K0 approximation used in hot CPU loops and device kernels.
-    ax = abs(x)
-    ax < eps(T) && return T(Inf)
+# K₀(x) for x ≥ 0 (K₀(0) = ∞).
+@inline function _besselk0_scalar(x::T) where {T<:Union{Float32, Float64}}
+    iszero(x) && return T(Inf)
+    x <= 2 && return _besselk0_correction(x) - log(x / 2) - T(Base.MathConstants.eulergamma)
+    return exp(-x) / sqrt(x) * _chebyshev_series(map(T, _K0_CHEBYSHEV), 4 / x - 1)
+end
 
-    if ax <= T(2)
-        y = (ax * ax) / T(4)
-        return -log(ax / T(2)) * _i0_approx_scalar(ax) +
-            (-T(0.57721566) +
-             y * (T(0.42278420) +
-             y * (T(0.23069756) +
-             y * (T(0.03488590) +
-             y * (T(0.00262698) +
-             y * (T(0.00010750) +
-                  y * T(0.00000740)))))))
+function _besselk0_scalar(x::T) where {T}
+    iszero(x) && return T(Inf)
+    x <= 2 && return _besselk0_correction(x) - log(x / 2) - T(Base.MathConstants.eulergamma)
+    # Steed's evaluation of Temme's continued fraction CF2 (Numerical Recipes
+    # §6.7, order 0); it converges for x ≥ 2 at any working precision.
+    b = 2 * (1 + x)
+    d = 1 / b
+    delh = d
+    q1 = zero(T)
+    q2 = one(T)
+    a1 = one(T) / 4
+    q = a1
+    c = a1
+    a = -a1
+    s = 1 + q * delh
+    for i in 2:1_000_000
+        a -= 2 * (i - 1)
+        c = -a * c / i
+        q1, q2 = q2, (q1 - b * q2) / a
+        q += c * q2
+        b += 2
+        d = 1 / (b + a * d)
+        delh = (b * d - 1) * delh
+        dels = q * delh
+        s += dels
+        abs(dels) < eps(T) * abs(s) && break
     end
-
-    y = T(2) / ax
-    poly = T(1.25331414) +
-           y * (-T(0.07832358) +
-           y * (T(0.02189568) +
-           y * (-T(0.01062446) +
-           y * (T(0.00587872) +
-           y * (-T(0.00251540) +
-                y * T(0.00053208))))))
-    return exp(-ax) / sqrt(ax) * poly
+    return sqrt(T(π) / (2 * x)) * exp(-x) / s
 end
 
 # Evaluate asinh(u_a/h) - asinh(u_b/h) without subtracting nearly equal

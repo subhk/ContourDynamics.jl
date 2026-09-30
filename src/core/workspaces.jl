@@ -10,6 +10,8 @@ mutable struct _VelocityScratch{T<:AbstractFloat}
     to_modal::Matrix{T}
     energy_partial::Vector{T}
     modal_kernel::Any
+    # Periodic structure-factor far fields (`_EwaldFarField`), built on first use.
+    ewald_far::Any
 end
 
 function _VelocityScratch{T}() where {T<:AbstractFloat}
@@ -21,7 +23,7 @@ function _VelocityScratch{T}() where {T<:AbstractFloat}
                                SVector{2,T}[],
                                Matrix{T}(undef, 0, 0),
                                Matrix{T}(undef, 0, 0),
-                               T[], nothing)
+                               T[], nothing, nothing)
 end
 
 

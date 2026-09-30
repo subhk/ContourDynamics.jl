@@ -25,11 +25,11 @@
 @inline _kernel_value_precision(kernel::BetaPlaneQGKernel) = _kernel_value_precision(_qg_kernel(kernel))
 
 build_ewald_cache(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
-                  n_fourier::Int=8, n_images::Int=2) where {T} = 
+                  n_fourier::Int=16, n_images::Int=2) where {T} = 
         build_ewald_cache(domain, _qg_kernel(kernel); n_fourier=n_fourier, n_images=n_images)
 
 function setup_ewald_cache!(domain::PeriodicDomain{T}, kernel::BetaPlaneQGKernel{T};
-                            n_fourier::Int=8,
+                            n_fourier::Int=16,
                             n_images::Int=2) where {T<:AbstractFloat}
     return setup_ewald_cache!(domain, _qg_kernel(kernel);
                               n_fourier=n_fourier, n_images=n_images)
@@ -75,11 +75,26 @@ function _direct_velocity!(vel::Vector{SVector{2,T}},
     contour_curvatures = _prepare_curvature_buffers!(scratch.contour_curvatures, contours)
     reference_curvatures = _prepare_curvature_buffers!(scratch.reference_curvatures,
                                                        kernel.reference_contours)
+    # One far field for live minus reference sources, matching the pair sums.
+    far = _prepare_far_field!(scratch, _qg_kernel(kernel), ewald)
+    if far !== nothing
+        _accumulate_structure_factor!(far, contours, contour_curvatures, one(T))
+        _accumulate_structure_factor!(far, kernel.reference_contours,
+                                      reference_curvatures, -one(T))
+    end
+    return _beta_plane_velocity_split!(vel, prob, N, kernel, domain, contours,
+                                       contour_curvatures, reference_curvatures,
+                                       _near_field_ewald(ewald, far), far)
+end
 
+function _beta_plane_velocity_split!(vel::Vector{SVector{2,T}}, prob, N::Int,
+                                     kernel::BetaPlaneQGKernel{T}, domain, contours,
+                                     contour_curvatures, reference_curvatures,
+                                     near, far) where {T}
     return _direct_velocity_loop!(vel, prob, N,
         xi -> _beta_plane_velocity_at(kernel, domain, xi, contours,
                                       contour_curvatures, reference_curvatures,
-                                      ewald))
+                                      near) + _far_field_velocity(far, xi))
 end
 
 function velocity(prob::ContourProblem{BetaPlaneQGKernel{T}, D, T, CPU},
