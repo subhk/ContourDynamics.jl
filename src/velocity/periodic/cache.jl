@@ -12,24 +12,28 @@ the periodic contour-energy potential. All tables are aligned to `kx` × `ky`,
 which must be uniform grids symmetric about zero, and must be even in `kx` and
 in `ky`, as every coefficient that depends on `|k|` only is.
 """
-struct EwaldCache{T<:AbstractFloat}
-    α::T
-    kx::Vector{T}
-    ky::Vector{T}
-    fourier_coeffs::Matrix{T}
-    n_images::Int
+mutable struct EwaldCache{T<:AbstractFloat}
+    # All fields are constant: a cache is never modified, but as a mutable
+    # struct it is shared by reference, so reading it from the cache registry
+    # does not copy its twelve fields into a fresh box (Julia 1.10 and 1.11
+    # do on every lookup).
+    const α::T
+    const kx::Vector{T}
+    const ky::Vector{T}
+    const fourier_coeffs::Matrix{T}
+    const n_images::Int
     # QG only: Fourier coefficients κ²ĉ_k of the Ewald-split QG-minus-Euler
     # velocity correction (see numerics/periodic_ewald.jl). Empty (0×0) for the
     # Euler and SQG caches.
-    corr_coeffs::Matrix{T}
-    energy_coeffs::Matrix{T}
+    const corr_coeffs::Matrix{T}
+    const energy_coeffs::Matrix{T}
     # Derived by the constructor for `_ewald_cosine_sum`: the grid spacings
     # and each table folded onto the modes m, n ≥ 0 (0×0 when absent).
-    dkx::T
-    dky::T
-    fourier_cos::Matrix{T}
-    corr_cos::Matrix{T}
-    energy_cos::Matrix{T}
+    const dkx::T
+    const dky::T
+    const fourier_cos::Matrix{T}
+    const corr_cos::Matrix{T}
+    const energy_cos::Matrix{T}
 
     function EwaldCache(α::T, kx::Vector{T}, ky::Vector{T}, fourier_coeffs::Matrix{T},
                         n_images::Integer, corr_coeffs::Matrix{T},
