@@ -49,8 +49,9 @@ the default entry point.
     ```
 
     GPU problems keep the active contour state in device buffers. Use
-    `materialize_contours(prob)` only when you need a CPU copy for output,
-    plotting, file writing, or inspection. Unsupported GPU operations throw
+    `snapshot_contours(prob)` when you need an owned CPU copy for output,
+    plotting, file writing, or inspection (the legacy `materialize_contours`
+    is still available). Unsupported GPU operations throw
     instead of silently falling back to CPU work. Single-layer Euler, QG, SQG,
     and beta-plane QG, and multi-layer QG, all support device-resident
     velocity, timestepping, surgery, and diagnostics.

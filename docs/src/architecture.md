@@ -138,3 +138,8 @@ CPU, `performance` checks allocations, and `hardware` requires working CUDA.
 requires all three. No arguments or `all` runs all CPU groups and installed
 extensions. Only missing optional dependencies are skipped; load failures and
 test failures propagate. CI provisions extension dependencies explicitly.
+
+The periodic velocity regression guard reads its pinned baseline from
+`test/data/periodic_velocity_baseline.txt`; regenerate it with
+`test/gen_periodic_velocity_baseline.jl` only after an intentional change to
+the periodic velocity numerics.

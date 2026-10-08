@@ -60,7 +60,10 @@ julia --project=. test/runtests.jl hardware
 contains analytical and independent Fourier/image-sum oracles. `device` runs KA
 kernels on CPU; `hardware` requires a functional CUDA device. `performance`
 contains allocation checks. Extension groups are `jld2`, `diffeq`, and `recorded`;
-`extensions` requests all three and fails if dependencies are missing.
+`extensions` requests all three and fails if dependencies are missing. The
+periodic velocity regression baseline lives in `test/data/` and is regenerated
+by `test/gen_periodic_velocity_baseline.jl` only after an intentional change to
+the periodic numerics.
 
 With no arguments (or `all`), the runner executes all CPU groups and installed
 extensions. Missing optional dependencies are reported as skips. An installed

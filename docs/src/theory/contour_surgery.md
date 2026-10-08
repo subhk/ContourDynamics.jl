@@ -81,7 +81,9 @@ The main implementation points are:
 The multi-layer surgery path applies the same reference algorithm independently
 within each layer; contours never reconnect across layers. For `GPU()` problems,
 the device-side path mirrors the cleanup, admissibility, independent-pair
-selection, topology rewrite, and remeshing predicates on flat device arrays.
+selection, topology rewrite, and remeshing predicates on flat device arrays,
+and it emits the resulting contours in the same order as the CPU path, so a
+`GPU()` run and a `CPU()` run of the same surgery pass agree contour for contour.
 It supports single-layer Euler, QG, and SQG in unbounded and periodic domains,
 periodic beta-plane QG, and multi-layer QG in unbounded and periodic domains.
 
