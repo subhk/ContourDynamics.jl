@@ -10,14 +10,20 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.group }}
+    # All four CPU test groups run in one job per (version, OS). The whole
+    # suite takes a few minutes, so splitting by group only multiplied jobs.
+    # Every supported Julia version runs on Ubuntu; macOS runs on the latest
+    # version only, since the code has no OS-specific paths.
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         version: ['1.10', '1.11', '1.12']
-        os: [ubuntu-latest, macos-latest]
-        group: [core, numerical, device, performance]
+        os: [ubuntu-latest]
+        include:
+          - version: '1.12'
+            os: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
@@ -25,41 +31,32 @@ jobs:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - name: Run selected test group
+      - name: Run CPU test groups
         env:
           JULIA_NUM_THREADS: 2
-          TEST_GROUP: ${{ matrix.group }}
-        run: julia --project=. -e 'using Pkg; Pkg.test(; test_args=[ENV["TEST_GROUP"]])'
+        run: julia --project=. -e 'using Pkg; Pkg.test(; test_args=["core", "numerical", "device", "performance"])'
 
   extensions:
-    name: Julia ${{ matrix.version }} - ${{ matrix.extension.dependency }} extension
+    # The three optional extensions are tested together through the
+    # `extensions` group, on the oldest and newest supported Julia versions.
+    name: Julia ${{ matrix.version }} - extensions
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        version: ['1.10', '1.11', '1.12']
-        extension:
-          - dependency: JLD2
-            group: jld2
-          - dependency: OrdinaryDiffEq
-            group: diffeq
-          - dependency: RecordedArrays
-            group: recorded
+        version: ['1.10', '1.12']
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
-      - name: Test optional extension
-        env:
-          EXTENSION_DEPENDENCY: ${{ matrix.extension.dependency }}
-          TEST_GROUP: ${{ matrix.extension.group }}
+      - name: Test optional extensions
         run: >-
           julia --color=yes -e '
             using Pkg;
             Pkg.activate(; temp=true);
             Pkg.develop(path=pwd());
-            Pkg.add([ENV["EXTENSION_DEPENDENCY"], "StaticArrays"]);
-            push!(ARGS, ENV["TEST_GROUP"]);
+            Pkg.add(["JLD2", "OrdinaryDiffEq", "RecordedArrays", "StaticArrays"]);
+            push!(ARGS, "extensions");
             include(joinpath(pwd(), "test", "runtests.jl"));'

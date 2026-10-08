@@ -68,7 +68,7 @@ the periodic numerics.
 With no arguments (or `all`), the runner executes all CPU groups and installed
 extensions. Missing optional dependencies are reported as skips. An installed
 extension that fails to load, or any failing test, fails the run. CUDA hardware
-is opt-in. CI runs CPU groups separately and provisions each extension explicitly.
+is opt-in. CI runs all CPU groups in one job per Julia version and tests the three extensions together.
 
 The test suite checks conservation invariants (circulation, energy, enstrophy)
 and validates surgery operations, so all tests should pass before opening a PR.
