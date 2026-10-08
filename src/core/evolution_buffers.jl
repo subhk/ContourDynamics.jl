@@ -114,11 +114,6 @@ themselves need no layer logic.
 const _AnyProblem = Union{ContourProblem, MultiLayerContourProblem}
 const _NodeRanges = Union{Vector{UnitRange{Int}}, Vector{Vector{UnitRange{Int}}}}
 
-# Ranges matching a problem's current layout, for callers that don't hold a
-# cached set. Multi-layer ranges come pre-offset from `_build_prob_ranges`.
-@inline _default_ranges(prob::ContourProblem) = _flat_contour_ranges(_host_contours(prob))
-@inline _default_ranges(prob::MultiLayerContourProblem) = _build_prob_ranges(prob)
-
 function _contour_ranges_match(ranges::Vector{UnitRange{Int}}, contours, offset::Int=0)
     length(ranges) == length(contours) || return false
     idx = offset + 1
@@ -166,12 +161,8 @@ end
     return nothing
 end
 
-function _for_each_contour_range!(f, prob::ContourProblem, ranges::Vector{UnitRange{Int}})
-    for (c, r) in zip(_host_contours(prob), ranges)
-        f(c, r)
-    end
-    return nothing
-end
+_for_each_contour_range!(f, prob::ContourProblem, ranges::Vector{UnitRange{Int}}) =
+    _for_each_contour_range!(f, _host_contours(prob), ranges)
 
 function _for_each_contour_range!(f, contours::AbstractVector{<:PVContour}, ranges::Vector{UnitRange{Int}})
     for (c, r) in zip(contours, ranges)
@@ -358,10 +349,9 @@ function _rk4_multilayer_state_step!(states::NTuple{N, <:DeviceContourState}, ke
 end
 
 """
-    _collect_all_nodes!(buf, prob[, ranges])
+    _collect_all_nodes!(buf, prob, ranges)
 
 Gather every contour's nodes into the flat buffer `buf` in layer/contour order.
-Omit `ranges` to derive them from the problem's current layout.
 """
 function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::_AnyProblem,
                              ranges::_NodeRanges) where {T}
@@ -372,7 +362,7 @@ function _collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::_AnyProblem,
 end
 
 """
-    _scatter_nodes!(prob, all_nodes[, ranges])
+    _scatter_nodes!(prob, all_nodes, ranges)
 
 Write the flat node vector back into the contour node arrays.
 """
@@ -385,7 +375,7 @@ function _scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}},
 end
 
 """
-    _scatter_shifted!(prob, base, δ, scale[, ranges])
+    _scatter_shifted!(prob, base, δ, scale, ranges)
 
 Write `base[i] + scale * δ[i]` into contour nodes without allocating.
 """
@@ -400,23 +390,13 @@ function _scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
     end
 end
 
-_collect_all_nodes!(buf::Vector{SVector{2,T}}, prob::_AnyProblem) where {T} =
-    _collect_all_nodes!(buf, prob, _default_ranges(prob))
-
-_scatter_nodes!(prob::_AnyProblem, all_nodes::Vector{SVector{2,T}}) where {T} =
-    _scatter_nodes!(prob, all_nodes, _default_ranges(prob))
-
-_scatter_shifted!(prob::_AnyProblem, base::Vector{SVector{2,T}},
-                  δ::Vector{SVector{2,T}}, scale::T) where {T} =
-    _scatter_shifted!(prob, base, δ, scale, _default_ranges(prob))
-
 @inline function _rk4_stage!(k, prob::ContourProblem, nodes_orig, increment, scale, ranges)
     _scatter_shifted!(prob, nodes_orig, increment, scale, ranges)
     velocity!(k, prob)
     return k
 end
 
-@inline function _finish_rk4_step!(prob::ContourProblem, nodes_orig, k1, k2, k3, k4, dt, ranges)
+@inline function _finish_rk4_step!(prob::_AnyProblem, nodes_orig, k1, k2, k3, k4, dt, ranges)
     _cpu_rk4_combine!(nodes_orig, k1, k2, k3, k4, dt)
     _scatter_nodes!(prob, nodes_orig, ranges)
     return prob
@@ -464,10 +444,4 @@ end
     velocity!(vel_tuple, prob)
     _collect_velocities!(flat_k, vel_tuple)
     return flat_k
-end
-
-@inline function _finish_rk4_step!(prob::MultiLayerContourProblem, nodes_orig, k1, k2, k3, k4, dt, all_ranges)
-    _cpu_rk4_combine!(nodes_orig, k1, k2, k3, k4, dt)
-    _scatter_nodes!(prob, nodes_orig, all_ranges)
-    return prob
 end

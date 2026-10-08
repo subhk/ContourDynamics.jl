@@ -9,8 +9,11 @@ using ContourDynamics
 using JLD2
 using StaticArrays
 
+# Snapshot copies decoupled from the live contours (exercised by the tests).
 _snapshot_contours(prob::ContourProblem) = snapshot_contours(prob)
 _snapshot_layers(prob::MultiLayerContourProblem) = snapshot_contours(prob)
+_snapshot(prob::ContourProblem) = _snapshot_contours(prob)
+_snapshot(prob::MultiLayerContourProblem) = _snapshot_layers(prob)
 
 function _save_contour!(g, c::PVContour, ci::Int)
     cg = JLD2.Group(g, "contour_" * lpad(ci, 4, '0'))
@@ -97,12 +100,12 @@ starts, or remove the file first; otherwise [`load_simulation`](@ref) returns
 snapshots from both runs.
 """
 function ContourDynamics.save_snapshot(filename::String,
-                                       prob::ContourProblem{K,D,T},
+                                       prob::Union{ContourProblem, MultiLayerContourProblem},
                                        step::Int;
                                        dt::Union{Nothing,Real}=nothing,
-                                       diagnostics::Bool=true) where {K,D,T}
+                                       diagnostics::Bool=true)
     group = "step_" * lpad(step, 6, '0')
-    snapshot_contours = _snapshot_contours(prob)
+    snapshot = _snapshot(prob)
 
     jldopen(filename, "a+") do f
         if haskey(f, group)
@@ -111,6 +114,7 @@ function ContourDynamics.save_snapshot(filename::String,
         g = JLD2.Group(f, group)
 
         g["step"] = step
+        _save_layer_count!(g, prob)
         if dt !== nothing
             g["time"] = step * dt
         end
@@ -118,81 +122,42 @@ function ContourDynamics.save_snapshot(filename::String,
         # the right problem type even if loading stops early.
         mg = JLD2.Group(g, "metadata")
         _save_metadata!(mg, prob.kernel, prob.domain)
-        mg["coordinate_zero"] = zero(T)
+        mg["coordinate_zero"] = zero(ContourDynamics._problem_float_type(prob))
 
-        _save_contours!(g, snapshot_contours)
+        _save_snapshot_contours!(g, prob, snapshot)
 
-        if diagnostics
-            dg = JLD2.Group(g, "diagnostics")
-            dg["circulation"] = circulation(prob)
-            dg["enstrophy"] = enstrophy(prob)
-            dg["total_nodes"] = total_nodes(prob)
-            try
-                dg["energy"] = energy(prob)
-            catch e
-                e isa Union{MethodError, ArgumentError} || rethrow()
-            end
-            try
-                dg["angular_momentum"] = angular_momentum(prob)
-            catch e
-                e isa Union{MethodError, ArgumentError} || rethrow()
-            end
-        end
+        diagnostics && _save_diagnostics!(JLD2.Group(g, "diagnostics"), prob)
     end
 
     return nothing
 end
 
-# Multi-layer version
-function ContourDynamics.save_snapshot(filename::String,
-                                       prob::MultiLayerContourProblem{N,K,D,T},
-                                       step::Int;
-                                       dt::Union{Nothing,Real}=nothing,
-                                       diagnostics::Bool=true) where {N,K,D,T}
-    group = "step_" * lpad(step, 6, '0')
-    snapshot_layers = _snapshot_layers(prob)
+# Only multi-layer snapshots carry a layer count; its presence is what readers
+# use to tell the two layouts apart.
+_save_layer_count!(g, ::ContourProblem) = nothing
+_save_layer_count!(g, ::MultiLayerContourProblem{N}) where {N} = (g["nlayers"] = N; nothing)
 
-    jldopen(filename, "a+") do f
-        if haskey(f, group)
-            delete!(f, group)
-        end
-        g = JLD2.Group(f, group)
-
-        g["step"] = step
-        g["nlayers"] = N
-
-        if dt !== nothing
-            g["time"] = step * dt
-        end
-
-        # Save kernel/domain metadata for restorability
-        mg = JLD2.Group(g, "metadata")
-        _save_metadata!(mg, prob.kernel, prob.domain)
-        mg["coordinate_zero"] = zero(T)
-
-        for (li, layer) in enumerate(snapshot_layers)
-            lg = JLD2.Group(g, "layer_" * lpad(li, 2, '0'))
-            _save_contours!(lg, layer)
-        end
-
-        if diagnostics
-            dg = JLD2.Group(g, "diagnostics")
-            dg["circulation"] = circulation(prob)
-            dg["enstrophy"] = enstrophy(prob)
-            dg["total_nodes"] = total_nodes(prob)
-            try
-                dg["energy"] = energy(prob)
-            catch e
-                e isa Union{MethodError, ArgumentError} || rethrow()
-            end
-            try
-                dg["angular_momentum"] = angular_momentum(prob)
-            catch e
-                e isa Union{MethodError, ArgumentError} || rethrow()
-            end
-        end
+# Single-layer contours live directly under the step group; multi-layer
+# snapshots store one layer_NN subgroup per layer.
+_save_snapshot_contours!(g, ::ContourProblem, contours) = _save_contours!(g, contours)
+function _save_snapshot_contours!(g, ::MultiLayerContourProblem, layers)
+    for (li, layer) in enumerate(layers)
+        lg = JLD2.Group(g, "layer_" * lpad(li, 2, '0'))
+        _save_contours!(lg, layer)
     end
+    return nothing
+end
 
+# Energy and angular momentum are omitted (not written) when undefined for the
+# kernel/domain pair; readers treat a missing key as `nothing`.
+function _save_diagnostics!(dg, prob)
+    dg["circulation"] = circulation(prob)
+    dg["enstrophy"] = enstrophy(prob)
+    dg["total_nodes"] = total_nodes(prob)
+    e = ContourDynamics._try_diagnostic(energy, prob)
+    e === nothing || (dg["energy"] = e)
+    L = ContourDynamics._try_diagnostic(angular_momentum, prob)
+    L === nothing || (dg["angular_momentum"] = L)
     return nothing
 end
 

@@ -29,12 +29,8 @@ end
 # intentionally small single-dispatch functions so adding a new kernel/domain or
 # device support path only requires adding methods here.
 _check_gpu_support(::AbstractKernel, ::AbstractDomain, ::CPU) = nothing
-_check_gpu_support(::EulerKernel, ::UnboundedDomain, ::GPU) = nothing
-_check_gpu_support(::QGKernel, ::UnboundedDomain, ::GPU) = nothing
-_check_gpu_support(::EulerKernel, ::PeriodicDomain, ::GPU) = nothing
-_check_gpu_support(::QGKernel, ::PeriodicDomain, ::GPU) = nothing
-_check_gpu_support(::SQGKernel, ::UnboundedDomain, ::GPU) = nothing
-_check_gpu_support(::SQGKernel, ::PeriodicDomain, ::GPU) = nothing
+_check_gpu_support(::Union{EulerKernel, QGKernel, SQGKernel},
+                   ::Union{UnboundedDomain, PeriodicDomain}, ::GPU) = nothing
 _check_gpu_support(::BetaPlaneQGKernel, ::PeriodicDomain, ::GPU) = nothing
 _check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
     "GPU velocity is supported for single-layer EulerKernel, QGKernel, and SQGKernel " *
@@ -42,14 +38,11 @@ _check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
     "Got $(typeof(kernel)) on $(typeof(domain)). Use dev=CPU()."))
 
 _check_kernel_type(::AbstractKernel, ::Type) = nothing
-_check_kernel_type(::QGKernel{Tk}, ::Type{T}) where {Tk, T} =
-    Tk !== T && throw(ArgumentError("QGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
-_check_kernel_type(::BetaPlaneQGKernel{Tk}, ::Type{T}) where {Tk, T} =
-    Tk !== T && throw(ArgumentError("BetaPlaneQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
-_check_kernel_type(::SQGKernel{Tk}, ::Type{T}) where {Tk, T} =
-    Tk !== T && throw(ArgumentError("SQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
-_check_kernel_type(::MultiLayerQGKernel{N,M,Tk}, ::Type{T}) where {N,M,Tk,T} =
-    Tk !== T && throw(ArgumentError("MultiLayerQGKernel uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
+const _FloatTypedKernel{Tk} = Union{QGKernel{Tk}, BetaPlaneQGKernel{Tk}, SQGKernel{Tk},
+                                    MultiLayerQGKernel{<:Any,<:Any,Tk}}
+_check_kernel_type(kernel::_FloatTypedKernel{Tk}, ::Type{T}) where {Tk, T} =
+    Tk !== T && throw(ArgumentError(
+        "$(nameof(typeof(kernel))) uses $Tk but contours use $T — construct the kernel with the same float type as the contours"))
 
 _check_domain_type(::AbstractDomain, ::Type) = nothing
 _check_domain_type(::PeriodicDomain{Td}, ::Type{T}) where {Td, T} =
@@ -115,38 +108,20 @@ nlayers(::MultiLayerContourProblem{N}) where {N} = N
 Total number of nodes across all contours in a [`ContourProblem`](@ref) or
 [`MultiLayerContourProblem`](@ref).
 """
-@inline function total_nodes(prob::ContourProblem)
-    s = 0
-    for c in _host_contours(prob)
-        s += nnodes(c)
-    end
-    return s
-end
+@inline total_nodes(prob::ContourProblem) = _layer_node_count(_host_contours(prob))
 
 @inline total_nodes(prob::ContourProblem{K,D,T,GPU,S}) where {
     K<:AbstractKernel,D<:AbstractDomain,T<:AbstractFloat,S
 } =
     _device_state_nnodes(_device_state(prob))
 
-@inline function total_nodes(prob::MultiLayerContourProblem{N}) where {N}
-    s = 0
-    for i in 1:N
-        for c in _host_contours(prob)[i]
-            s += nnodes(c)
-        end
-    end
-    return s
-end
+@inline total_nodes(prob::MultiLayerContourProblem) =
+    sum(_layer_node_count, _host_contours(prob); init=0)
 
-@inline function total_nodes(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
+@inline total_nodes(prob::MultiLayerContourProblem{N,K,D,T,GPU,S}) where {
     N,K<:MultiLayerQGKernel{N},D<:AbstractDomain,T<:AbstractFloat,S
-}
-    s = 0
-    for i in 1:N
-        s += _device_state_nnodes(_device_state(prob)[i])
-    end
-    return s
-end
+} =
+    sum(_device_state_nnodes, _device_state(prob); init=0)
 
 const _ContourProblemTypes = Union{ContourProblem,MultiLayerContourProblem}
 _active_storage(prob::_ContourProblemTypes) = getfield(prob, :storage)
@@ -185,14 +160,12 @@ clear_state_workspace_cache!(prob::_ContourProblemTypes) = clear_state_workspace
 # Preserve field-style inspection without keeping a stale host mirror on GPU.
 # GPU .contours/.layers reads now materialize the active state; internal host
 # algorithms use _host_contours and therefore reject accidental device access.
-@inline function Base.getproperty(prob::ContourProblem, name::Symbol)
-    name === :contours && return materialize_contours(prob)
-    name === :device_state && return _device_state(prob)
-    name === :velocity_scratch && return getfield(prob, :workspace).cpu
-    return getfield(prob, name)
-end
-@inline function Base.getproperty(prob::MultiLayerContourProblem, name::Symbol)
-    name === :layers && return materialize_contours(prob)
+@inline Base.getproperty(prob::ContourProblem, name::Symbol) =
+    _problem_property(prob, name, :contours)
+@inline Base.getproperty(prob::MultiLayerContourProblem, name::Symbol) =
+    _problem_property(prob, name, :layers)
+@inline function _problem_property(prob::_ContourProblemTypes, name::Symbol, state_name::Symbol)
+    name === state_name && return materialize_contours(prob)
     name === :device_state && return _device_state(prob)
     name === :velocity_scratch && return getfield(prob, :workspace).cpu
     return getfield(prob, name)

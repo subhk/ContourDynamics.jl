@@ -14,9 +14,14 @@ end
     return clamp(Int(round(q)), min_intervals, max_intervals)
 end
 
+# A span of (numerically) zero length cannot be resampled; like the CPU
+# `_resample_fixed_corner_path`, its original nodes are kept verbatim, so it
+# contributes exactly `current` segments.
+@inline _flat_degenerate_span(total_length) = total_length <= eps(typeof(total_length))
+
 @inline function _flat_fixed_span_interval_count(total_length, q, current::Int,
                                                  μ, Δ_max)
-    if iszero(total_length)
+    if _flat_degenerate_span(total_length)
         return max(1, current)
     end
     min_intervals = max(1, Int(ceil(total_length / Δ_max)))
@@ -47,7 +52,13 @@ end
             vprev_y = prev_y - curr_y
             vnext_x = next_x - curr_x
             vnext_y = next_y - curr_y
-            if vprev_x * vnext_x + vprev_y * vnext_y < zero(curr_x)
+            # Like the CPU `_demote_obtuse_corners!`, a corner flanked by a
+            # degenerate (sub-eps) segment has no defined angle and is kept.
+            ε = eps(typeof(curr_x))
+            l_prev = sqrt(vprev_x * vprev_x + vprev_y * vprev_y)
+            l_next = sqrt(vnext_x * vnext_x + vnext_y * vnext_y)
+            if l_prev > ε && l_next > ε &&
+               vprev_x * vnext_x + vprev_y * vnext_y < zero(curr_x)
                 corners[g] = UInt8(0)
             end
         end
@@ -122,7 +133,7 @@ end
 
 @kernel function _remesh_input_geometry_kernel!(seg_lengths, signed_curvatures,
                                                 abs_curvatures, perimeters,
-                                                target_area, target_area_tolerance,
+                                                target_area,
                                                 x, y, pv, wrapx, wrapy, offsets,
                                                 lengths, contour_of_node,
                                                 local_index, corners,
@@ -172,7 +183,6 @@ end
         end
         perimeters[ci] = perimeter
         target_area[ci] = area2 / 2
-        target_area_tolerance[ci] = eps(T) * T(n) * scale * scale
     end
 end
 
@@ -354,6 +364,14 @@ end
                 remesh_mode[ci] = UInt8(2)
                 out_lengths[ci] = n
             end
+        elseif _flat_degenerate_span(perimeters[ci])
+            # A closed contour of (numerically) zero perimeter cannot be
+            # resampled; the CPU `_resample_closed_weighted` returns its nodes
+            # unchanged. No corners can reach this branch (a non-spanning
+            # cornered contour takes the fixed-corner path and a spanning one
+            # has perimeter >= |wrap| > 0), so a plain copy matches.
+            remesh_mode[ci] = UInt8(2)
+            out_lengths[ci] = n
         else
             remesh_mode[ci] = UInt8(0)
             out_lengths[ci] = _flat_closed_remesh_interval_count(perimeters[ci],
@@ -406,6 +424,7 @@ end
             chosen_intervals = 0
             chosen_segments = 0
             chosen_measure = zero(eltype(out_x))
+            chosen_len = zero(eltype(out_x))
 
             @inbounds for li in 1:n
                 if !iszero(corners[off + li - 1])
@@ -431,6 +450,7 @@ end
                             chosen_intervals = n_intervals
                             chosen_segments = span_segments
                             chosen_measure = span_measure
+                            chosen_len = span_len
                         end
                     end
                     prev_corner = li
@@ -462,9 +482,22 @@ end
                     span_len, span_measure, span_segments, μ, Δ_max)
                 chosen_segments = span_segments
                 chosen_measure = span_measure
+                chosen_len = span_len
             end
 
-            if remaining == 1
+            if _flat_degenerate_span(chosen_len)
+                # Zero-length span: keep its original nodes verbatim and flag
+                # them all as corners, as the CPU `_resample_fixed_corner_path`
+                # does. `remaining <= chosen_segments`, so this never reaches
+                # the span's closing corner.
+                li = chosen_start + remaining - 1
+                li > n && (li -= n)
+                in_g = off + li - 1
+                ox = x[in_g]
+                oy = y[in_g]
+                corner = UInt8(1)
+                written = true
+            elseif remaining == 1
                 in_g = off + chosen_start - 1
                 ox = x[in_g]
                 oy = y[in_g]
@@ -590,7 +623,6 @@ end
 @kernel function _preserve_remesh_area_kernel!(out_x, out_y, out_node_contour,
                                                out_area, out_centroid_x,
                                                out_centroid_y, target_area,
-                                               target_area_tolerance,
                                                out_area_tolerance, wrapx, wrapy,
                                                remesh_mode, total_out_nodes)
     g = @index(Global)
@@ -599,7 +631,9 @@ end
         if remesh_mode[ci] == UInt8(0) && iszero(wrapx[ci]) && iszero(wrapy[ci])
             target = target_area[ci]
             current = out_area[ci]
-            if abs(target) > target_area_tolerance[ci] &&
+            # Both area checks use the tolerance of the remeshed polygon, as
+            # the CPU `_preserve_closed_area!` does.
+            if abs(target) > out_area_tolerance[ci] &&
                abs(current) > out_area_tolerance[ci] &&
                ((target > zero(target)) == (current > zero(current)))
                 scale = sqrt(abs(target / current))
@@ -643,7 +677,6 @@ end
 # the scalar step `t`. This kernel computes that `t` per contour (corners pinned),
 # mirroring the CPU `_preserve_closed_area_fixed_corners!`.
 @kernel function _remesh_corner_area_step_kernel!(step, target_area, out_area,
-                                                  target_area_tolerance,
                                                   out_area_tolerance,
                                                   out_centroid_x, out_centroid_y,
                                                   out_x, out_y, out_corners,
@@ -658,7 +691,7 @@ end
            iszero(wrapx[ci]) && iszero(wrapy[ci])
             target = target_area[ci]
             A0 = out_area[ci]
-            if abs(target) > target_area_tolerance[ci] &&
+            if abs(target) > out_area_tolerance[ci] &&
                abs(A0) > out_area_tolerance[ci] &&
                ((target > zero(target)) == (A0 > zero(A0)))
                 rhs = target - A0
@@ -741,10 +774,9 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
     abs_curvatures = device_zeros(dev, T, total_nodes)
     perimeters = device_zeros(dev, T, ncontours)
     target_area = device_zeros(dev, T, ncontours)
-    target_area_tolerance = device_zeros(dev, T, ncontours)
     @_ka_launch dev max(total_nodes, ncontours) _remesh_input_geometry_kernel!(
         seg_lengths, signed_curvatures, abs_curvatures, perimeters,
-        target_area, target_area_tolerance,
+        target_area,
         flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy,
         flat.offsets, flat.lengths, flat.contour_of_node, flat.local_index,
         flat.corners, total_nodes, ncontours)
@@ -810,13 +842,13 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
         out_x, out_y, out_offsets, out_lengths, ncontours)
     @_ka_launch dev total_out_nodes _preserve_remesh_area_kernel!(
         out_x, out_y, out_node_contour, out_area, out_centroid_x,
-        out_centroid_y, target_area, target_area_tolerance,
+        out_centroid_y, target_area,
         out_area_tolerance, out_wrapx, out_wrapy, remesh_mode, total_out_nodes)
 
     # Fixed-corner modes (1, 2) preserve area by moving only free nodes.
     corner_area_step = device_zeros(dev, T, ncontours)
     @_ka_launch dev ncontours _remesh_corner_area_step_kernel!(
-        corner_area_step, target_area, out_area, target_area_tolerance,
+        corner_area_step, target_area, out_area,
         out_area_tolerance, out_centroid_x, out_centroid_y,
         out_x, out_y, out_corners, out_offsets, out_lengths,
         out_wrapx, out_wrapy, remesh_mode, ncontours)

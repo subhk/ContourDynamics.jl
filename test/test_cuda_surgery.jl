@@ -14,23 +14,6 @@ function _cuda_available()
     end
 end
 
-function _cuda_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-    nodes = SVector{2,Float64}[]
-    for k in 0:(nside - 1)
-        push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-    end
-    for k in 0:(nside - 1)
-        push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-    end
-    for k in 0:(nside - 1)
-        push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-    end
-    for k in 0:(nside - 1)
-        push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-    end
-    return PVContour(nodes, pv)
-end
-
 function _test_cuda_velocity_and_energy(kernel, domain; atol=1e-8, rtol=1e-8)
     clear_ewald_cache!()
     c1 = circular_patch(0.35, 24, 1.0)
@@ -197,8 +180,8 @@ end
         @testset "CUDA periodic surgery stays device-resident across the seam" begin
             domain = PeriodicDomain(2.0, 2.0)
             contours = [
-                _cuda_rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
-                _cuda_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
+                rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
+                rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
             ]
             params = SurgeryParams(0.03, 0.12, 0.25, 1e-8, 10)
             cpu_prob = ContourProblem(
@@ -278,10 +261,10 @@ end
 
         δ = 0.02
         contours = [
-            _cuda_rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
-            _cuda_rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0),
-            _cuda_rectangle_patch(3.0, 4.0, 0.0, 1.0, 6, 1.0),
-            _cuda_rectangle_patch(4.012, 5.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(3.0, 4.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(4.012, 5.0, 0.0, 1.0, 6, 1.0),
         ]
 
         cpu_candidates = ContourDynamics._device_admissible_close_segment_buffer(

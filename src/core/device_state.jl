@@ -157,12 +157,3 @@ function materialize_contours(state::DeviceContourState{T}) where {T}
     end
     return out
 end
-
-_build_device_state(contours::Vector{PVContour{T}}, ::CPU) where {T} = nothing
-_build_device_state(contours::Vector{PVContour{T}}, dev::GPU) where {T} =
-    DeviceContourState(contours, dev)
-
-_build_layer_device_state(layers::NTuple{N, Vector{PVContour{T}}}, ::CPU) where {N, T} =
-    nothing
-_build_layer_device_state(layers::NTuple{N, Vector{PVContour{T}}}, dev::GPU) where {N, T} =
-    ntuple(i -> DeviceContourState(layers[i], dev), N)

@@ -1,6 +1,7 @@
 using ContourDynamics
 using StaticArrays
 using Test
+using Logging
 
 # Guard against double-include when run from runtests.jl
 @isdefined(circular_patch) || include("test_utils.jl")
@@ -552,27 +553,10 @@ end
     end
 
     @testset "DeviceContourState rewrite preserves unchanged contours" begin
-        function state_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         δ = 0.02
         contours_in = [
-            state_rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
-            state_rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0),
             PVContour([p + SVector(4.0, 0.0) for p in circular_patch(0.2, 16, 0.5).nodes], 0.5),
         ]
         candidates = ContourDynamics._device_admissible_close_segment_buffer(
@@ -595,27 +579,10 @@ end
     end
 
     @testset "DeviceContourState reconnect mutates state not host contours" begin
-        function reconnect_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         δ = 0.02
         contours_in = [
-            reconnect_rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
-            reconnect_rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
+            rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0),
         ]
         candidates = ContourDynamics._device_admissible_close_segment_buffer(
             contours_in, δ, UnboundedDomain(), CPU())
@@ -641,23 +608,6 @@ end
     end
 
     @testset "Device close-pair candidates match CPU surgery on simple merge" begin
-        function rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         δ = 0.02
         contours_same = [
             rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
@@ -718,28 +668,11 @@ end
     end
 
     @testset "Device close-pair admissibility uses periodic minimum images" begin
-        function periodic_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         domain = PeriodicDomain(2.0, 2.0)
         δ = 0.03
         contours_in = [
-            periodic_rectangle_patch(1.2, 1.99, -0.5, 0.5, 6, 1.0),
-            periodic_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 6, 1.0 + 1e-8),
+            rectangle_patch(1.2, 1.99, -0.5, 0.5, 6, 1.0),
+            rectangle_patch(-1.99, -1.2, -0.5, 0.5, 6, 1.0 + 1e-8),
         ]
         index = ContourDynamics.build_spatial_index(contours_in, δ, domain)
         expected = ContourDynamics.find_close_segments(contours_in, index, δ, domain)
@@ -834,23 +767,6 @@ end
     end
 
     @testset "Device reconnection planner matches CPU independent-pair selection" begin
-        function rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         δ = 0.02
         contours = [
             rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
@@ -1003,23 +919,6 @@ end
     end
 
     @testset "Device full topology rewrite preserves unchanged contours" begin
-        function rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         δ = 0.02
         contours = [
             rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
@@ -1149,86 +1048,37 @@ end
             state, kernel, domain, point, CPU()) ≈ velocity(prob, point) rtol=1e-8 atol=1e-10
     end
 
-    @testset "KA SQG velocity matches direct CPU" begin
-        c = circular_patch(0.5, 32, 1.0)
-        prob = ContourProblem(SQGKernel(0.02), UnboundedDomain(), [c])
-        N = total_nodes(prob)
+    # (name, kernel, domain, patch, isapprox keywords). `atol` alone implies rtol=0 in
+    # isapprox, so the keyword sets are kept verbatim rather than normalised.
+    ka_velocity_cases = [
+        ("KA SQG velocity matches direct CPU",
+         SQGKernel(0.02), UnboundedDomain(), circular_patch(0.5, 32, 1.0), (atol=1e-12,)),
+        ("KA QG velocity matches direct CPU",
+         QGKernel(1.25), UnboundedDomain(), circular_patch(0.5, 32, 1.0), (atol=1e-8, rtol=1e-8)),
+        ("KA periodic Euler velocity matches direct CPU",
+         EulerKernel(), PeriodicDomain(2.0, 2.0), circular_patch(0.35, 24, 1.0), (atol=1e-12, rtol=1e-12)),
+        ("KA periodic QG velocity matches direct CPU",
+         QGKernel(1.1), PeriodicDomain(2.0, 2.0), circular_patch(0.35, 24, 1.0), (atol=1e-12, rtol=1e-12)),
+        ("KA periodic SQG velocity matches direct CPU",
+         SQGKernel(0.02), PeriodicDomain(2.0, 2.0), circular_patch(0.35, 24, 1.0), (atol=1e-12, rtol=1e-12)),
+    ]
 
-        vel_ref = zeros(SVector{2,Float64}, N)
-        vel_ka = similar(vel_ref)
-        ContourDynamics._direct_velocity!(vel_ref, prob)
-        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
+    for (name, kernel, domain, c, tol) in ka_velocity_cases
+        @testset "$name" begin
+            within_tol(a, b) = isapprox(a, b; tol...)
+            domain isa PeriodicDomain && clear_ewald_cache!()
+            prob = ContourProblem(kernel, domain, [c])
+            N = total_nodes(prob)
 
-        for i in 1:N
-            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12)
-            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12)
-        end
-    end
+            vel_ref = zeros(SVector{2,Float64}, N)
+            vel_ka = similar(vel_ref)
+            ContourDynamics._direct_velocity!(vel_ref, prob)
+            ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
 
-    @testset "KA QG velocity matches direct CPU" begin
-        c = circular_patch(0.5, 32, 1.0)
-        prob = ContourProblem(QGKernel(1.25), UnboundedDomain(), [c])
-        N = total_nodes(prob)
-
-        vel_ref = zeros(SVector{2,Float64}, N)
-        vel_ka = similar(vel_ref)
-        ContourDynamics._direct_velocity!(vel_ref, prob)
-        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
-
-        for i in 1:N
-            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-8, rtol=1e-8)
-            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-8, rtol=1e-8)
-        end
-    end
-
-    @testset "KA periodic Euler velocity matches direct CPU" begin
-        clear_ewald_cache!()
-        c = circular_patch(0.35, 24, 1.0)
-        prob = ContourProblem(EulerKernel(), PeriodicDomain(2.0, 2.0), [c])
-        N = total_nodes(prob)
-
-        vel_ref = zeros(SVector{2,Float64}, N)
-        vel_ka = similar(vel_ref)
-        ContourDynamics._direct_velocity!(vel_ref, prob)
-        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
-
-        for i in 1:N
-            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
-            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
-        end
-    end
-
-    @testset "KA periodic QG velocity matches direct CPU" begin
-        clear_ewald_cache!()
-        c = circular_patch(0.35, 24, 1.0)
-        prob = ContourProblem(QGKernel(1.1), PeriodicDomain(2.0, 2.0), [c])
-        N = total_nodes(prob)
-
-        vel_ref = zeros(SVector{2,Float64}, N)
-        vel_ka = similar(vel_ref)
-        ContourDynamics._direct_velocity!(vel_ref, prob)
-        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
-
-        for i in 1:N
-            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
-            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
-        end
-    end
-
-    @testset "KA periodic SQG velocity matches direct CPU" begin
-        clear_ewald_cache!()
-        c = circular_patch(0.35, 24, 1.0)
-        prob = ContourProblem(SQGKernel(0.02), PeriodicDomain(2.0, 2.0), [c])
-        N = total_nodes(prob)
-
-        vel_ref = zeros(SVector{2,Float64}, N)
-        vel_ka = similar(vel_ref)
-        ContourDynamics._direct_velocity!(vel_ref, prob)
-        ContourDynamics._ka_velocity!(vel_ka, prob, CPU())
-
-        for i in 1:N
-            @test isapprox(vel_ka[i][1], vel_ref[i][1]; atol=1e-12, rtol=1e-12)
-            @test isapprox(vel_ka[i][2], vel_ref[i][2]; atol=1e-12, rtol=1e-12)
+            for i in 1:N
+                @test within_tol(vel_ka[i][1], vel_ref[i][1])
+                @test within_tol(vel_ka[i][2], vel_ref[i][2])
+            end
         end
     end
 
@@ -1653,27 +1503,10 @@ end
     end
 
     @testset "Periodic device surgery handles cross-seam reconnect and cleanup" begin
-        function surgery_rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
-
         domain = PeriodicDomain(2.0, 2.0)
         contours_in = [
-            surgery_rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
-            surgery_rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
+            rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
+            rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0),
             PVContour([SVector(0.0, 1.5), SVector(1e-6, 1.5),
                        SVector(0.0, 1.5 + 1e-6)], 1.0),
         ]
@@ -1801,5 +1634,152 @@ end
         @test ContourDynamics._ka_multilayer_energy_from_states(
             states, kernel, domain, CPU()) ≈ energy(prob) rtol=1e-12
         clear_ewald_cache!()
+    end
+end
+
+@testset "Device surgery parity edge cases" begin
+    # Two pinched "dumbbell" contours whose necks differ in gap. Both split in
+    # the same reconnect round; the CPU appends split daughters in proximity
+    # order, and the device must lay its pair buffer out the same way so the
+    # contour vectors agree element for element, not only as sets.
+    function dumbbell(x0, gap; T=Float64)
+        N_half = 30
+        nodes = SVector{2,T}[]
+        for k in 0:N_half
+            θ = -π/2 + π * k / N_half
+            push!(nodes, SVector{2,T}(x0 + 1 + cos(θ), sin(θ)))
+        end
+        for k in 1:5
+            push!(nodes, SVector{2,T}(x0 + 1 - k * 2 / 6, gap))
+        end
+        for k in 0:N_half
+            θ = π/2 + π * k / N_half
+            push!(nodes, SVector{2,T}(x0 - 1 + cos(θ), sin(θ)))
+        end
+        for k in 1:5
+            push!(nodes, SVector{2,T}(x0 - 1 + k * 2 / 6, -gap))
+        end
+        return PVContour(nodes, T(1))
+    end
+    same_contours(a, b; rtol=1e-12, atol=1e-12) =
+        length(a) == length(b) && all(zip(a, b)) do (p, q)
+            p.pv == q.pv && p.wrap == q.wrap && p.corners == q.corners &&
+                nnodes(p) == nnodes(q) &&
+                all(isapprox.(p.nodes, q.nodes; rtol=rtol, atol=atol))
+        end
+
+    @testset "Simultaneous splits keep CPU daughter order" begin
+        δ = 0.01
+        # The second contour has the closer neck, so proximity order differs
+        # from candidate-buffer (contour index) order.
+        contours = [dumbbell(0.0, 0.004), dumbbell(6.0, 0.001)]
+        domain = UnboundedDomain()
+
+        idx = ContourDynamics.build_spatial_index(contours, δ)
+        close_pairs = ContourDynamics.find_close_segments(contours, idx, δ)
+        cpu_selected = ContourDynamics._select_reconnection_pairs(contours, close_pairs)
+        @test length(cpu_selected) == 2
+        @test cpu_selected[1][1] == 2  # closer neck first
+
+        state = DeviceContourState(deepcopy(contours), CPU())
+        candidates = ContourDynamics._device_admissible_close_segment_buffer(
+            state, δ, domain, CPU())
+        selected = ContourDynamics._device_select_reconnection_pair_buffer(
+            state, candidates, domain, CPU())
+        device_selected = collect(zip(to_cpu(selected.ci), to_cpu(selected.i),
+                                      to_cpu(selected.cj), to_cpu(selected.j)))
+        @test device_selected == cpu_selected
+
+        cpu_contours = deepcopy(contours)
+        ContourDynamics.reconnect!(cpu_contours, cpu_selected, domain)
+        ContourDynamics._device_rewrite_state!(state, selected, domain, CPU())
+        @test length(cpu_contours) == 4
+        @test same_contours(materialize_contours(state), cpu_contours)
+
+        # The full pipelines must agree in order too.
+        params = SurgeryParams(δ, 0.05, 0.3, 1e-8, 10)
+        cpu_prob = ContourProblem(EulerKernel(), domain, deepcopy(contours))
+        surgery!(cpu_prob, params)
+        pipeline_state = DeviceContourState(deepcopy(contours), CPU())
+        ContourDynamics._device_surgery_pipeline!(pipeline_state, params, domain, CPU())
+        @test length(cpu_prob.contours) == 4
+        @test same_contours(materialize_contours(pipeline_state), cpu_prob.contours;
+                            rtol=1e-10, atol=1e-10)
+    end
+
+    @testset "Float32 end-to-end surgery parity" begin
+        δ = 0.01f0
+        contours = [dumbbell(0f0, 0.004f0; T=Float32), dumbbell(6f0, 0.001f0; T=Float32)]
+        params = SurgeryParams(δ, 0.05f0, 0.3f0, 1f-8, 10)
+        cpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours))
+        surgery!(cpu_prob, params)
+        state = DeviceContourState(deepcopy(contours), CPU())
+        ContourDynamics._device_surgery_pipeline!(state, params, UnboundedDomain(), CPU())
+        @test length(cpu_prob.contours) == 4
+        @test same_contours(materialize_contours(state), cpu_prob.contours;
+                            rtol=1f-4, atol=1f-5)
+    end
+
+    @testset "Obtuse-corner demotion keeps corners at degenerate segments" begin
+        # Node 3 is a right-angle corner and stays. Node 1 is a corner whose
+        # previous segment has length 1e-20: below
+        # eps, so its angle is undefined and the CPU keeps the corner even
+        # though the dot product is (barely) negative.
+        nodes = [SVector(0.0, 0.0), SVector(1.0, 0.0), SVector(1.0, 1.0),
+                 SVector(0.0, 1.0), SVector(-1e-20, 0.0)]
+        corners = [true, false, true, false, false]
+        c = PVContour(nodes, 1.0, zero(SVector{2,Float64}), corners)
+
+        cpu_contours = [deepcopy(c)]
+        ContourDynamics._demote_obtuse_corners!(cpu_contours)
+        state = DeviceContourState([deepcopy(c)], CPU())
+        ContourDynamics._demote_obtuse_corners!(state, CPU())
+        actual = only(materialize_contours(state))
+
+        @test cpu_contours[1].corners == [true, false, true, false, false]
+        @test actual.corners == cpu_contours[1].corners
+    end
+
+    @testset "Fixed-corner remesh of a zero-length span matches CPU" begin
+        base = circular_patch(1.0, 40, 1.0)
+        nodes = copy(base.nodes)
+        # Two coincident corners: the span between them has zero length.
+        insert!(nodes, 11, nodes[10])
+        corners = falses(length(nodes))
+        corners[10] = true
+        corners[11] = true
+        corners[31] = true
+        c = PVContour(nodes, 1.0, zero(SVector{2,Float64}), corners)
+        params = SurgeryParams(0.005, 0.04, 0.16, 1e-6, 10)
+
+        cpu_c = remesh(c, params; _density_sources=[c])
+        dev_c = only(ContourDynamics._device_remesh_contours([c], params, CPU()))
+        @test nnodes(dev_c) == nnodes(cpu_c)
+        @test dev_c.corners == cpu_c.corners
+        @test all(isapprox.(dev_c.nodes, cpu_c.nodes; atol=1e-10, rtol=1e-10))
+    end
+
+    @testset "Closed remesh of a zero-perimeter contour matches CPU" begin
+        p = SVector(0.3, -0.2)
+        c = PVContour([p, p, p, p], 1.0)
+        params = SurgeryParams(0.005, 0.04, 0.16, 1e-6, 10)
+        cpu_c = remesh(c, params)
+        dev_c = only(ContourDynamics._device_remesh_contours([c], params, CPU()))
+        @test nnodes(cpu_c) == 4
+        @test nnodes(dev_c) == nnodes(cpu_c)
+        @test dev_c.corners == cpu_c.corners
+        @test dev_c.nodes == cpu_c.nodes
+    end
+
+    @testset "Multi-layer device stall warnings name the layer" begin
+        # The device loop must receive the same per-layer label as the CPU
+        # path; check the keyword plumbing without triggering a stall.
+        layers = ([circular_patch(0.5, 32, 1.0)], [circular_patch(0.3, 24, -0.7)])
+        params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100)
+        states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
+        @test_logs min_level=Logging.Warn ContourDynamics._device_multilayer_surgery!(
+            states, params, UnboundedDomain(), CPU())
+        @test_logs min_level=Logging.Warn ContourDynamics._device_surgery_pipeline!(
+            states[1], params, UnboundedDomain(), CPU(); layer_label=" layer 1")
     end
 end

@@ -24,11 +24,6 @@
     return SVector{2,T}(ax, ay), SVector{2,T}(bx, by)
 end
 
-@inline function _periodic_euler_zero_mode(cache::EwaldCache{T},
-                                           domain::PeriodicDomain{T}) where {T}
-    return _periodic_euler_zero_mode_scalar(cache.α, domain.Lx, domain.Ly)
-end
-
 # The three periodic point kernels share one singular-subtraction template for
 # both straight and curved segments; only two ingredients vary per kernel:
 #
@@ -158,7 +153,9 @@ end
 # - Central-image real-space: -(1/(2π)) erf(αr)/r, finite limit -2α/√π at r=0.
 # - Non-central real-space: unregularized Ewald term plus (1/(2π))(1/r_δ - 1/r),
 #   with r_δ = √(r² + δ²).
-# - Fourier space: (1/(2π)) Σ c_k cos(k·r), c_k = (2π/|k|) erfc(|k|/(2α))/A.
+# - Fourier space: (1/(2π)) Σ c_k cos(k·r) with the δ-dependent coefficient
+#   built by `_ewald_fourier_coefficient(::SQGKernel, ...)` in cache.jl; it
+#   reduces to (2π/|k|) erfc(|k|/(2α))/A at δ = 0.
 @inline function _periodic_green_correction(kernel::SQGKernel{T}, domain::PeriodicDomain{T},
                                         cache::EwaldCache{T},
                                         x::SVector{2,T}, s_pt::SVector{2,T}) where {T}

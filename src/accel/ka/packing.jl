@@ -31,8 +31,6 @@ struct SegmentData{A<:AbstractVector}
     kb::A   # signed curvature at segment end
 end
 
-@inline _state_norm2(dx::T, dy::T) where {T} = sqrt(dx * dx + dy * dy)
-
 @inline function _state_signed_node_curvature(x, y, wrapx, wrapy, offsets,
                                               lengths, corners, ci, li)
     T = eltype(x)

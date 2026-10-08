@@ -36,9 +36,11 @@
         Ld = 0.3
         patch = circular_patch(0.5, 64, 1.0)
         dom = PeriodicDomain(Lx, Ly)
-        # The QG correction series converges ~1/n_fourier²; n_fourier=32 puts
-        # the implementation within ~5e-5 of the exact periodic solution while
-        # the image-sum oracle is exact to ~exp(-16/Ld) ≈ 1e-23.
+        # The QG correction is Ewald-split, so both its real-space and Fourier
+        # sums are Gaussian-damped and converge exponentially; n_fourier=32
+        # resolves it to rounding, while the image-sum oracle is exact to
+        # ~exp(-16/Ld) ≈ 1e-23. The observed disagreement is ~1e-14, so the
+        # tolerance below leaves a wide margin for platform rounding.
         clear_ewald_cache!()
         setup_ewald_cache!(dom, QGKernel(Ld); n_fourier=32, n_images=2)
         prob_p = ContourProblem(QGKernel(Ld), dom, [patch])
@@ -46,7 +48,7 @@
         for x in probes
             vp = velocity(prob_p, x)
             vo = image_sum(prob_u, x, Lx, Ly, 3)
-            @test isapprox(vp, vo; rtol=2e-4)
+            @test isapprox(vp, vo; rtol=1e-10)
         end
         clear_ewald_cache!()
     end

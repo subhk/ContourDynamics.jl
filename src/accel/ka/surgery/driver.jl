@@ -3,7 +3,7 @@
 
 function _device_full_rewrite_output_layout(flat::FlatContourTopology{T},
                                             plan::DeviceTopologyRewritePlan,
-                                            dev::AbstractDevice=CPU()) where {T}
+                                            dev::AbstractDevice) where {T}
     ncontours = _flat_ncontours(flat)
     npairs = length(plan.op)
 
@@ -82,24 +82,16 @@ function _device_full_rewrite_output_layout(flat::FlatContourTopology{T},
             total_nodes=total_nodes)
 end
 
-function _device_full_rewrite_output_layout(contours::Vector{PVContour{T}},
-                                            plan::DeviceTopologyRewritePlan,
-                                            dev::AbstractDevice=CPU()) where {T}
-    return _device_full_rewrite_output_layout(_pack_flat_topology(contours, dev),
-                                              plan, dev)
-end
-
-function _device_full_rewrite_output_layout(state::DeviceContourState{T},
-                                            plan::DeviceTopologyRewritePlan,
-                                            dev::AbstractDevice=CPU()) where {T}
-    return _device_full_rewrite_output_layout(_flat_topology(state, dev),
-                                              plan, dev)
-end
+# Adapter: any contour container, dev defaults to CPU.
+_device_full_rewrite_output_layout(input::_UnflatContourInput,
+                                   plan::DeviceTopologyRewritePlan,
+                                   dev::AbstractDevice=CPU()) =
+    _device_full_rewrite_output_layout(_as_flat(input, dev), plan, dev)
 
 function _materialize_rewrite_outputs(flat::FlatContourTopology{T},
                                       plan::DeviceTopologyRewritePlan,
                                       layout,
-                                      dev::AbstractDevice=CPU()) where {T}
+                                      dev::AbstractDevice) where {T}
     out_x = device_zeros(dev, T, layout.total_nodes)
     out_y = device_zeros(dev, T, layout.total_nodes)
     out_corners = device_zeros(dev, UInt8, layout.total_nodes)
@@ -120,89 +112,51 @@ function _materialize_rewrite_outputs(flat::FlatContourTopology{T},
                                 out_corners)
 end
 
-function _materialize_rewrite_outputs(contours::Vector{PVContour{T}},
-                                      plan::DeviceTopologyRewritePlan,
-                                      layout,
-                                      dev::AbstractDevice=CPU()) where {T}
-    return _materialize_rewrite_outputs(_pack_flat_topology(contours, dev),
-                                        plan, layout, dev)
-end
+# Adapter: any contour container, dev defaults to CPU.
+_materialize_rewrite_outputs(input::_UnflatContourInput,
+                             plan::DeviceTopologyRewritePlan,
+                             layout,
+                             dev::AbstractDevice=CPU()) =
+    _materialize_rewrite_outputs(_as_flat(input, dev), plan, layout, dev)
 
-function _materialize_rewrite_outputs(state::DeviceContourState{T},
-                                      plan::DeviceTopologyRewritePlan,
-                                      layout,
-                                      dev::AbstractDevice=CPU()) where {T}
-    return _materialize_rewrite_outputs(_flat_topology(state, dev),
-                                        plan, layout, dev)
+# Plan + layout + materialize for any contour container and pair list; the
+# input is flattened once and shared by all three stages. Domain defaults to
+# unbounded.
+function _device_materialize_full_rewrite_outputs(input::_DeviceContourInput,
+                                                  selected_pairs::_DevicePairList,
+                                                  domain::AbstractDomain=UnboundedDomain(),
+                                                  dev::AbstractDevice=CPU())
+    flat = _as_flat(input, dev)
+    plan = _device_topology_rewrite_plan(flat, selected_pairs, domain, dev)
+    layout = _device_full_rewrite_output_layout(flat, plan, dev)
+    return _materialize_rewrite_outputs(flat, plan, layout, dev)
 end
+_device_materialize_full_rewrite_outputs(input::_DeviceContourInput,
+                                         selected_pairs::_DevicePairList,
+                                         dev::AbstractDevice) =
+    _device_materialize_full_rewrite_outputs(input, selected_pairs, UnboundedDomain(), dev)
 
-function _device_materialize_full_rewrite_outputs(contours::Vector{PVContour{T}},
-                                                  selected_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                                  dev::AbstractDevice=CPU()) where {T}
-    plan = _device_topology_rewrite_plan(contours, selected_pairs, dev)
-    layout = _device_full_rewrite_output_layout(contours, plan, dev)
-    return _materialize_rewrite_outputs(contours, plan, layout, dev)
-end
-
-function _device_materialize_full_rewrite_outputs(contours::Vector{PVContour{T}},
-                                                  selected_pairs::DeviceClosePairCandidates,
-                                                  dev::AbstractDevice=CPU()) where {T}
-    plan = _device_topology_rewrite_plan(contours, selected_pairs, dev)
-    layout = _device_full_rewrite_output_layout(contours, plan, dev)
-    return _materialize_rewrite_outputs(contours, plan, layout, dev)
-end
-
-function _device_materialize_full_rewrite_outputs(state::DeviceContourState{T},
-                                                  selected_pairs::DeviceClosePairCandidates,
-                                                  dev::AbstractDevice=CPU()) where {T}
-    plan = _device_topology_rewrite_plan(state, selected_pairs, dev)
-    layout = _device_full_rewrite_output_layout(state, plan, dev)
-    return _materialize_rewrite_outputs(state, plan, layout, dev)
-end
-
-function _device_materialize_full_rewrite_outputs(state::DeviceContourState{T},
-                                                  selected_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                                  dev::AbstractDevice=CPU()) where {T}
-    packed = _pack_close_pair_candidates(selected_pairs, dev)
-    return _device_materialize_full_rewrite_outputs(state, packed, dev)
-end
-
-function _device_rewrite_contours(contours::Vector{PVContour{T}},
-                                  selected_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                  dev::AbstractDevice=CPU()) where {T}
+function _device_rewrite_contours(contours::Vector{<:PVContour},
+                                  selected_pairs::_DevicePairList,
+                                  domain::AbstractDomain=UnboundedDomain(),
+                                  dev::AbstractDevice=CPU())
     return _unpack_rewrite_outputs(
-        _device_materialize_full_rewrite_outputs(contours, selected_pairs, dev))
+        _device_materialize_full_rewrite_outputs(contours, selected_pairs, domain, dev))
 end
+_device_rewrite_contours(contours::Vector{<:PVContour}, selected_pairs::_DevicePairList,
+                         dev::AbstractDevice) =
+    _device_rewrite_contours(contours, selected_pairs, UnboundedDomain(), dev)
 
-function _device_rewrite_contours(contours::Vector{PVContour{T}},
-                                  selected_pairs::DeviceClosePairCandidates,
-                                  dev::AbstractDevice=CPU()) where {T}
-    return _unpack_rewrite_outputs(
-        _device_materialize_full_rewrite_outputs(contours, selected_pairs, dev))
-end
-
-function _device_rewrite_state!(state::DeviceContourState{T},
-                                selected_pairs::Union{DeviceClosePairCandidates,
-                                                      Vector{Tuple{Int,Int,Int,Int}}},
-                                dev::AbstractDevice=CPU()) where {T}
-    outputs = _device_materialize_full_rewrite_outputs(state, selected_pairs, dev)
+function _device_rewrite_state!(state::DeviceContourState,
+                                selected_pairs::_DevicePairList,
+                                domain::AbstractDomain=UnboundedDomain(),
+                                dev::AbstractDevice=CPU())
+    outputs = _device_materialize_full_rewrite_outputs(state, selected_pairs, domain, dev)
     return _replace_device_state!(state, outputs, dev)
 end
-
-function _device_rewrite_state!(state::DeviceContourState{T},
-                                selected_pairs::Union{DeviceClosePairCandidates,
-                                                      Vector{Tuple{Int,Int,Int,Int}}},
-                                domain::AbstractDomain,
-                                dev::AbstractDevice=CPU()) where {T}
-    plan = selected_pairs isa DeviceClosePairCandidates ?
-        _device_topology_rewrite_plan(state, selected_pairs, domain, dev) :
-        _device_topology_rewrite_plan_from_vectors(
-            _flat_topology(state, dev), _pack_pair_vectors(selected_pairs, dev)...,
-            domain, dev)
-    layout = _device_full_rewrite_output_layout(state, plan, dev)
-    outputs = _materialize_rewrite_outputs(state, plan, layout, dev)
-    return _replace_device_state!(state, outputs, dev)
-end
+_device_rewrite_state!(state::DeviceContourState, selected_pairs::_DevicePairList,
+                       dev::AbstractDevice) =
+    _device_rewrite_state!(state, selected_pairs, UnboundedDomain(), dev)
 
 function _device_remesh_state!(state::DeviceContourState{T},
                                params::SurgeryParams,
@@ -218,68 +172,44 @@ function _device_admissible_close_segments(contours::Vector{PVContour{T}}, δ,
         _device_admissible_close_segment_buffer(contours, δ, domain, dev))
 end
 
-function _device_reconnect!(contours::Vector{PVContour{T}},
-                            close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                            dev::AbstractDevice=CPU()) where {T}
-    selected_pairs = _device_select_reconnection_pair_buffer(contours, close_pairs, dev)
+# Select independent pairs and rewrite in place. Host contour vectors are
+# replaced wholesale; device states are rewritten on the device. Domain
+# defaults to unbounded. Returns whether anything was reconnected.
+const _DeviceReconnectTarget = Union{Vector{<:PVContour}, DeviceContourState}
+
+function _device_reconnect!(contours::Vector{<:PVContour},
+                            close_pairs::_DevicePairList,
+                            domain::AbstractDomain=UnboundedDomain(),
+                            dev::AbstractDevice=CPU())
+    selected_pairs = _device_select_reconnection_pair_buffer(contours, close_pairs, domain, dev)
     length(selected_pairs.ci) == 0 && return false
-    rewritten = _device_rewrite_contours(contours, selected_pairs, dev)
+    rewritten = _device_rewrite_contours(contours, selected_pairs, domain, dev)
     empty!(contours)
     append!(contours, rewritten)
     return true
 end
 
-function _device_reconnect!(contours::Vector{PVContour{T}},
-                            close_pairs::DeviceClosePairCandidates,
-                            dev::AbstractDevice=CPU()) where {T}
-    selected_pairs = _device_select_reconnection_pair_buffer(contours, close_pairs, dev)
-    length(selected_pairs.ci) == 0 && return false
-    rewritten = _device_rewrite_contours(contours, selected_pairs, dev)
-    empty!(contours)
-    append!(contours, rewritten)
-    return true
-end
-
-function _device_reconnect!(state::DeviceContourState{T},
-                            close_pairs::DeviceClosePairCandidates,
-                            dev::AbstractDevice=CPU()) where {T}
-    selected_pairs = _device_select_reconnection_pair_buffer(state, close_pairs, dev)
-    length(selected_pairs.ci) == 0 && return false
-    _device_rewrite_state!(state, selected_pairs, dev)
-    return true
-end
-
-function _device_reconnect!(state::DeviceContourState{T},
-                            close_pairs::DeviceClosePairCandidates,
-                            domain::AbstractDomain,
-                            dev::AbstractDevice=CPU()) where {T}
-    selected_pairs = _device_select_reconnection_pair_buffer(
-        state, close_pairs, domain, dev)
+function _device_reconnect!(state::DeviceContourState,
+                            close_pairs::_DevicePairList,
+                            domain::AbstractDomain=UnboundedDomain(),
+                            dev::AbstractDevice=CPU())
+    selected_pairs = _device_select_reconnection_pair_buffer(state, close_pairs, domain, dev)
     length(selected_pairs.ci) == 0 && return false
     _device_rewrite_state!(state, selected_pairs, domain, dev)
     return true
 end
 
-function _device_reconnect!(state::DeviceContourState{T},
-                            close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                            dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnect!(state, _pack_close_pair_candidates(close_pairs, dev), dev)
-end
+_device_reconnect!(target::_DeviceReconnectTarget, close_pairs::_DevicePairList,
+                   dev::AbstractDevice) =
+    _device_reconnect!(target, close_pairs, UnboundedDomain(), dev)
 
-function _device_reconnect_once!(contours::Vector{PVContour{T}}, δ,
+# Test seam: one admissible-pair search followed by one reconnect pass.
+function _device_reconnect_once!(target::_DeviceReconnectTarget, δ,
                                  domain::UnboundedDomain,
-                                 dev::AbstractDevice=CPU()) where {T}
-    close_pairs = _device_admissible_close_segment_buffer(contours, δ, domain, dev)
+                                 dev::AbstractDevice=CPU())
+    close_pairs = _device_admissible_close_segment_buffer(target, δ, domain, dev)
     length(close_pairs.ci) == 0 && return false
-    return _device_reconnect!(contours, close_pairs, dev)
-end
-
-function _device_reconnect_once!(state::DeviceContourState{T}, δ,
-                                 domain::UnboundedDomain,
-                                 dev::AbstractDevice=CPU()) where {T}
-    close_pairs = _device_admissible_close_segment_buffer(state, δ, domain, dev)
-    length(close_pairs.ci) == 0 && return false
-    return _device_reconnect!(state, close_pairs, dev)
+    return _device_reconnect!(target, close_pairs, domain, dev)
 end
 
 function _unpack_rewrite_outputs(outputs::DeviceRewriteOutputs{T}) where {T}
@@ -316,7 +246,8 @@ function _device_surgery_reconnect_loop!(state::DeviceContourState{T},
                                          params::SurgeryParams,
                                          domain::AbstractDomain,
                                          dev::AbstractDevice,
-                                         cleanup_reconnect_artifacts!) where {T}
+                                         cleanup_reconnect_artifacts!;
+                                         layer_label::AbstractString="") where {T}
     return _reconnect_until_exhausted!(
         () -> _device_admissible_close_segment_buffer(state, params.δ, domain, dev),
         pairs -> length(pairs.ci),
@@ -331,7 +262,7 @@ function _device_surgery_reconnect_loop!(state::DeviceContourState{T},
             cleanup_reconnect_artifacts!()
             _device_remove_filaments!(state, params, dev)
         end,
-        " device")
+        layer_label)
 end
 
 function _device_remesh_contours_after_surgery!(state::DeviceContourState{T},
@@ -410,7 +341,8 @@ corner demotion/promotion, remesh, reconnection loop with artifact cleanup, fina
 filament sweep, and spanning-proximity check.
 """
 function _device_surgery_pipeline!(state::DeviceContourState, params::SurgeryParams,
-                                   domain::AbstractDomain, dev::AbstractDevice)
+                                   domain::AbstractDomain, dev::AbstractDevice;
+                                   layer_label::AbstractString="")
     _device_remove_filaments!(state, params, dev)
     _demote_obtuse_corners!(state, dev)
     _promote_high_curvature_corners!(state, params.δ, dev)
@@ -420,7 +352,8 @@ function _device_surgery_pipeline!(state::DeviceContourState, params::SurgeryPar
         _device_remesh_contours_after_surgery!(state, params, dev)
 
     reconnected = _device_surgery_reconnect_loop!(state, params, domain, dev,
-                                                  cleanup_reconnect_artifacts!)
+                                                  cleanup_reconnect_artifacts!;
+                                                  layer_label)
     reconnected && cleanup_reconnect_artifacts!()
 
     _device_remove_filaments!(state, params, dev)
@@ -428,25 +361,13 @@ function _device_surgery_pipeline!(state::DeviceContourState, params::SurgeryPar
     return state
 end
 
-function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel},
-                                       UnboundedDomain, T, GPU},
+# Which kernel/domain combinations may exist on the GPU is decided once, in the
+# `ContourProblem` constructor (`_check_gpu_support`); every GPU problem that
+# reaches here runs the same device pipeline.
+function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T, GPU},
                   params::SurgeryParams) where {T}
     _device_surgery_pipeline!(_device_state(prob), params, prob.domain, prob.dev)
     return prob
-end
-
-function surgery!(prob::ContourProblem{<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel},
-                                       <:PeriodicDomain, T, GPU},
-                  params::SurgeryParams) where {T}
-    _device_surgery_pipeline!(_device_state(prob), params, prob.domain, prob.dev)
-    return prob
-end
-
-function surgery!(::ContourProblem{K, D, T, GPU}, ::SurgeryParams) where {K, D, T}
-    throw(ArgumentError(
-        "GPU surgery is not implemented for $(K) on $(D). " *
-        "Supported single-layer paths are Euler/QG/SQG on unbounded or periodic " *
-        "domains and beta-plane QG on periodic domains."))
 end
 
 """
@@ -461,18 +382,15 @@ function _device_multilayer_surgery!(states::NTuple{N, <:DeviceContourState},
                                      domain::AbstractDomain,
                                      dev::AbstractDevice) where {N}
     for ℓ in 1:N
-        _device_surgery_pipeline!(states[ℓ], params, domain, dev)
+        # Same per-layer label as the CPU multi-layer `surgery!`, so stall
+        # warnings identify the layer on either backend.
+        _device_surgery_pipeline!(states[ℓ], params, domain, dev;
+                                  layer_label=" layer $ℓ")
     end
     return states
 end
 
-function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, UnboundedDomain, T, GPU},
-                  params::SurgeryParams) where {N, T}
-    _device_multilayer_surgery!(_device_state(prob), params, prob.domain, prob.dev)
-    return prob
-end
-
-function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:PeriodicDomain, T, GPU},
+function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:AbstractDomain, T, GPU},
                   params::SurgeryParams) where {N, T}
     _device_multilayer_surgery!(_device_state(prob), params, prob.domain, prob.dev)
     return prob

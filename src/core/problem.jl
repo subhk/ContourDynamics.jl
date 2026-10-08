@@ -162,3 +162,14 @@ execution_workspace(prob::Problem) = execution_workspace(prob.contour_problem)
 clear_state_workspace_cache!(prob::Problem) = clear_state_workspace_cache!(prob.contour_problem)
 
 include("problem_factory.jl")
+
+# Evaluate the diagnostic `f(prob)`, returning `nothing` when it is undefined for
+# this kernel/domain pair (MethodError/ArgumentError); other errors propagate.
+function _try_diagnostic(f, prob)
+    try
+        return f(prob)
+    catch e
+        e isa Union{MethodError, ArgumentError} || rethrow()
+        return nothing
+    end
+end

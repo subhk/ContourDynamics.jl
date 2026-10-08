@@ -39,8 +39,6 @@ end
 
 @inline _valid_energy_contour(c) = nnodes(c) >= 3 && !is_spanning(c)
 
-@inline _period_lengths(Lx::T, Ly::T) where {T} = (T(2) * Lx, T(2) * Ly)
-
 function _max_valid_energy_nnodes(contours)
     return maximum((nnodes(c) for c in contours if _valid_energy_contour(c)); init=0)
 end

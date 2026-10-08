@@ -176,7 +176,7 @@ end
 function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T},
                                                     pair_ci, pair_i, pair_cj, pair_j,
                                                     domain::AbstractDomain,
-                                                    dev::AbstractDevice=CPU()) where {T}
+                                                    dev::AbstractDevice) where {T}
     npairs = length(pair_ci)
     op = device_zeros(dev, UInt8, npairs)
     valid = device_zeros(dev, UInt8, npairs)
@@ -209,65 +209,18 @@ function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T}
                                      out_count, out_len1, out_len2)
 end
 
-function _device_topology_rewrite_plan_from_vectors(flat::FlatContourTopology{T},
-                                                    pair_ci, pair_i, pair_cj, pair_j,
-                                                    dev::AbstractDevice=CPU()) where {T}
+# Adapters: any contour container and pair list, domain defaults to unbounded.
+function _device_topology_rewrite_plan(input::_DeviceContourInput,
+                                       selected_pairs::_DevicePairList,
+                                       domain::AbstractDomain=UnboundedDomain(),
+                                       dev::AbstractDevice=CPU())
+    c = _as_candidates(selected_pairs, dev)
     return _device_topology_rewrite_plan_from_vectors(
-        flat, pair_ci, pair_i, pair_cj, pair_j, UnboundedDomain(), dev)
+        _as_flat(input, dev), c.ci, c.i, c.cj, c.j, domain, dev)
 end
-
-function _device_topology_rewrite_plan_from_vectors(contours::Vector{PVContour{T}},
-                                                    pair_ci, pair_i, pair_cj, pair_j,
-                                                    dev::AbstractDevice=CPU()) where {T}
-    return _device_topology_rewrite_plan_from_vectors(_pack_flat_topology(contours, dev),
-                                                      pair_ci, pair_i, pair_cj,
-                                                      pair_j, dev)
-end
-
-function _device_topology_rewrite_plan(contours::Vector{PVContour{T}},
-                                       selected_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                       dev::AbstractDevice=CPU()) where {T}
-    pair_ci, pair_i, pair_cj, pair_j = _pack_pair_vectors(selected_pairs, dev)
-    return _device_topology_rewrite_plan_from_vectors(contours, pair_ci, pair_i,
-                                                      pair_cj, pair_j, dev)
-end
-
-function _device_topology_rewrite_plan(contours::Vector{PVContour{T}},
-                                       selected_pairs::DeviceClosePairCandidates,
-                                       dev::AbstractDevice=CPU()) where {T}
-    return _device_topology_rewrite_plan_from_vectors(contours, selected_pairs.ci,
-                                                      selected_pairs.i,
-                                                      selected_pairs.cj,
-                                                      selected_pairs.j, dev)
-end
-
-function _device_topology_rewrite_plan(state::DeviceContourState{T},
-                                       selected_pairs::DeviceClosePairCandidates,
-                                       dev::AbstractDevice=CPU()) where {T}
-    return _device_topology_rewrite_plan_from_vectors(_flat_topology(state, dev),
-                                                      selected_pairs.ci,
-                                                      selected_pairs.i,
-                                                      selected_pairs.cj,
-                                                      selected_pairs.j, dev)
-end
-
-function _device_topology_rewrite_plan(state::DeviceContourState{T},
-                                       selected_pairs::DeviceClosePairCandidates,
-                                       domain::AbstractDomain,
-                                       dev::AbstractDevice=CPU()) where {T}
-    return _device_topology_rewrite_plan_from_vectors(
-        _flat_topology(state, dev), selected_pairs.ci, selected_pairs.i,
-        selected_pairs.cj, selected_pairs.j, domain, dev)
-end
-
-function _device_topology_rewrite_plan(flat::FlatContourTopology{T},
-                                       selected_pairs::DeviceClosePairCandidates,
-                                       dev::AbstractDevice=CPU()) where {T}
-    return _device_topology_rewrite_plan_from_vectors(flat, selected_pairs.ci,
-                                                      selected_pairs.i,
-                                                      selected_pairs.cj,
-                                                      selected_pairs.j, dev)
-end
+_device_topology_rewrite_plan(input::_DeviceContourInput, selected_pairs::_DevicePairList,
+                              dev::AbstractDevice) =
+    _device_topology_rewrite_plan(input, selected_pairs, UnboundedDomain(), dev)
 
 @inline function _inserted_contour_node(x, y, corners, offsets, ci, inserted_idx,
                                         stitch_x, stitch_y, local_idx)

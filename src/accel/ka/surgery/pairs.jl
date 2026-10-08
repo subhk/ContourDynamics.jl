@@ -185,7 +185,7 @@ const _PAIR_SCAN_CHUNK = 1 << 20
 
 function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
                                              domain::AbstractDomain,
-                                             dev::AbstractDevice=CPU()) where {T}
+                                             dev::AbstractDevice) where {T}
     total_nodes = _flat_nnodes(flat)
     if total_nodes == 0
         empty_ints = device_zeros(dev, Int, 0)
@@ -264,29 +264,14 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
     return DeviceClosePairCandidates(pair_ci, pair_i, pair_cj, pair_j)
 end
 
-function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
-                                             dev::AbstractDevice=CPU()) where {T}
-    return _device_close_pair_candidate_buffer(flat, δ, UnboundedDomain(), dev)
+# Adapters: any contour container, domain defaults to unbounded, dev to CPU.
+function _device_close_pair_candidate_buffer(input::_UnflatContourInput, δ,
+                                             domain::AbstractDomain=UnboundedDomain(),
+                                             dev::AbstractDevice=CPU())
+    return _device_close_pair_candidate_buffer(_as_flat(input, dev), δ, domain, dev)
 end
-
-function _device_close_pair_candidate_buffer(contours::Vector{PVContour{T}}, δ,
-                                             dev::AbstractDevice=CPU()) where {T}
-    return _device_close_pair_candidate_buffer(_pack_flat_topology(contours, dev),
-                                               δ, dev)
-end
-
-function _device_close_pair_candidate_buffer(state::DeviceContourState{T}, δ,
-                                             dev::AbstractDevice=CPU()) where {T}
-    return _device_close_pair_candidate_buffer(_flat_topology(state, dev),
-                                               δ, dev)
-end
-
-function _device_close_pair_candidate_buffer(state::DeviceContourState{T}, δ,
-                                             domain::AbstractDomain,
-                                             dev::AbstractDevice=CPU()) where {T}
-    return _device_close_pair_candidate_buffer(_flat_topology(state, dev),
-                                               δ, domain, dev)
-end
+_device_close_pair_candidate_buffer(input::_UnflatContourInput, δ, dev::AbstractDevice) =
+    _device_close_pair_candidate_buffer(input, δ, UnboundedDomain(), dev)
 
 function _unpack_close_pair_candidates(candidates::DeviceClosePairCandidates)
     ci = to_cpu(candidates.ci)
@@ -418,7 +403,7 @@ end
 
 function _device_admissible_close_segment_buffer(flat::FlatContourTopology{T}, δ,
                                                  domain::AbstractDomain,
-                                                 dev::AbstractDevice=CPU()) where {T}
+                                                 dev::AbstractDevice) where {T}
     candidates = _device_close_pair_candidate_buffer(flat, δ, domain, dev)
     npairs = length(candidates.ci)
     npairs == 0 && return candidates
@@ -449,20 +434,15 @@ function _device_admissible_close_segment_buffer(flat::FlatContourTopology{T}, �
     return DeviceClosePairCandidates(out_ci, out_i, out_cj, out_j)
 end
 
-function _device_admissible_close_segment_buffer(contours::Vector{PVContour{T}}, δ,
+# Adapter: any contour container; the admissibility test always takes an
+# explicit domain.
+function _device_admissible_close_segment_buffer(input::_UnflatContourInput, δ,
                                                  domain::AbstractDomain,
-                                                 dev::AbstractDevice=CPU()) where {T}
-    return _device_admissible_close_segment_buffer(
-        _pack_flat_topology(contours, dev), δ, domain, dev)
+                                                 dev::AbstractDevice=CPU())
+    return _device_admissible_close_segment_buffer(_as_flat(input, dev), δ, domain, dev)
 end
 
-function _device_admissible_close_segment_buffer(state::DeviceContourState{T}, δ,
-                                                 domain::AbstractDomain,
-                                                 dev::AbstractDevice=CPU()) where {T}
-    return _device_admissible_close_segment_buffer(
-        _flat_topology(state, dev), δ, domain, dev)
-end
-
+# Host-side test seam: unpacked candidate tuples.
 function _device_close_pair_candidates(contours::Vector{PVContour{T}}, δ,
                                        dev::AbstractDevice=CPU()) where {T}
     return _unpack_close_pair_candidates(
@@ -487,6 +467,11 @@ function _pack_close_pair_candidates(pairs::Vector{Tuple{Int,Int,Int,Int}},
     ci, i, cj, j = _pack_pair_vectors(pairs, dev)
     return DeviceClosePairCandidates(ci, i, cj, j)
 end
+
+# Normalize a `_DevicePairList` to packed device candidates.
+_as_candidates(candidates::DeviceClosePairCandidates, ::AbstractDevice) = candidates
+_as_candidates(pairs::Vector{Tuple{Int,Int,Int,Int}}, dev::AbstractDevice) =
+    _pack_close_pair_candidates(pairs, dev)
 
 @kernel function _pair_distance_plan_kernel!(distance2, op, pair_ci, pair_i,
                                              pair_cj, pair_j, x, y, wrapx,
@@ -541,7 +526,7 @@ end
 function _device_reconnection_plan_from_vectors(flat::FlatContourTopology{T},
                                                 pair_ci, pair_i, pair_cj, pair_j,
                                                 domain::AbstractDomain,
-                                                dev::AbstractDevice=CPU()) where {T}
+                                                dev::AbstractDevice) where {T}
     npairs = length(pair_ci)
     distance2 = device_zeros(dev, T, npairs)
     op = device_zeros(dev, UInt8, npairs)
@@ -557,77 +542,31 @@ function _device_reconnection_plan_from_vectors(flat::FlatContourTopology{T},
                                   distance2, op, selected)
 end
 
-function _device_reconnection_plan_from_vectors(flat::FlatContourTopology{T},
-                                                pair_ci, pair_i, pair_cj, pair_j,
-                                                dev::AbstractDevice=CPU()) where {T}
+# Adapters: any contour container and pair list, domain defaults to unbounded.
+function _device_reconnection_plan(input::_DeviceContourInput, pairs::_DevicePairList,
+                                   domain::AbstractDomain=UnboundedDomain(),
+                                   dev::AbstractDevice=CPU())
+    c = _as_candidates(pairs, dev)
     return _device_reconnection_plan_from_vectors(
-        flat, pair_ci, pair_i, pair_cj, pair_j, UnboundedDomain(), dev)
+        _as_flat(input, dev), c.ci, c.i, c.cj, c.j, domain, dev)
 end
+_device_reconnection_plan(input::_DeviceContourInput, pairs::_DevicePairList,
+                          dev::AbstractDevice) =
+    _device_reconnection_plan(input, pairs, UnboundedDomain(), dev)
 
-function _device_reconnection_plan_from_vectors(contours::Vector{PVContour{T}},
-                                                pair_ci, pair_i, pair_cj, pair_j,
-                                                dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnection_plan_from_vectors(_pack_flat_topology(contours, dev),
-                                                  pair_ci, pair_i, pair_cj,
-                                                  pair_j, dev)
-end
-
-function _device_reconnection_plan(contours::Vector{PVContour{T}},
-                                   close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                   dev::AbstractDevice=CPU()) where {T}
-    pair_ci, pair_i, pair_cj, pair_j = _pack_pair_vectors(close_pairs, dev)
-    return _device_reconnection_plan_from_vectors(contours, pair_ci, pair_i,
-                                                  pair_cj, pair_j, dev)
-end
-
-function _device_reconnection_plan(contours::Vector{PVContour{T}},
-                                   candidates::DeviceClosePairCandidates,
-                                   dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnection_plan_from_vectors(contours, candidates.ci,
-                                                  candidates.i, candidates.cj,
-                                                  candidates.j, dev)
-end
-
-function _device_reconnection_plan(state::DeviceContourState{T},
-                                   candidates::DeviceClosePairCandidates,
-                                   dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnection_plan_from_vectors(_flat_topology(state, dev),
-                                                  candidates.ci, candidates.i,
-                                                  candidates.cj, candidates.j,
-                                                  dev)
-end
-
-function _device_reconnection_plan(state::DeviceContourState{T},
-                                   candidates::DeviceClosePairCandidates,
-                                   domain::AbstractDomain,
-                                   dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnection_plan_from_vectors(
-        _flat_topology(state, dev), candidates.ci, candidates.i,
-        candidates.cj, candidates.j, domain, dev)
-end
-
-function _device_reconnection_plan(flat::FlatContourTopology{T},
-                                   candidates::DeviceClosePairCandidates,
-                                   dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnection_plan_from_vectors(flat, candidates.ci,
-                                                  candidates.i, candidates.cj,
-                                                  candidates.j, dev)
-end
-
-function _device_reconnection_plan(flat::FlatContourTopology{T},
-                                   candidates::DeviceClosePairCandidates,
-                                   domain::AbstractDomain,
-                                   dev::AbstractDevice=CPU()) where {T}
-    return _device_reconnection_plan_from_vectors(
-        flat, candidates.ci, candidates.i, candidates.cj, candidates.j,
-        domain, dev)
-end
-
-@kernel function _select_independent_pairs_kernel!(selected, used_contours,
+# Serial greedy planner: repeatedly pick the closest still-admissible pair whose
+# contours are unused. Each pick is recorded both as a flag (`selected`) and as
+# its 1-based pick order (`order`), so the compacted pair buffer can be laid
+# out in `(distance2, (ci, i, cj, j))` order exactly like the CPU
+# `_select_reconnection_pairs`. Split daughters are appended in that order on
+# both backends, so the resulting contour vectors match element for element.
+@kernel function _select_independent_pairs_kernel!(selected, order, count_store,
+                                                   used_contours,
                                                    distance2, pair_ci, pair_i,
                                                    pair_cj, pair_j, npairs)
     worker = @index(Global)
     if worker == 1
+        nselected = 0
         @inbounds for _ in 1:npairs
             best = 0
             best_d2 = typemax(typeof(distance2[1]))
@@ -657,10 +596,13 @@ end
             best == 0 && break
             ci = pair_ci[best]
             cj = pair_cj[best]
+            nselected += 1
             selected[best] = UInt8(1)
+            order[best] = nselected
             used_contours[ci] = UInt8(1)
             used_contours[cj] = UInt8(1)
         end
+        count_store[1] = nselected
     end
 end
 
@@ -680,10 +622,10 @@ end
     end
 end
 
-function _device_select_reconnection_pair_buffer(flat::FlatContourTopology{T},
+function _device_select_reconnection_pair_buffer(flat::FlatContourTopology,
                                                  candidates::DeviceClosePairCandidates,
                                                  domain::AbstractDomain,
-                                                 dev::AbstractDevice=CPU()) where {T}
+                                                 dev::AbstractDevice)
     npairs = length(candidates.ci)
     if npairs == 0
         empty_ints = device_zeros(dev, Int, 0)
@@ -692,13 +634,14 @@ function _device_select_reconnection_pair_buffer(flat::FlatContourTopology{T},
 
     plan = _device_reconnection_plan(flat, candidates, domain, dev)
     used_contours = device_zeros(dev, UInt8, _flat_ncontours(flat))
-    @_ka_launch dev 1 _select_independent_pairs_kernel!(
-        plan.selected, used_contours, plan.distance2, plan.ci, plan.i,
-        plan.cj, plan.j, npairs)
-
+    # `slots` holds each selected pair's pick order, which doubles as its
+    # compaction slot: the output buffer is sorted by proximity, not by
+    # candidate-buffer position.
     slots = device_zeros(dev, Int, npairs)
     count_store = device_zeros(dev, Int, 1)
-    _device_compact_scan!(slots, count_store, plan.selected, npairs, dev)
+    @_ka_launch dev 1 _select_independent_pairs_kernel!(
+        plan.selected, slots, count_store, used_contours, plan.distance2,
+        plan.ci, plan.i, plan.cj, plan.j, npairs)
     nselected = to_cpu(count_store)[1]
 
     out_ci = device_zeros(dev, Int, nselected)
@@ -714,38 +657,14 @@ function _device_select_reconnection_pair_buffer(flat::FlatContourTopology{T},
     return DeviceClosePairCandidates(out_ci, out_i, out_cj, out_j)
 end
 
-function _device_select_reconnection_pair_buffer(flat::FlatContourTopology{T},
-                                                 candidates::DeviceClosePairCandidates,
-                                                 dev::AbstractDevice=CPU()) where {T}
+# Adapters: any contour container and pair list, domain defaults to unbounded.
+function _device_select_reconnection_pair_buffer(input::_UnflatContourInput,
+                                                 pairs::_DevicePairList,
+                                                 domain::AbstractDomain=UnboundedDomain(),
+                                                 dev::AbstractDevice=CPU())
     return _device_select_reconnection_pair_buffer(
-        flat, candidates, UnboundedDomain(), dev)
+        _as_flat(input, dev), _as_candidates(pairs, dev), domain, dev)
 end
-
-function _device_select_reconnection_pair_buffer(contours::Vector{PVContour{T}},
-                                                 candidates::DeviceClosePairCandidates,
-                                                 dev::AbstractDevice=CPU()) where {T}
-    return _device_select_reconnection_pair_buffer(
-        _pack_flat_topology(contours, dev), candidates, dev)
-end
-
-function _device_select_reconnection_pair_buffer(state::DeviceContourState{T},
-                                                 candidates::DeviceClosePairCandidates,
-                                                 dev::AbstractDevice=CPU()) where {T}
-    return _device_select_reconnection_pair_buffer(
-        _flat_topology(state, dev), candidates, dev)
-end
-
-function _device_select_reconnection_pair_buffer(state::DeviceContourState{T},
-                                                 candidates::DeviceClosePairCandidates,
-                                                 domain::AbstractDomain,
-                                                 dev::AbstractDevice=CPU()) where {T}
-    return _device_select_reconnection_pair_buffer(
-        _flat_topology(state, dev), candidates, domain, dev)
-end
-
-function _device_select_reconnection_pair_buffer(contours::Vector{PVContour{T}},
-                                                 close_pairs::Vector{Tuple{Int,Int,Int,Int}},
-                                                 dev::AbstractDevice=CPU()) where {T}
-    return _device_select_reconnection_pair_buffer(
-        contours, _pack_close_pair_candidates(close_pairs, dev), dev)
-end
+_device_select_reconnection_pair_buffer(input::_UnflatContourInput, pairs::_DevicePairList,
+                                        dev::AbstractDevice) =
+    _device_select_reconnection_pair_buffer(input, pairs, UnboundedDomain(), dev)

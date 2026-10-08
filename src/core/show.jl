@@ -2,7 +2,8 @@ using Printf
 
 # Display methods favor compact one-line summaries for ordinary `show` and a
 # tree-shaped expanded layout for `MIME"text/plain"`, which is what the REPL and
-# notebooks use for top-level values.
+# notebooks use for top-level values. Types without an expanded layout rely on
+# Base's default `show(io, ::MIME"text/plain", x) = show(io, x)` fallback.
 
 # ── Device types ─────────────────────────────────────────
 
@@ -21,20 +22,16 @@ const _MAX_CONTOURS_SHOWN = 5
 # ── Kernels ─────────────────────────────────────────────
 
 Base.show(io::IO, ::EulerKernel) = print(io, "EulerKernel")
-Base.show(io::IO, ::MIME"text/plain", k::EulerKernel) = show(io, k)
 
 Base.show(io::IO, k::QGKernel{T}) where {T} = print(io, "QGKernel{$T}: Ld = ", k.Ld)
-Base.show(io::IO, ::MIME"text/plain", k::QGKernel) = show(io, k)
 
 function Base.show(io::IO, k::BetaPlaneQGKernel{T}) where {T}
     print(io, "BetaPlaneQGKernel{$T}: beta = ", k.beta,
           ", Ld = ", k.Ld,
           ", reference contours = ", length(k.reference_contours))
 end
-Base.show(io::IO, ::MIME"text/plain", k::BetaPlaneQGKernel) = show(io, k)
 
 Base.show(io::IO, k::SQGKernel{T}) where {T} = print(io, "SQGKernel{$T}: δ = ", k.δ)
-Base.show(io::IO, ::MIME"text/plain", k::SQGKernel) = show(io, k)
 
 function Base.show(io::IO, k::MultiLayerQGKernel{N, M, T}) where {N, M, T}
     print(io, "MultiLayerQGKernel{$N, $T}")
@@ -48,12 +45,10 @@ end
 # ── Domains ─────────────────────────────────────────────
 
 Base.show(io::IO, ::UnboundedDomain) = print(io, "UnboundedDomain")
-Base.show(io::IO, ::MIME"text/plain", d::UnboundedDomain) = show(io, d)
 
 function Base.show(io::IO, d::PeriodicDomain{T}) where {T}
     print(io, "PeriodicDomain{$T}: x ∈ [-", d.Lx, ", ", d.Lx, ") × y ∈ [-", d.Ly, ", ", d.Ly, ")")
 end
-Base.show(io::IO, ::MIME"text/plain", d::PeriodicDomain) = show(io, d)
 
 # ── PVContour ───────────────────────────────────────────
 
@@ -78,21 +73,16 @@ function Base.show(io::IO, c::PVContour{T}) where {T}
     _contour_summary(io, c)
 end
 
-Base.show(io::IO, ::MIME"text/plain", c::PVContour) = show(io, c)
-
 # ── ContourProblem ──────────────────────────────────────
 
 function Base.show(io::IO, prob::ContourProblem{K, D, T}) where {K, D, T}
     print(io, "ContourProblem{", _type_name(K), ", ", _type_name(D), ", $T}")
 end
 
-function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem{K, D, T}) where {K, D, T}
+function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem)
     # The expanded view mirrors the fields users most often inspect while
-    # keeping contour details behind a capped nested list.
-    _show_contour_problem(io, prob, _host_contours(prob))
-end
-
-function Base.show(io::IO, ::MIME"text/plain", prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
+    # keeping contour details behind a capped nested list. `materialize_contours`
+    # borrows on CPU and copies on GPU.
     _show_contour_problem(io, prob, materialize_contours(prob))
 end
 
@@ -134,11 +124,7 @@ function Base.show(io::IO, prob::MultiLayerContourProblem{N, K, D, T}) where {N,
     print(io, "MultiLayerContourProblem{$N, ", _type_name(D), ", $T}")
 end
 
-function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem{N, K, D, T}) where {N, K, D, T}
-    _show_multilayer_problem(io, prob, _host_contours(prob))
-end
-
-function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem{N, K, D, T, GPU}) where {N, K, D, T}
+function Base.show(io::IO, ::MIME"text/plain", prob::MultiLayerContourProblem)
     _show_multilayer_problem(io, prob, materialize_contours(prob))
 end
 
@@ -177,7 +163,6 @@ end
 function Base.show(io::IO, s::RK4Stepper{T}) where {T}
     print(io, "RK4Stepper{$T}: dt = ", s.dt)
 end
-Base.show(io::IO, ::MIME"text/plain", s::RK4Stepper) = show(io, s)
 
 # ── SurgeryParams ───────────────────────────────────────
 

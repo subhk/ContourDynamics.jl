@@ -87,11 +87,9 @@ end
 # than only the node count before/after surgery: callbacks and device-resident
 # topology rewrites can otherwise leave a stale stepper even when the count
 # comparison used by the surgery caller misses the transition.
-@inline function _stepper_buffers_match(stepper::RK4Stepper, N::Int)
-    return length(stepper.k1) == N && length(stepper.k2) == N &&
-           length(stepper.k3) == N && length(stepper.k4) == N &&
-           length(stepper.nodes_buf) == N
-end
+@inline _stepper_buffers_match(stepper::RK4Stepper, N::Int) =
+    all(buf -> length(buf) == N,
+        (stepper.k1, stepper.k2, stepper.k3, stepper.k4, stepper.nodes_buf))
 
 @inline function _ensure_stepper_buffers!(prob, stepper)
     N = total_nodes(prob)
@@ -124,23 +122,6 @@ function surgery!(prob::MultiLayerContourProblem{N, <:MultiLayerQGKernel{N}, <:A
     end
     return prob
 end
-
-
-_maybe_wrap_nodes!(::ContourProblem{<:AbstractKernel, UnboundedDomain}) = nothing
-_maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, <:PeriodicDomain}) = wrap_nodes!(prob)
-_maybe_wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T} =
-    _wrap_state_nodes!(_device_state(prob), prob.domain, prob.dev)
-# Device-agnostic: unbounded domains never wrap, on any device. A separate
-# GPU method here would be equally specific, not more specific, and the
-# resulting ambiguity would make wrapping unresolvable for GPU multi-layer
-# unbounded problems.
-_maybe_wrap_nodes!(::MultiLayerContourProblem{<:Any, <:Any, UnboundedDomain}) = nothing
-_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, <:PeriodicDomain, T, GPU}) where {N, K, T} =
-    wrap_nodes!(prob)
-_maybe_wrap_nodes!(prob::MultiLayerContourProblem{N, K, D}) where {N, K<:MultiLayerQGKernel{N}, D<:PeriodicDomain} = wrap_nodes!(prob)
-
-# Stepper-aware wrapping delegates to the problem's node-only implementation.
-_maybe_wrap_nodes!(prob, ::AbstractTimeStepper) = _maybe_wrap_nodes!(prob)
 
 function wrap_nodes!(prob::ContourProblem{<:AbstractKernel, PeriodicDomain{T}, T, GPU}) where {T}
     _wrap_state_nodes!(_device_state(prob), prob.domain, prob.dev)
@@ -206,7 +187,7 @@ function evolve!(prob::Union{ContourProblem, MultiLayerContourProblem},
         if total_nodes(prob) > 0
             _ensure_stepper_buffers!(prob, stepper)
             timestep!(prob, stepper)
-            _maybe_wrap_nodes!(prob, stepper)
+            wrap_nodes!(prob)  # no-op on unbounded domains (see domains.jl)
         end
         _maybe_apply_surgery!(prob, stepper, params, step)
         _run_callbacks(callbacks, prob, step)

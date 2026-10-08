@@ -157,3 +157,23 @@ function _pack_flat_topology(contours::Vector{PVContour{T}}, dev::AbstractDevice
                                to_device(dev, corners),
                                to_device(dev, active))
 end
+
+# The three contour containers the device surgery adapters accept. `_as_flat`
+# normalizes any of them to a `FlatContourTopology` resident on `dev`, so each
+# entry point needs one adapter method instead of one per container kind.
+const _DeviceContourInput = Union{FlatContourTopology, DeviceContourState,
+                                  Vector{<:PVContour}}
+# The two that are not yet flat. Adapters that share their name with a
+# `flat::FlatContourTopology{T}` core take this narrower union at full arity,
+# so the core (not the adapter) is the most specific method for a flat input.
+const _UnflatContourInput = Union{DeviceContourState, Vector{<:PVContour}}
+
+_as_flat(flat::FlatContourTopology, ::AbstractDevice) = flat
+_as_flat(state::DeviceContourState, dev::AbstractDevice) = _flat_topology(state, dev)
+_as_flat(contours::Vector{<:PVContour}, dev::AbstractDevice) =
+    _pack_flat_topology(contours, dev)
+
+# Pair lists arrive either packed on the device or as host tuples
+# (ci, i, cj, j); `_as_candidates` (pairs.jl) packs the latter.
+const _DevicePairList = Union{DeviceClosePairCandidates,
+                              Vector{Tuple{Int,Int,Int,Int}}}

@@ -9,28 +9,16 @@ const _SURGERY_PRESETS = Dict{Symbol, NamedTuple}(
 
 @inline _convert_contour_precision(::Type{T}, c::PVContour{T}) where {T<:AbstractFloat} = c
 
-function _convert_contour_precision(::Type{T}, c::PVContour) where {T<:AbstractFloat}
-    nodes = Vector{SVector{2,T}}(undef, nnodes(c))
-    @inbounds for i in eachindex(nodes)
-        node = c.nodes[i]
-        nodes[i] = SVector{2,T}(T(node[1]), T(node[2]))
-    end
-    wrap = SVector{2,T}(T(c.wrap[1]), T(c.wrap[2]))
-    return PVContour(nodes, T(c.pv), wrap, copy(c.corners))
-end
+_convert_contour_precision(::Type{T}, c::PVContour) where {T<:AbstractFloat} =
+    PVContour(SVector{2,T}.(c.nodes), T(c.pv), SVector{2,T}(c.wrap), copy(c.corners))
 
 @inline _convert_contours_precision(::Type{T},
                                     contours::Vector{PVContour{T}}) where {T<:AbstractFloat} =
     contours
 
-function _convert_contours_precision(::Type{T},
-                                     contours::AbstractVector{<:PVContour}) where {T<:AbstractFloat}
-    converted = Vector{PVContour{T}}(undef, length(contours))
-    @inbounds for i in eachindex(contours)
-        converted[i] = _convert_contour_precision(T, contours[i])
-    end
-    return converted
-end
+_convert_contours_precision(::Type{T},
+                            contours::AbstractVector{<:PVContour}) where {T<:AbstractFloat} =
+    PVContour{T}[_convert_contour_precision(T, c) for c in contours]
 
 function _convert_layers_precision(::Type{T}, layers::Tuple) where {T<:AbstractFloat}
     return map(layer -> _convert_contours_precision(T, layer), layers)

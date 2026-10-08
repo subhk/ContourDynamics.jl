@@ -1,5 +1,7 @@
 using Test, ContourDynamics, StaticArrays, Logging
 
+@isdefined(rectangle_patch) || include("test_utils.jl")
+
 @testset "Surgery" begin
     @testset "PV compatibility is independent of PV units" begin
         for T in (Float32, Float64), q in (one(T), T(1e-10))
@@ -485,22 +487,6 @@ using Test, ContourDynamics, StaticArrays, Logging
         # whose boundaries are within δ → should merge.
         δ = 0.02
         μ = 0.1
-        function rectangle_patch(xmin, xmax, ymin, ymax, nside, pv)
-            nodes = SVector{2,Float64}[]
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin + (xmax - xmin) * k / nside, ymin))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax, ymin + (ymax - ymin) * k / nside))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmax - (xmax - xmin) * k / nside, ymax))
-            end
-            for k in 0:(nside - 1)
-                push!(nodes, SVector(xmin, ymax - (ymax - ymin) * k / nside))
-            end
-            return PVContour(nodes, pv)
-        end
 
         # Two resolved rectangles very close to each other (gap < δ).
         c1 = rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0)

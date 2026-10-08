@@ -108,13 +108,8 @@ function _prepare_contour_offsets!(offsets::Vector{Int},
     return offsets
 end
 
-function _max_layer_node_count(prob::MultiLayerContourProblem{N}) where {N}
-    max_nodes = 0
-    @inbounds for i in 1:N
-        max_nodes = max(max_nodes, sum(nnodes(c) for c in _host_contours(prob)[i]; init=0))
-    end
-    return max_nodes
-end
+_max_layer_node_count(prob::MultiLayerContourProblem) =
+    maximum(_layer_node_count, _host_contours(prob); init=0)
 
 function _prepare_modal_transforms!(scratch::_VelocityScratch{T},
                                     kernel::MultiLayerQGKernel{N,M,T}) where {N, M, T}
@@ -303,12 +298,6 @@ end
 @inline _small_multilayer_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
                                     prob::MultiLayerContourProblem{N, <:Any, <:Any, T, CPU}) where {N, T} =
     _direct_velocity!(vel, prob)
-
-@inline function _small_multilayer_velocity!(vel::NTuple{N, Vector{SVector{2,T}}},
-                                             prob::MultiLayerContourProblem{N, <:Any, <:Any, T, GPU}) where {N, T}
-    return _ka_multilayer_velocity_to_host!(vel, _device_state(prob), prob.kernel,
-                                            prob.domain, prob.dev; workspace=execution_workspace(prob))
-end
 
 function _multilayer_velocity_policy!(vel::NTuple{N, Vector{SVector{2,T}}},
                                       prob::MultiLayerContourProblem{N, <:Any, <:Any, T}) where {N, T}
@@ -597,16 +586,6 @@ end
 function velocity!(vel::AbstractVector{SVector{2,T}},
                    prob::ContourProblem{K, D, T, GPU}) where {T, K<:Union{EulerKernel,QGKernel,SQGKernel,BetaPlaneQGKernel{T}}, D<:Union{UnboundedDomain, PeriodicDomain{T}}}
     return _ka_velocity!(vel, prob, prob.dev)
-end
-
-# Reject unsupported GPU kernel/domain combinations without computing on CPU.
-function velocity!(vel::AbstractVector{SVector{2,T}},
-                   prob::ContourProblem{K, D, T, GPU}) where {K, D, T}
-    throw(ArgumentError(
-        "GPU velocity is implemented for single-layer EulerKernel, QGKernel, and SQGKernel " *
-        "on UnboundedDomain or PeriodicDomain, and BetaPlaneQGKernel on PeriodicDomain. " *
-        "Got $(typeof(prob.kernel)) on $(typeof(prob.domain)). " *
-        "Use dev=CPU() for other kernel/domain combinations."))
 end
 
 # GPU host-output adapter for multi-layer problems.
