@@ -1,13 +1,13 @@
 const TEST_GROUPS = (
-    core = ["test_storage_workspace.jl", "test_core.jl", "test_precision_regressions.jl", "test_geometry_stability.jl",
-            "test_problem.jl", "test_shapes.jl", "test_show.jl", "test_edge_cases.jl",
-            "test_surgery.jl", "test_kirchhoff.jl", "test_conservation.jl", "test_merger.jl",
-            "test_threading.jl", "test_multi_contour.jl", "test_example_visualization_geometry.jl",
-            "test_two_layer_qg_example.jl"],
+    # core: types, storage/workspace ownership, geometry, stepping, surgery,
+    # threading, display, and the example-script checks.
+    core = ["test_core.jl", "test_problem.jl", "test_show.jl", "test_surgery.jl",
+            "test_threading.jl", "test_examples.jl"],
+    # numerical: independent analytical, Fourier, and image-sum oracles.
     numerical = ["test_beta_plane.jl", "test_euler.jl", "test_qg.jl", "test_sqg.jl",
-                 "test_periodic_qg_sqg.jl", "test_periodic_scaling.jl", "test_periodic_velocity_regression.jl",
-                 "test_periodic_velocity_oracle.jl"],
-    device = ["test_device.jl"],
+                 "test_periodic_qg_sqg.jl", "test_periodic_velocity_regression.jl"],
+    # device: KernelAbstractions state/velocity/energy and surgery parity on CPU.
+    device = ["test_device_state.jl", "test_device_surgery.jl"],
     performance = ["test_allocations.jl"],
 )
 const EXTENSION_TESTS = (

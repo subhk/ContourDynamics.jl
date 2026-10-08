@@ -1,4 +1,75 @@
-using Test, ContourDynamics, StaticArrays
+using Test, ContourDynamics, StaticArrays, LinearAlgebra
+
+# Storage/workspace testsets run first, matching the historical test_groups.jl
+# order (test_storage_workspace.jl preceded test_core.jl).
+
+@testset "Storage ownership" begin
+    input = [circular_patch(1., 16, 1.)]
+    prob = ContourProblem(EulerKernel(), UnboundedDomain(), input)
+    @test contours(prob) === input
+    @test prob.contours === input
+    @test materialize_contours(prob) === input # compatibility accessor
+    saved = snapshot_contours(prob)
+    original = saved[1].nodes[1]
+    input[1].nodes[1] = SVector(2., 0.)
+    input[1].corners[1] = true
+    @test saved[1].nodes[1] == original
+    @test !saved[1].corners[1]
+    @test contours(prob)[1].nodes[1] == SVector(2., 0.)
+
+    state = DeviceContourState(saved, CPU())
+    storage = ContourDynamics._DeviceContourStorage(state)
+    @test_throws ErrorException ContourDynamics._borrow_contours(storage)
+    before = ContourDynamics._snapshot_storage(storage)
+    state.x[1] += 1
+    after = ContourDynamics._snapshot_storage(storage)
+    @test after[1].nodes[1][1] == before[1].nodes[1][1] + 1
+    @test before[1].nodes[1] == original
+
+    kernel = MultiLayerQGKernel(SVector(1.), SMatrix{2,2}(-.5, .5, .5, -.5))
+    multi = MultiLayerContourProblem(kernel, UnboundedDomain(), (saved, deepcopy(saved)))
+    copy_layers = snapshot_contours(multi)
+    contours(multi)[2][1].nodes[1] += SVector(1., 0.)
+    @test copy_layers[2][1].nodes[1] == original
+    wrapped = Problem(prob, RK4Stepper(.01, total_nodes(prob)), nothing)
+    @test snapshot_contours(wrapped)[1].nodes == contours(prob)[1].nodes
+end
+
+@testset "Explicit computational workspace" begin
+    ws = ExecutionWorkspace()
+    prob = Problem(contours=[circular_patch(1., 16, 1.)], dt=.01, workspace=ws)
+    other = Problem(contours=[circular_patch(1., 12, 1.)], dt=.01)
+    @test execution_workspace(prob) === ws
+    @test execution_workspace(other) !== ws
+    @test prob.contour_problem.velocity_scratch === ws.cpu
+
+    state = DeviceContourState(snapshot_contours(prob), CPU())
+    vel = zeros(SVector{2,Float64}, total_nodes(prob))
+    ContourDynamics._ka_velocity_from_state!(vel, state, EulerKernel(), UnboundedDomain(), CPU(); workspace=ws)
+    @test !isempty(ws.buffers)
+    buffer = ContourDynamics._get_state_workspace(CPU(), Float64, length(vel); workspace=ws)
+    other_buffer = ContourDynamics._get_state_workspace(CPU(), Float64, 12; workspace=execution_workspace(other))
+    @test ContourDynamics._get_state_workspace(CPU(), Float64, length(vel); workspace=ws) === buffer
+    @test buffer !== other_buffer
+    ContourDynamics._rk4_state_step!(state, EulerKernel(), UnboundedDomain(), prob.stepper, CPU(); workspace=ws)
+    @test ContourDynamics._get_state_workspace(CPU(), Float64, length(vel); workspace=ws) === buffer
+    clear_state_workspace_cache!(prob)
+    @test isempty(ws.buffers)
+    @test !isempty(execution_workspace(other).buffers)
+    @test prob.contour_problem.velocity_scratch === ws.cpu
+
+    # Reusing a workspace sequentially across different models must invalidate
+    # modal transforms even when both problems have the same number of layers.
+    layers = ([circular_patch(.3, 12, 1.)], [circular_patch(.2, 12, -.5; cx=.6)])
+    k1 = MultiLayerQGKernel(SVector(1.), SMatrix{2,2}(-.5, .5, .5, -.5))
+    k2 = MultiLayerQGKernel(SVector(1.), SMatrix{2,2}(-.75, .25, .75, -.25))
+    p1 = MultiLayerContourProblem(k1, UnboundedDomain(), deepcopy(layers); workspace=ws)
+    p2 = MultiLayerContourProblem(k2, UnboundedDomain(), deepcopy(layers); workspace=ws)
+    reference = MultiLayerContourProblem(k2, UnboundedDomain(), deepcopy(layers))
+    velocity(p1, SVector(.1, .2))
+    @test all(isapprox.(velocity(p2, SVector(.1, .2)), velocity(reference, SVector(.1, .2)); rtol=1e-12))
+end
+
 
 @testset "ContourDynamics.jl" begin
     @testset "Core Types" begin
@@ -403,4 +474,278 @@ using Test, ContourDynamics, StaticArrays
     end
 
 
+end
+
+
+@testset "Contour constructor invariants" begin
+    for T in (Float32, Float64)
+        c = circular_patch(1, 64, 1; T=T)
+        for flags in (falses(1), [false], falses(65), fill(false, 65))
+            @test_throws DimensionMismatch PVContour(c.nodes, c.pv, c.wrap, flags)
+            @test_throws DimensionMismatch PVContour{T}(c.nodes, c.pv, c.wrap, flags)
+        end
+        for flags in (falses(64), fill(false, 64))
+            flags[3] = true
+            for ctor in (PVContour, PVContour{T})
+                valid = ctor(c.nodes, 1, c.wrap, flags)
+                @test corner_indices(valid) == [3]
+                @test valid.pv === one(T)
+            end
+        end
+    end
+end
+
+@testset "Curvature is independent of coordinate units" begin
+    for T in (Float32, Float64), radius in (1, 0.01, 1e-5)
+        c = circular_patch(radius, 64, 1; T=T)
+        R = T(radius)
+        tolerance = T === Float32 ? T(2e-4) : T(2e-12)
+        @test all(k -> isapprox(k * R, one(T); rtol=tolerance),
+                  ContourDynamics._signed_node_curvatures(c))
+        state = DeviceContourState([c], CPU())
+        segments = ContourDynamics._state_segment_data(state, CPU())
+        @test all(k -> isapprox(k * R, one(T); rtol=tolerance), segments.ka)
+        @test all(k -> isapprox(k * R, one(T); rtol=tolerance), segments.kb)
+        path_curvatures = ContourDynamics._signed_path_curvatures(c.nodes, c.corners)
+        @test all(k -> isapprox(k * R, one(T); rtol=tolerance), path_curvatures[2:end-1])
+        reversed = PVContour(reverse(c.nodes), c.pv)
+        @test all(k -> isapprox(k * R, -one(T); rtol=tolerance),
+                  ContourDynamics._signed_node_curvatures(reversed))
+
+        # At the smallest Float32 radius, the velocity kernel's separate
+        # absolute-distance cutoffs dominate; test curvature there directly.
+        if T === Float64 || radius >= 0.01
+            prob = ContourProblem(EulerKernel(), UnboundedDomain(), [c])
+            @test velocity(prob, c.nodes[1])[2] / R ≈ T(0.5) atol=T(1e-5)
+        end
+    end
+    # Repeated vertices and a vanishing closing chord remain safe degeneracies.
+    for points in ((SVector(0., 0.), SVector(0., 0.), SVector(1., 0.)),
+                   (SVector(0., 0.), SVector(1., 0.), SVector(0., 0.)))
+        c = PVContour(collect(points), 1.)
+        @test all(iszero, ContourDynamics._signed_node_curvatures(c))
+    end
+end
+
+@testset "Resolved weak multilayer modes" begin
+    coupling64 = SMatrix{3,3,Float64}([-1 1 0; 1 -1.01 .01; 0 .01 -.01])
+    radii64 = SVector{2,Float64}(1 ./ sqrt.(abs.(eigvals(Symmetric(Matrix(coupling64)))[1:2])))
+    for T in (Float32, Float64)
+        coupling = T.(coupling64)
+        kernel = MultiLayerQGKernel(T.(radii64), coupling)
+        @test count(λ -> ContourDynamics._is_barotropic_mode(kernel, λ), kernel.eigenvalues) == 1
+        # Compare modal inversion to a direct physical-layer solve, including
+        # the weak mode whose deformation radius is much larger than the first.
+        k2 = T(0.01)
+        modal_inverse = kernel.modal_to_physical *
+                        Diagonal(inv.(k2 .- kernel.eigenvalues)) * kernel.physical_to_modal
+        @test modal_inverse ≈ inv(k2 * I - coupling) rtol=(T === Float32 ? 1e-4 : 1e-12)
+    end
+end
+
+
+@testset "Polygon geometry stability" begin
+    base_nodes = SVector{2,Float64}[
+        SVector(0.0, 0.0),
+        SVector(2.0, 0.0),
+        SVector(1.0, 1.0),
+        SVector(0.0, 1.0),
+    ]
+    expected_area = 1.5
+    expected_centroid = SVector(7 / 9, 4 / 9)
+    expected_ellipse_moments = ellipse_moments(PVContour(base_nodes, 1.0))
+
+    @testset "large coordinate translation" begin
+        shift = SVector(1.0e8, -1.0e8)
+        shifted_nodes = [p + shift for p in base_nodes]
+        shifted = PVContour(shifted_nodes, 1.0)
+
+        @test vortex_area(shifted) ≈ expected_area rtol=0 atol=10eps(Float64)
+        @test centroid(shifted) - shift ≈ expected_centroid rtol=0 atol=2e-8
+        shifted_ratio, shifted_angle = ellipse_moments(shifted)
+        @test shifted_ratio ≈ expected_ellipse_moments[1] rtol=1e-7
+        @test shifted_angle ≈ expected_ellipse_moments[2] rtol=1e-7
+
+        # Remeshing's private preservation helpers use the same polygon
+        # moments and must therefore be translation-stable as well.
+        @test ContourDynamics._raw_polygon_area(shifted_nodes) ≈
+              expected_area rtol=0 atol=10eps(Float64)
+        @test ContourDynamics._raw_polygon_centroid(shifted_nodes) - shift ≈
+              expected_centroid rtol=0 atol=2e-8
+
+        state = DeviceContourState([shifted], CPU())
+        state_area, state_moment = ContourDynamics._state_area_moment(state, CPU())
+        @test only(to_cpu(state_area)) ≈ expected_area rtol=0 atol=10eps(Float64)
+
+        expected_moment = 5 / 3 +
+                          2 * shift[1] * (expected_area * expected_centroid[1]) +
+                          2 * shift[2] * (expected_area * expected_centroid[2]) +
+                          sum(abs2, shift) * expected_area
+        @test only(to_cpu(state_moment)) ≈ expected_moment rtol=10eps(Float64)
+        @test ContourDynamics._second_moment_r2(shifted) ≈
+              expected_moment rtol=10eps(Float64)
+
+        flat = ContourDynamics._pack_flat_topology([shifted], CPU())
+        @test ContourDynamics._flat_closed_area2(
+            flat.x, flat.y, flat.wrapx, flat.wrapy,
+            flat.offsets, flat.lengths, 1) ≈
+              2 * expected_area rtol=0 atol=10eps(Float64)
+
+        filament_params = SurgeryParams(0.001, 0.01, 0.5, 1.25, 10)
+        @test ContourDynamics._device_filament_flags(
+            [PVContour(base_nodes, 1.0), shifted], filament_params, CPU()) ==
+              [false, false]
+
+        remesh_params = SurgeryParams(0.001, 0.1, 0.8, 1e-8, 10)
+        device_remeshed = only(ContourDynamics._device_remesh_contours(
+            [shifted], remesh_params, CPU()))
+        @test vortex_area(device_remeshed) ≈ expected_area rtol=0 atol=2e-8
+
+        corner_distorted = copy(shifted_nodes)
+        corner_distorted[2] = shift + 0.9 * base_nodes[2]
+        corner_distorted[4] = shift + 0.9 * base_nodes[4]
+        corners = BitVector((true, false, true, false))
+        fixed = copy(corner_distorted[corners])
+        ContourDynamics._preserve_closed_area_fixed_corners!(
+            corner_distorted, corners, expected_area)
+        @test corner_distorted[corners] == fixed
+        @test ContourDynamics._raw_polygon_area(corner_distorted) ≈
+              expected_area rtol=0 atol=2e-8
+    end
+
+    @testset "periodic wrapping uses a stable translated centroid" begin
+        shift = SVector(1.0e8, -1.0e8)
+        shifted_nodes = [point + shift for point in base_nodes]
+        domain = PeriodicDomain(10.0, 10.0)
+
+        refx, refy = ContourDynamics._unwrapped_centroid_core(
+            i -> Tuple(shifted_nodes[i]), length(shifted_nodes), 20.0, 20.0)
+        @test SVector(refx, refy) - shift ≈ expected_centroid rtol=0 atol=2e-8
+
+        shifted = PVContour(shifted_nodes, 1.0)
+        cpu_prob = ContourProblem(EulerKernel(), domain, [deepcopy(shifted)])
+        device_state = DeviceContourState([deepcopy(shifted)], CPU())
+        wrap_nodes!(cpu_prob)
+        ContourDynamics._wrap_state_nodes!(device_state, domain, CPU())
+
+        wrapped_cpu = only(cpu_prob.contours)
+        wrapped_device = only(materialize_contours(device_state))
+        @test centroid(wrapped_cpu) ≈ expected_centroid rtol=0 atol=2e-8
+        @test wrapped_device.nodes == wrapped_cpu.nodes
+    end
+
+    @testset "small but nondegenerate polygon" begin
+        scale = 1.0e-9
+        small_nodes = [scale * p for p in base_nodes]
+        small = PVContour(small_nodes, 1.0)
+
+        @test vortex_area(small) ≈ scale^2 * expected_area rtol=10eps(Float64)
+        @test centroid(small) ≈ scale * expected_centroid rtol=10eps(Float64)
+        @test ContourDynamics._raw_polygon_centroid(small_nodes) ≈
+              scale * expected_centroid rtol=10eps(Float64)
+
+        target_area = scale^2 * expected_area
+
+        uniformly_distorted = [0.9 * p for p in small_nodes]
+        ContourDynamics._preserve_closed_area!(uniformly_distorted, target_area)
+        @test ContourDynamics._raw_polygon_area(uniformly_distorted) ≈
+              target_area rtol=100eps(Float64)
+
+        corner_distorted = copy(small_nodes)
+        corner_distorted[2] *= 0.9
+        corner_distorted[4] *= 0.9
+        corners = BitVector((true, false, true, false))
+        fixed = copy(corner_distorted[corners])
+        ContourDynamics._preserve_closed_area_fixed_corners!(
+            corner_distorted, corners, target_area)
+        @test corner_distorted[corners] == fixed
+        @test ContourDynamics._raw_polygon_area(corner_distorted) ≈
+              target_area rtol=100eps(Float64)
+
+        remesh_params = SurgeryParams(1e-12, 1e-10, 8e-10, 1e-30, 10)
+        device_remeshed = only(ContourDynamics._device_remesh_contours(
+            [small], remesh_params, CPU()))
+        @test vortex_area(device_remeshed) ≈ target_area rtol=1e-10
+
+        corner_flags = BitVector((true, false, true, false))
+        cornered = PVContour(copy(small_nodes), 1.0,
+                             zero(SVector{2,Float64}), corner_flags)
+        device_cornered = only(ContourDynamics._device_remesh_contours(
+            [cornered], remesh_params, CPU()))
+        @test vortex_area(device_cornered) ≈ target_area rtol=1e-10
+        for fixed_corner in small_nodes[corner_flags]
+            @test any(==(fixed_corner), device_cornered.nodes)
+        end
+    end
+end
+
+
+@testset "Shape Helpers" begin
+    @testset "circular_patch" begin
+        c = circular_patch(0.5, 32, 2π)
+        @test c isa PVContour{Float64}
+        @test nnodes(c) == 32
+        @test c.pv == 2π
+
+        # Nodes lie on circle of radius 0.5
+        for i in 1:nnodes(c)
+            r = sqrt(c.nodes[i][1]^2 + c.nodes[i][2]^2)
+            @test r ≈ 0.5 atol=1e-12
+        end
+
+        # Center offset
+        c2 = circular_patch(1.0, 16, 1.0; cx=2.0, cy=3.0)
+        center = sum(c2.nodes) / nnodes(c2)
+        @test center[1] ≈ 2.0 atol=1e-10
+        @test center[2] ≈ 3.0 atol=1e-10
+
+        # Float32
+        c32 = circular_patch(0.5, 16, 1.0; T=Float32)
+        @test c32 isa PVContour{Float32}
+
+        # Numeric args auto-promoted
+        c_int = circular_patch(1, 16, 1)
+        @test c_int isa PVContour{Float64}
+    end
+
+    @testset "elliptical_patch" begin
+        e = elliptical_patch(2.0, 1.0, 64, 1.0)
+        @test nnodes(e) == 64
+        @test e.pv == 1.0
+
+        # Area ≈ π*a*b = 2π
+        @test vortex_area(e) ≈ 2π rtol=0.01
+
+        # With rotation
+        e_rot = elliptical_patch(2.0, 1.0, 64, 1.0; θ=π/4)
+        @test vortex_area(e_rot) ≈ 2π rtol=0.01
+        _, angle = ellipse_moments(e_rot)
+        @test angle ≈ π/4 atol=0.1
+
+        # Center offset
+        e2 = elliptical_patch(1.0, 0.5, 32, 1.0; cx=1.0, cy=-1.0)
+        center = sum(e2.nodes) / nnodes(e2)
+        @test center[1] ≈ 1.0 atol=1e-10
+        @test center[2] ≈ -1.0 atol=1e-10
+    end
+
+    @testset "rankine_vortex" begin
+        v = rankine_vortex(1.0, 64, 2π)
+        @test v isa Vector{PVContour{Float64}}
+        @test length(v) == 1
+        @test v[1].pv ≈ 2π / (π * 1.0^2)  # Γ / (π R²)
+        @test nnodes(v[1]) == 64
+
+        # Nodes on unit circle
+        for i in 1:nnodes(v[1])
+            r = sqrt(v[1].nodes[i][1]^2 + v[1].nodes[i][2]^2)
+            @test r ≈ 1.0 atol=1e-12
+        end
+
+        # Center offset
+        v2 = rankine_vortex(0.5, 32, 1.0; cx=1.0, cy=2.0)
+        center = sum(v2[1].nodes) / nnodes(v2[1])
+        @test center[1] ≈ 1.0 atol=1e-10
+        @test center[2] ≈ 2.0 atol=1e-10
+    end
 end

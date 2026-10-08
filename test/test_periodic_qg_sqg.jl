@@ -720,4 +720,117 @@ extended = get(ENV, "CONTOURDYNAMICS_EXTENDED_TESTS", "false") == "true"
         end
         clear_ewald_cache!()
     end
+
+    # Folded in from the former test_periodic_scaling.jl.
+    @testset "Periodic velocity and energy are independent of coordinate units" begin
+        clear_ewald_cache!()
+        for T in (Float32, Float64), model in (:euler, :qg, :sqg)
+            scale = T === Float32 ? T(1e5) : T(1e10)
+            rtol = T === Float32 ? T(2e-4) : T(2e-11)
+            results = map((one(T), scale)) do s
+                kernel = model === :euler ? EulerKernel() :
+                         model === :qg ? QGKernel(T(0.4) * s) : SQGKernel(T(0.03) * s)
+                domain = PeriodicDomain(s)
+                cs = [circular_patch(T(0.2) * s, 16, one(T); T=T)]
+                prob = ContourProblem(kernel, domain, cs)
+                state = DeviceContourState(cs, CPU())
+                point = SVector(T(0.65) * s, T(0.17) * s)
+                # With fixed PV, Euler/QG velocity scales as length and energy as
+                # length^4. SQG velocity is unchanged and energy scales as length^3
+                # when its regularization length is scaled with the geometry.
+                vscale = model === :sqg ? one(T) : s
+                escale = model === :sqg ? s^3 : s^4
+                (velocity(prob, point) / vscale,
+                 ContourDynamics._ka_velocity_at_state(state, kernel, domain, point, CPU()) / vscale,
+                 energy(prob) / escale,
+                 ContourDynamics._ka_energy_from_state(state, kernel, domain, CPU()) / escale)
+            end
+            base, scaled = results
+            @testset "$T $model" begin
+                @test scaled[1] ≈ base[1] rtol=rtol
+                @test scaled[2] ≈ base[1] rtol=rtol
+                @test scaled[3] ≈ base[3] rtol=rtol
+                @test scaled[4] ≈ base[3] rtol=rtol
+            end
+        end
+    end
+
+    # Folded in from the former test_periodic_velocity_oracle.jl.
+    # Implementation-independent oracles for the periodic velocity path.
+    #
+    # The stored arrays in test_periodic_velocity_regression.jl pin the periodic
+    # implementation against its own past output, so regenerating that baseline
+    # from the implementation cannot detect an error introduced *before* the
+    # regeneration. These tests instead compare periodic (Ewald) velocities
+    # against direct lattice-image sums built from the *unbounded* velocity path —
+    # a different formula family (Bessel/log segment integrals, no Ewald split) —
+    # so they remain valid across baseline regenerations.
+    #
+    # Configurations are chosen so the image sums converge unconditionally:
+    #   * QG decays exponentially, so a single patch and a 7×7 image block are
+    #     exact to machine precision; the tolerance is set by the periodic
+    #     implementation's algebraically-truncated correction series (~1/n_fourier²).
+    #   * Euler and SQG kernels decay algebraically, so the test uses a neutral
+    #     quadrupole (zero net circulation AND zero dipole moment) to remove the
+    #     conditional-convergence ambiguity of 2D lattice sums; the residual
+    #     converges absolutely.
+    @testset "Periodic velocity vs image-sum oracle" begin
+        # Velocity at `x` induced by an image of the unbounded problem displaced
+        # by `s` equals the unbounded velocity at `x - s`.
+        image_sum(prob_unb, x, Lx, Ly, M) = sum(
+            velocity(prob_unb, x - SVector(2Lx * mx, 2Ly * my))
+            for mx in -M:M, my in -M:M)
+
+        probes = [SVector(0.9, 0.3), SVector(-0.7, 1.1)]
+
+        quadrupole() = [circular_patch(0.3, 64, 1.0; cx=-0.6, cy=-0.6),
+                        circular_patch(0.3, 64, -1.0; cx=0.6, cy=-0.6),
+                        circular_patch(0.3, 64, 1.0; cx=0.6, cy=0.6),
+                        circular_patch(0.3, 64, -1.0; cx=-0.6, cy=0.6)]
+
+        Lx = Ly = 2.0
+
+        @testset "QG single patch (exponential image decay)" begin
+            Ld = 0.3
+            patch = circular_patch(0.5, 64, 1.0)
+            dom = PeriodicDomain(Lx, Ly)
+            # The QG correction is Ewald-split, so both its real-space and Fourier
+            # sums are Gaussian-damped and converge exponentially; n_fourier=32
+            # resolves it to rounding, while the image-sum oracle is exact to
+            # ~exp(-16/Ld) ≈ 1e-23. The observed disagreement is ~1e-14, so the
+            # tolerance below leaves a wide margin for platform rounding.
+            clear_ewald_cache!()
+            setup_ewald_cache!(dom, QGKernel(Ld); n_fourier=32, n_images=2)
+            prob_p = ContourProblem(QGKernel(Ld), dom, [patch])
+            prob_u = ContourProblem(QGKernel(Ld), UnboundedDomain(), [patch])
+            for x in probes
+                vp = velocity(prob_p, x)
+                vo = image_sum(prob_u, x, Lx, Ly, 3)
+                @test isapprox(vp, vo; rtol=1e-10)
+            end
+            clear_ewald_cache!()
+        end
+
+        @testset "Euler neutral quadrupole" begin
+            cs = quadrupole()
+            prob_p = ContourProblem(EulerKernel(), PeriodicDomain(Lx, Ly), cs)
+            prob_u = ContourProblem(EulerKernel(), UnboundedDomain(), cs)
+            for x in probes
+                vp = velocity(prob_p, x)
+                vo = image_sum(prob_u, x, Lx, Ly, 40)   # converged to ~6e-6
+                @test isapprox(vp, vo; rtol=5e-5)
+            end
+        end
+
+        @testset "SQG neutral quadrupole" begin
+            cs = quadrupole()
+            prob_p = ContourProblem(SQGKernel(0.02), PeriodicDomain(Lx, Ly), cs)
+            prob_u = ContourProblem(SQGKernel(0.02), UnboundedDomain(), cs)
+            for x in probes
+                vp = velocity(prob_p, x)
+                vo = image_sum(prob_u, x, Lx, Ly, 20)   # converged to ~1e-7
+                @test isapprox(vp, vo; rtol=1e-6)
+            end
+        end
+    end
 end

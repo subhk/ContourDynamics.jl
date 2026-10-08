@@ -7,7 +7,7 @@
 # than in `src` — nothing in the package calls it. The same goes for the
 # host-side pair selection and replaced-contours-only rewrite entry points
 # further below: they are serial references for the device kernels, reachable
-# only from `test_device.jl`.
+# only from `test_device_surgery.jl`.
 
 function _full_rewrite_output_layout(contours::Vector{PVContour{T}},
                                      plan::ContourDynamics.DeviceTopologyRewritePlan,
