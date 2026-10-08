@@ -14,7 +14,7 @@ authors:
     orcid: 0000-0001-9737-3345
     affiliation: 1
 affiliations:
-  - name: University of Maryland, College Park, Maryland
+  - name: University of Maryland, College Park, Maryland, USA
     index: 1
 date: 25 July 2026
 bibliography: paper.bib
@@ -22,102 +22,138 @@ bibliography: paper.bib
 
 # Summary
 
-The large-scale circulation of the atmosphere and ocean is populated by long-lived, coherent vortices — Gulf Stream rings, polar stratospheric vortices,
-Mediterranean eddies — that persist for months or years while interacting, merging, and shedding thin filaments of fluid [@mcwilliams1984]. Their
-robustness is explained by *potential vorticity* (PV), a scalar carried by each fluid parcel that combines its spin, the planetary rotation, and the density
-stratification [@pedlosky1987; @vallis2017]. Absent friction and diabatic processes, PV is materially conserved: it travels with the fluid rather than
-diffusing through it.
+`ContourDynamics.jl` is a Julia package for simulating how vortices, swirling
+regions of fluid, move and interact. It represents each vortex patch by its
+boundary and advances those boundaries in time, so stretching, merging, and
+splitting are followed directly. The package supports two-dimensional Euler,
+single-layer and multilayer quasi-geostrophic (QG), beta-plane QG, and surface
+quasi-geostrophic (SQG) flows, in unbounded and doubly periodic domains, with
+Dritschel-style contour surgery to remesh, reconnect, and remove unresolved
+filaments. The same problem description runs on threaded CPUs or NVIDIA GPUs,
+and optional extensions connect it to time integrators, plotting, recording,
+and checkpointing in the Julia ecosystem.
 
-Many idealised studies take the PV distribution to be *piecewise-constant*: uniform patches separated by sharp boundaries. Because the PV inside each patch
-never changes, the entire dynamics reduce to tracking the boundaries alone — the interior flow is fully determined by their shape through the Green's
-function of the PV inversion operator. This is the idea behind *contour dynamics*, introduced by @zabusky1979: replace two-dimensional area integrals
-with one-dimensional line integrals, and advect the boundary nodes with the velocity they induce. The method introduces no grid-based numerical diffusion:
-the piecewise-constant PV values are carried exactly by the contours, and the fine-scale filamentary structure of the flow is limited only by the contour
-resolution rather than by a mesh spacing.
-
-`ContourDynamics.jl` is a Julia package that implements contour dynamics and contour surgery [@dritschel1988] for four physical regimes — 2D Euler, surface
-quasi-geostrophic (SQG), single-layer quasi-geostrophic (QG), and N-layer QG — on both unbounded and doubly-periodic domains.
+Coherent vortices are central to geophysical turbulence
+[@mcwilliams1984; @dritschel2008]. In inviscid, adiabatic models their evolution
+is governed by an advected scalar: vorticity, potential vorticity, or surface
+buoyancy [@pedlosky1987; @vallis2017; @held1995]. When that scalar is piecewise
+constant, contour dynamics replaces the area integrals of velocity inversion by
+boundary integrals [@zabusky1979], which keeps sharp jumps exact without a fixed
+grid.
 
 # Statement of Need
 
-Contour dynamics has been a cornerstone of idealised geophysical fluid dynamics research for over three decades, enabling landmark studies of vortex
-dynamics in 2D turbulence [@dritschel2008], the filamentation and stripping of quasi-geostrophic vortices [@dritschel1989], and the formation of sharp
-temperature fronts in surface quasi-geostrophic flows [@held1995; @scott2014]. The method excels precisely where grid-based solvers struggle: long-time
-vortex interaction problems in which pseudospectral diffusion artificially dissipates the fine-scale filamentary structures that contour dynamics
-preserves.
+Vortex merger, filamentation, frontogenesis, and layer interactions are
+studied across two-dimensional Euler, QG, multilayer QG, and SQG models
+[@dritschel1989; @held1995; @scott2014]. Comparing such processes across models
+requires a solver whose initial conditions, diagnostics, and treatment of
+unresolved scales stay the same while the inversion kernel changes. Contour
+dynamics with surgery is well suited to this, but its established
+implementations are Fortran research codes such as Dritschel's Hydra suite
+[@hydra2023] or unpublished in-house codes, often written for one model and
+without the packaging, documentation, and tests that make a method easy to
+adopt or verify. Julia users have grid-based geophysical solvers
+[@geophysicalflows2021] but no registered, maintained contour-dynamics package.
 
-Despite this scientific impact, the method has remained difficult to access. Widely used implementations are legacy Fortran codes that are not distributed
-as documented, installable packages, and in-house codes written by individual research groups tend to be unpublished and limited to a single flow regime.
-`ContourDynamics.jl` fills this gap with a performant, extensible Julia implementation that makes contour dynamics reproducible and accessible to a new
-generation of researchers.
+`ContourDynamics.jl` fills that gap for researchers and students working on
+idealized inviscid patch dynamics. It provides a registered, documented, and
+tested implementation in which the physical kernel, the domain, and the
+execution device are interchangeable within one problem description, with a
+reproducible verification script and optional connections to the Julia
+analysis ecosystem.
 
 # State of the Field
 
-The primary reference implementations are Dritschel's original Fortran codes [@dritschel1988; @dritschel1989; @dritschel1997], which remain the
-methodological gold standard but are not distributed as installable, documented packages. Grid-based alternatives such as the pseudospectral
-GeophysicalFlows.jl [@geophysicalflows2021] cover the same physical regimes but introduce numerical diffusion that limits their fidelity for fine-scale
-structures. Point-vortex codes avoid grids but sacrifice the exact PV conservation and topological surgery that contour dynamics provides.
+Contour dynamics and surgery build on established algorithms
+[@zabusky1979; @dritschel1988; @dritschel1989]. Contour-advective semi-Lagrangian
+(CASL) methods combine contour transport with grid-based inversion
+[@dritschel1997]; Hydra [@hydra2023] implements this approach for many fluid
+systems and the open-source [CALIB library](https://github.com/AnderOne/CALIB)
+for a single-layer model, and an open Fortran implementation of
+[contour surgery in multiply connected domains](https://github.com/rhodrin/contour-surgery-mc)
+accompanies a study of bounded Euler flow. GeophysicalFlows.jl supplies Fourier
+pseudospectral solvers for periodic geophysical flows on CPUs and GPUs
+[@geophysicalflows2021]. In grid-based solvers the treatment of small scales
+depends on resolution, viscosity, and filtering choices.
 
-`ContourDynamics.jl` is, to our knowledge, the first publicly available, open-source contour dynamics package that unifies multiple kernel types
-(Euler, SQG, QG, N-layer QG), periodic domains with Ewald summation, and GPU acceleration in a single, extensible codebase.
+The contribution of `ContourDynamics.jl` is the integration of direct boundary
+inversion and topology-changing contour management across the supported models
+and domains in Julia. Direct inversion avoids contour-to-grid conversion and
+also supports unbounded domains. This choice requires contour geometry, surgery,
+and execution machinery distinct from a Fourier-grid solver, motivating a
+separate package with optional ecosystem integrations. Direct all-pairs
+interactions have quadratic cost in contour-node count at fixed inversion
+settings; the implementation makes no general speed or accuracy superiority
+claim over grid-based or hybrid methods.
 
 # Method
 
-The central idea of contour dynamics is to replace the area integral of the Green's function with a sum of line integrals along contour boundaries, via
-Green's theorem:
+Contour dynamics expresses the velocity at any point as a sum of boundary
+integrals of the model's inversion kernel over the patch contours, weighted by
+each contour's scalar jump. Velocity evaluation combines analytic segment
+integrals with numerical quadrature on cubic arcs. Doubly periodic interactions
+use truncated Ewald sums [@ewald1921], multilayer QG separates the coupled
+inversion into vertical modes weighted by layer thickness, and the SQG kernel
+requires a softening length that is distinct from the surgery cutoff. On the
+beta plane, the background PV gradient is a staircase of spanning contours; the
+inversion acts on their departure from a frozen straight reference, whose
+velocity is added analytically. Nodes move as material points under classical
+fourth-order Runge–Kutta stepping, with periodic wrapping after each step.
 
-$$\mathbf{u}(\mathbf{x}) = \sum_k \Delta q_k \oint_{C_k} G(\mathbf{x} - \mathbf{x}') \, d\mathbf{x}'$$
-
-Here $\Delta q_k$ is the PV jump across contour $C_k$ and $G$ is the Green's function of the PV inversion operator. The package provides four Green's
-functions, spanning a natural hierarchy of physical complexity:
-
-| Kernel | Green's function | Physical regime |
-|--------|-----------------|-----------------|
-| 2D Euler | $G(r) = -\frac{1}{2\pi}\ln r$ | Barotropic vortex dynamics |
-| SQG | $G(r) = -\frac{1}{2\pi r}$ | Surface temperature fronts |
-| QG | $G(r) = -\frac{1}{2\pi} K_0(r/L_d)$ | Stratified vortices with deformation radius $L_d$ |
-| N-layer QG | Eigenmode decomposition | Baroclinic vortex interactions |
-
-Each kernel uses the most accurate available integration method: closed-form antiderivatives for Euler and SQG, and singular subtraction with Gauss-Legendre
-quadrature for QG. On doubly-periodic domains, Ewald summation [@ewald1921] decomposes the slowly-convergent lattice sum into rapidly-convergent real-space
-and Fourier-space components.
-
-As contours evolve, they develop exponentially thinning filaments that eventually become unresolvable. Contour surgery [@dritschel1988] keeps the
-calculation well-posed through four operations applied at regular intervals: redistributing nodes at uniform arc-length spacing (remeshing), detecting
-nearly-touching segments via spatial hashing, reconnecting them to change the contour topology, and removing sub-grid filaments below an area threshold. This
-cycle preserves topological consistency and integral invariants over arbitrarily long integrations.
+Surgery follows Dritschel's contour surgery [@dritschel1988]:
+curvature-dependent remeshing redistributes nodes, compatible nearby contour
+segments reconnect, and cleanup removes unresolved fragments. Closed-contour
+remeshing corrects polygon area, but reconnection and removal can change
+integral quantities, so results require checks against resolution, timestep,
+and the surgery, softening, and Ewald settings. Kernel derivations, sign
+conventions, quadrature rules, periodic zero modes, and remeshing details are
+given in the
+[web theory documentation](https://subhk.github.io/ContourDynamics.jl/dev/theory/).
 
 # Software Design
 
-The package maps the physical hierarchy directly onto Julia's type system: kernel types (`EulerKernel`, `QGKernel`, `SQGKernel`, `MultiLayerQGKernel`)
-and domain types (`UnboundedDomain`, `PeriodicDomain`) select the correct velocity formula at compile time via multiple dispatch. Node positions use
-`SVector{2,T}` from StaticArrays.jl for efficient, allocation-free arithmetic. Time integration uses a classical fourth-order Runge-Kutta scheme.
+Kernel and domain types select specialized numerical paths through Julia's
+multiple dispatch. CPU and CUDA paths share scalar segment formulas, reducing
+duplication when correcting or extending the numerical methods;
+KernelAbstractions.jl supports device execution and CUDA.jl is loaded through
+an optional extension. Surgery updates topology and resizes the time-stepping
+buffers between steps, and multilayer surgery acts independently within each
+layer, with coupling entering only through inversion. The Makie, JLD2,
+RecordedArrays, and OrdinaryDiffEq integrations are likewise optional
+extensions, so the core solver carries no dependency on them.
 
-For large problems, velocity evaluation is multithreaded on the CPU, and a device-resident evaluation path built on KernelAbstractions.jl provides GPU
-acceleration for all four kernels — including periodic domains and N-layer QG — via the CUDA.jl package extension. All diagnostics — energy, circulation,
-enstrophy, angular momentum, and ellipse geometry — are computed analytically from the contour geometry via Green's theorem, without gridding.
-
-Further package extensions integrate with OrdinaryDiffEq.jl (ODE solver bridge), Makie.jl (visualisation), RecordedArrays.jl (time-series recording),
-and JLD2.jl (checkpointing), without adding heavy dependencies to the core package.
-
-# Validation
-
-The package is tested against known analytical solutions and conservation laws:
-
-- **Kirchhoff ellipse**: a uniformly rotating elliptical vortex patch, the classical benchmark for contour dynamics; the computed rotation period, aspect
-  ratio, and circulation are preserved over full rotation cycles.
-- **Integral invariants**: area, circulation, and centroid position are conserved to a relative accuracy of $10^{-6}$ (energy to $10^{-5}$) over
-  hundreds of RK4 time steps for Euler, QG, and periodic QG configurations.
-- **Surgery correctness**: topological reconnection produces valid daughter contours with area and circulation preserved to within the surgery tolerance.
-- **CPU/GPU parity**: the device-resident evaluation and time-stepping paths reproduce the CPU reference implementation to near machine precision.
-
-The full test suite comprises nearly 1,800 assertions across 19 test files, including allocation-regression tests that keep the hot paths free of
-per-step memory allocation.
+Geometric diagnostics use polygon formulas. Energy approximates the
+model-specific Hamiltonian using $3\times3$ Gauss–Legendre quadrature over pairs
+of straight segments, whereas velocity generally uses cubic arcs, so it is not
+an exact invariant of the discrete time-stepping scheme. The contour-wise
+enstrophy diagnostic omits cross-terms for arbitrary nested scalar jumps, as
+documented in the diagnostic definitions. A verification script,
+`paper/validate.jl`, compares circular-patch velocity and Hamiltonian values
+for each kernel against independent references and checks convergence under
+refinement, with results recorded in `paper/README.md`; the test suite covers
+periodic inversion, layer coupling, surgery, CPU/GPU agreement, and
+allocations.
 
 # Research Impact Statement
 
-Example scripts reproduce classical results from the literature — vortex merger, filamentation, beta-plane drift, two-layer baroclinic dynamics — and
-serve as starting points for new research. By unifying multiple kernel types, periodic domains, and GPU acceleration in a tested, documented Julia package,
-`ContourDynamics.jl` lowers the barrier to entry for researchers investigating vortex dynamics across geophysical flow regimes.
+The package ships literature-based initial conditions as runnable examples:
+the perturbed-ellipse filamentation and nested-vortex merger cases of
+@dritschel1988, the elliptical SQG vortex of @held1995, an upper-layer merger
+with unequal layer depths following @polvani1989, and a beta-plane vortex
+following @lam2001. The beta-plane example represents the background PV
+gradient by material staircase contours and uses direct contour inversion,
+which differs from the CASL inversion of the reference study. These examples
+document physical configurations and numerical choices; quantitative
+reproduction of published evolution requires separate convergence studies.
+
+The intended impact is to make contour dynamics with surgery usable without
+rewriting a solver: a student or researcher can set up a patch problem, switch
+the inversion kernel, domain, or device, and compare results with the same
+diagnostics and surgery settings. The verification script and test suite give
+a documented baseline for such comparisons and for extending the method.
+
+<!-- Author input needed before submission: add specific research use, including
+an ongoing project, publication/preprint, external adoption, or a documented
+research workflow. Do not claim adoption from the examples alone. -->
 
 # References
