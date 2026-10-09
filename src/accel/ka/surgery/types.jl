@@ -88,14 +88,11 @@ end
 _flat_ncontours(flat::FlatContourTopology) = length(flat.lengths)
 _flat_nnodes(flat::FlatContourTopology) = length(flat.x)
 
-@kernel function _fill_u8_kernel!(out, value, n)
-    i = @index(Global)
-    i <= n && (out[i] = value)
-end
-
+# `fill!` is a native array operation on every supported backend, so no custom
+# kernel launch is needed.
 function _device_u8_filled(dev::AbstractDevice, n::Int, value::UInt8)
     out = device_zeros(dev, UInt8, n)
-    n > 0 && @_ka_launch dev n _fill_u8_kernel!(out, value, n)
+    n > 0 && fill!(out, value)
     return out
 end
 

@@ -862,3 +862,28 @@ using Test, ContourDynamics, StaticArrays, Logging
         end
     end
 end
+
+@testset "Surgery rejects non-finite node coordinates" begin
+    params = SurgeryParams(0.005, 0.02, 0.2, 1e-6, 5)
+    bad = circular_patch(1.0, 32, 1.0)
+    bad.nodes[7] = SVector(NaN, bad.nodes[7][2])
+    prob = ContourProblem(EulerKernel(), UnboundedDomain(), [circular_patch(0.5, 24, 1.0), bad])
+    err = try
+        surgery!(prob, params)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("contour 2", sprint(showerror, err))
+    @test occursin("non-finite", sprint(showerror, err))
+
+    # Device path: same up-front check, before any kernel runs.
+    state = DeviceContourState([circular_patch(0.5, 24, 1.0), deepcopy(bad)], CPU())
+    @test_throws ArgumentError ContourDynamics._device_surgery_pipeline!(
+        state, params, UnboundedDomain(), CPU())
+    inf = circular_patch(0.4, 16, 1.0)
+    inf.nodes[3] = SVector(inf.nodes[3][1], Inf)
+    @test_throws ArgumentError ContourDynamics._device_surgery_pipeline!(
+        DeviceContourState([inf], CPU()), params, UnboundedDomain(), CPU())
+end

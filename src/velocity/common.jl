@@ -405,6 +405,51 @@ function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
                                              prob.domain, SVector{2,T}(x), prob.dev; workspace=execution_workspace(prob))
 end
 
+"""
+    velocity(prob, points::AbstractVector{<:SVector{2}})
+
+Batched point probe: evaluate the velocity induced by all contours of `prob` at
+every target in `points`. For a `ContourProblem` the result is a
+`Vector{SVector{2,T}}`; for a `MultiLayerContourProblem` it is a
+`Vector{NTuple{N,SVector{2,T}}}` with one velocity per layer at each point.
+Entries equal the single-point `velocity(prob, x)` for each `x in points`.
+
+On a `GPU()` problem the contour segments are packed once and all targets are
+evaluated in a single kernel launch (one work-item per point), instead of a
+full pack-and-launch per point. On `CPU()` this maps the single-point probe.
+"""
+function velocity(prob::ContourProblem{<:AbstractKernel,<:AbstractDomain,T,CPU},
+                  points::AbstractVector{SVector{2,S}}) where {T,S<:Real}
+    out = Vector{SVector{2,T}}(undef, length(points))
+    for (i, x) in enumerate(points)
+        out[i] = velocity(prob, x)
+    end
+    return out
+end
+
+function velocity(prob::ContourProblem{K,D,T,GPU},
+                  points::AbstractVector{SVector{2,S}}) where {K,D,T,S<:Real}
+    targets = S === T ? points : SVector{2,T}.(to_cpu(points))
+    return _ka_velocity_at_state(_device_state(prob), prob.kernel, prob.domain,
+                                 targets, prob.dev; workspace=execution_workspace(prob))
+end
+
+function velocity(prob::MultiLayerContourProblem{N,<:Any,<:Any,T,CPU},
+                  points::AbstractVector{SVector{2,S}}) where {N,T,S<:Real}
+    out = Vector{NTuple{N,SVector{2,T}}}(undef, length(points))
+    for (i, x) in enumerate(points)
+        out[i] = velocity(prob, x)
+    end
+    return out
+end
+
+function velocity(prob::MultiLayerContourProblem{N,K,D,T,GPU},
+                  points::AbstractVector{SVector{2,S}}) where {N,K,D,T,S<:Real}
+    targets = S === T ? points : SVector{2,T}.(to_cpu(points))
+    return _ka_multilayer_velocity_at_states(_device_state(prob), prob.kernel, prob.domain,
+                                             targets, prob.dev; workspace=execution_workspace(prob))
+end
+
 # Sum the modal velocity at one target point `x` from every source layer/segment,
 # weighted by the physical-to-modal transform. Shared by the threaded and serial
 # branches of _multilayer_mode_velocity!. Concrete mode_kernel type K keeps

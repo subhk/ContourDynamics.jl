@@ -75,84 +75,107 @@ function _device_eligible_surgery_segment_indices(flat::FlatContourTopology,
     return eligible
 end
 
-# Evaluates pair indices `offset+1 : offset+nlocal` of the flattened
-# eligible×eligible pair space, writing chunk-local validity flags, so the
-# caller can sweep an O(neligible²) pair space with O(chunk) scratch.
+# Number of unordered pairs (a < b) among `n` eligible segments.
+@inline _triangular_pair_count(n) = (n * (n - 1)) >> 1
+
+# Inverse of the row-major triangular numbering of unordered pairs: 1-based
+# `pair_idx` in `1:_triangular_pair_count(n)` maps to `(a, b)` with
+# `1 <= a < b <= n`, ordered by `b` then `a` (the same order the former
+# full-square sweep produced for its `g1 < g2` survivors). With `p = pair_idx
+# - 1` and `t = b - 1`, `p = t(t-1)/2 + (a-1)`, so `t = ⌊(1 + √(1+8p))/2⌋`.
+# The square root is taken in Float32 (cheap on every GPU); its rounding error
+# is below one for `t < 2^24`, and the integer fix-up below makes the result
+# exact regardless. No integer division is needed: `>> 1` is a shift.
+@inline function _triangular_pair(pair_idx)
+    p = pair_idx - 1
+    t = floor(Int, (1 + sqrt(Float32(1 + 8 * p))) / 2)
+    while (t * (t - 1)) >> 1 > p
+        t -= 1
+    end
+    while (t * (t + 1)) >> 1 <= p
+        t += 1
+    end
+    a = p - ((t * (t - 1)) >> 1) + 1
+    return a, t + 1
+end
+
+# Evaluates pair indices `offset+1 : offset+nlocal` of the triangular
+# (unordered, g1 < g2) eligible pair space, writing chunk-local validity
+# flags, so the caller can sweep an O(neligible²/2) pair space with O(chunk)
+# scratch. `eligible` is ascending, so `a < b` implies `g1 < g2`.
 @kernel function _close_pair_candidate_kernel!(valid, offset, nlocal, eligible,
                                                x, y, pv, wrapx, wrapy, offsets,
                                                lengths, contour_of_node, local_index,
-                                               corners, periodic, Lx, Ly, δ2,
-                                               neligible)
+                                               corners, periodic, Lx, Ly, δ2)
     local_idx = @index(Global)
     if local_idx <= nlocal
         pair_idx = local_idx + offset
         is_valid = false
-        g1 = eligible[((pair_idx - 1) % neligible) + 1]
-        g2 = eligible[((pair_idx - 1) ÷ neligible) + 1]
-        if g1 < g2
-            ci = contour_of_node[g1]
-            cj = contour_of_node[g2]
-            li = local_index[g1]
-            lj = local_index[g2]
-            g1_next = li < lengths[ci] ? g1 + 1 : offsets[ci]
-            g2_next = lj < lengths[cj] ? g2 + 1 : offsets[cj]
-            has_corner = !iszero(corners[g1]) || !iszero(corners[g1_next]) ||
-                         !iszero(corners[g2]) || !iszero(corners[g2_next])
-            if !has_corner
-                admissible = false
-                if ci == cj
-                    nc = lengths[ci]
-                    dist_along = abs(li - lj)
-                    dist_along = min(dist_along, nc - dist_along)
-                    admissible = dist_along > 2
+        a, b = _triangular_pair(pair_idx)
+        g1 = eligible[a]
+        g2 = eligible[b]
+        ci = contour_of_node[g1]
+        cj = contour_of_node[g2]
+        li = local_index[g1]
+        lj = local_index[g2]
+        g1_next = li < lengths[ci] ? g1 + 1 : offsets[ci]
+        g2_next = lj < lengths[cj] ? g2 + 1 : offsets[cj]
+        has_corner = !iszero(corners[g1]) || !iszero(corners[g1_next]) ||
+                     !iszero(corners[g2]) || !iszero(corners[g2_next])
+        if !has_corner
+            admissible = false
+            if ci == cj
+                nc = lengths[ci]
+                dist_along = abs(li - lj)
+                dist_along = min(dist_along, nc - dist_along)
+                admissible = dist_along > 2
+            else
+                admissible = _same_surgery_pv(pv[ci], pv[cj])
+            end
+
+            if admissible
+                ax1 = x[g1]
+                ay1 = y[g1]
+                if li < lengths[ci]
+                    bx1 = x[g1 + 1]
+                    by1 = y[g1 + 1]
                 else
-                    admissible = _same_surgery_pv(pv[ci], pv[cj])
+                    off = offsets[ci]
+                    bx1 = x[off] + wrapx[ci]
+                    by1 = y[off] + wrapy[ci]
                 end
 
-                if admissible
-                    ax1 = x[g1]
-                    ay1 = y[g1]
-                    if li < lengths[ci]
-                        bx1 = x[g1 + 1]
-                        by1 = y[g1 + 1]
-                    else
-                        off = offsets[ci]
-                        bx1 = x[off] + wrapx[ci]
-                        by1 = y[off] + wrapy[ci]
-                    end
-
-                    ax2 = x[g2]
-                    ay2 = y[g2]
-                    if lj < lengths[cj]
-                        bx2 = x[g2 + 1]
-                        by2 = y[g2 + 1]
-                    else
-                        off = offsets[cj]
-                        bx2 = x[off] + wrapx[cj]
-                        by2 = y[off] + wrapy[cj]
-                    end
-
-                    same_image = true
-                    if periodic
-                        refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
-                        refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
-                        # A closed contour touching its own periodic image
-                        # would reconnect into spanning contours, which are
-                        # exempt from surgery (CPU `find_close_segments`).
-                        same_image = ci != cj ||
-                            _flat_same_image(ax1, ay1, bx1, by1,
-                                             ax2, ay2, bx2, by2,
-                                             refx, refy, Lx, Ly)
-                        ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
-                            ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
-                        ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
-                            ax2, ay2, bx2, by2, refx, refy, periodic, Lx, Ly)
-                    end
-
-                    d2 = _flat_surgery_contact_distance2(ax1, ay1, bx1, by1,
-                                                         ax2, ay2, bx2, by2)
-                    is_valid = same_image && d2 < δ2
+                ax2 = x[g2]
+                ay2 = y[g2]
+                if lj < lengths[cj]
+                    bx2 = x[g2 + 1]
+                    by2 = y[g2 + 1]
+                else
+                    off = offsets[cj]
+                    bx2 = x[off] + wrapx[cj]
+                    by2 = y[off] + wrapy[cj]
                 end
+
+                same_image = true
+                if periodic
+                    refx = _flat_wrap_coord((ax1 + bx1) / 2, Lx)
+                    refy = _flat_wrap_coord((ay1 + by1) / 2, Ly)
+                    # A closed contour touching its own periodic image
+                    # would reconnect into spanning contours, which are
+                    # exempt from surgery (CPU `find_close_segments`).
+                    same_image = ci != cj ||
+                        _flat_same_image(ax1, ay1, bx1, by1,
+                                         ax2, ay2, bx2, by2,
+                                         refx, refy, Lx, Ly)
+                    ax1, ay1, bx1, by1 = _flat_shift_segment_to_image(
+                        ax1, ay1, bx1, by1, refx, refy, periodic, Lx, Ly)
+                    ax2, ay2, bx2, by2 = _flat_shift_segment_to_image(
+                        ax2, ay2, bx2, by2, refx, refy, periodic, Lx, Ly)
+                end
+
+                d2 = _flat_surgery_contact_distance2(ax1, ay1, bx1, by1,
+                                                     ax2, ay2, bx2, by2)
+                is_valid = same_image && d2 < δ2
             end
         end
         valid[local_idx] = is_valid ? UInt8(1) : UInt8(0)
@@ -164,14 +187,13 @@ end
                                                         slots, valid, offset,
                                                         eligible,
                                                         contour_of_node,
-                                                        local_index,
-                                                        neligible, nlocal)
+                                                        local_index, nlocal)
     local_idx = @index(Global)
     if local_idx <= nlocal && !iszero(valid[local_idx])
         slot = slots[local_idx]
-        pair_idx = local_idx + offset
-        g1 = eligible[((pair_idx - 1) % neligible) + 1]
-        g2 = eligible[((pair_idx - 1) ÷ neligible) + 1]
+        a, b = _triangular_pair(local_idx + offset)
+        g1 = eligible[a]
+        g2 = eligible[b]
         pair_ci[slot] = contour_of_node[g1]
         pair_i[slot] = local_index[g1]
         pair_cj[slot] = contour_of_node[g2]
@@ -199,13 +221,18 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
         return DeviceClosePairCandidates(empty_ints, empty_ints, empty_ints, empty_ints)
     end
 
-    # The pair space is neligible², so materializing per-pair scratch for all
-    # of it at once would need ~24 bytes per pair (~10 GB for 20k eligible
-    # segments). Sweep it in fixed-size chunks instead: scratch stays
-    # O(_PAIR_SCAN_CHUNK) while the compacted candidate output — which is
-    # small in practice — is concatenated across chunks in pair-index order,
-    # preserving the ordering of the previous all-at-once implementation.
-    npairs = neligible * neligible
+    # The pair space is the neligible(neligible-1)/2 unordered pairs, so
+    # materializing per-pair scratch for all of it at once would need ~24
+    # bytes per pair (~5 GB for 20k eligible segments). Sweep it in
+    # fixed-size chunks instead: scratch stays O(_PAIR_SCAN_CHUNK) while the
+    # compacted candidate output — which is small in practice — is
+    # concatenated across chunks in pair-index order, so the output order is
+    # deterministic and independent of the chunk size.
+    npairs = _triangular_pair_count(neligible)
+    if npairs == 0
+        empty_ints = device_zeros(dev, Int, 0)
+        return DeviceClosePairCandidates(empty_ints, empty_ints, empty_ints, empty_ints)
+    end
     chunk = min(npairs, _PAIR_SCAN_CHUNK)
     valid = device_zeros(dev, UInt8, chunk)
     slots = device_zeros(dev, Int, chunk)
@@ -224,7 +251,7 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
         @_ka_launch dev len _close_pair_candidate_kernel!(
             valid, lo, len, eligible, flat.x, flat.y, flat.pv, flat.wrapx,
             flat.wrapy, flat.offsets, flat.lengths, flat.contour_of_node,
-            flat.local_index, flat.corners, periodic, Lx, Ly, δ2, neligible)
+            flat.local_index, flat.corners, periodic, Lx, Ly, δ2)
         _device_compact_scan!(slots, count_store, valid, len, dev, scan_a, scan_b)
         c = to_cpu(count_store)[1]
         if c > 0
@@ -234,7 +261,7 @@ function _device_close_pair_candidate_buffer(flat::FlatContourTopology{T}, δ,
             p_j = device_zeros(dev, Int, c)
             @_ka_launch dev len _compact_close_pair_candidates_kernel!(
                 p_ci, p_i, p_cj, p_j, slots, valid, lo, eligible,
-                flat.contour_of_node, flat.local_index, neligible, len)
+                flat.contour_of_node, flat.local_index, len)
             push!(parts, (p_ci, p_i, p_cj, p_j))
             total += c
         end
@@ -554,58 +581,6 @@ _device_reconnection_plan(input::_DeviceContourInput, pairs::_DevicePairList,
                           dev::AbstractDevice) =
     _device_reconnection_plan(input, pairs, UnboundedDomain(), dev)
 
-# Serial greedy planner: repeatedly pick the closest still-admissible pair whose
-# contours are unused. Each pick is recorded both as a flag (`selected`) and as
-# its 1-based pick order (`order`), so the compacted pair buffer can be laid
-# out in `(distance2, (ci, i, cj, j))` order exactly like the CPU
-# `_select_reconnection_pairs`. Split daughters are appended in that order on
-# both backends, so the resulting contour vectors match element for element.
-@kernel function _select_independent_pairs_kernel!(selected, order, count_store,
-                                                   used_contours,
-                                                   distance2, pair_ci, pair_i,
-                                                   pair_cj, pair_j, npairs)
-    worker = @index(Global)
-    if worker == 1
-        nselected = 0
-        @inbounds for _ in 1:npairs
-            best = 0
-            best_d2 = typemax(typeof(distance2[1]))
-            for k in 1:npairs
-                iszero(selected[k]) || continue
-                ci = pair_ci[k]
-                cj = pair_cj[k]
-                (iszero(used_contours[ci]) && iszero(used_contours[cj])) || continue
-                d2 = distance2[k]
-                tied_before = false
-                if best != 0 && d2 == best_d2
-                    best_ci = pair_ci[best]
-                    best_i = pair_i[best]
-                    best_cj = pair_cj[best]
-                    best_j = pair_j[best]
-                    tied_before = ci < best_ci ||
-                        (ci == best_ci && pair_i[k] < best_i) ||
-                        (ci == best_ci && pair_i[k] == best_i && cj < best_cj) ||
-                        (ci == best_ci && pair_i[k] == best_i && cj == best_cj &&
-                         pair_j[k] < best_j)
-                end
-                if best == 0 || d2 < best_d2 || tied_before
-                    best = k
-                    best_d2 = d2
-                end
-            end
-            best == 0 && break
-            ci = pair_ci[best]
-            cj = pair_cj[best]
-            nselected += 1
-            selected[best] = UInt8(1)
-            order[best] = nselected
-            used_contours[ci] = UInt8(1)
-            used_contours[cj] = UInt8(1)
-        end
-        count_store[1] = nselected
-    end
-end
-
 @kernel function _compact_selected_pair_candidates_kernel!(out_ci, out_i,
                                                            out_cj, out_j,
                                                            slots, selected,
@@ -622,6 +597,40 @@ end
     end
 end
 
+# Greedy independent-pair planner, run on the host: rank candidates by
+# `(distance2, (ci, i, cj, j))` exactly like the CPU `_select_reconnection_pairs`
+# and take each contour at most once, closest first. Returns the per-candidate
+# selection flags and the chosen candidate indices in pick order. The
+# candidate list is small (admissible contacts only), so this is far cheaper
+# than a serial O(npairs × nselected) pass on a single device work-item.
+function _select_independent_pairs_host(pair_ci::Vector{Int}, pair_i::Vector{Int},
+                                        pair_cj::Vector{Int}, pair_j::Vector{Int},
+                                        distance2::Vector{T}, ncontours::Int) where {T}
+    npairs = length(pair_ci)
+    ranked = Vector{Tuple{T,Int,Int,Int,Int,Int}}(undef, npairs)
+    @inbounds for k in 1:npairs
+        ranked[k] = (distance2[k], pair_ci[k], pair_i[k], pair_cj[k], pair_j[k], k)
+    end
+    sort!(ranked)
+
+    used_contours = falses(ncontours)
+    selected = zeros(UInt8, npairs)
+    picks = Int[]
+    sizehint!(picks, min(npairs, ncontours))
+    @inbounds for (_, ci, _, cj, _, k) in ranked
+        (used_contours[ci] || used_contours[cj]) && continue
+        push!(picks, k)
+        selected[k] = UInt8(1)
+        used_contours[ci] = true
+        used_contours[cj] = true
+    end
+    return selected, picks
+end
+
+# Selected pairs are laid out in pick order (closest first), so split
+# daughters are appended in the same order on both backends and the resulting
+# contour vectors match element for element. `plan.selected` is populated as
+# well because the rewrite layout oracle and tests read it.
 function _device_select_reconnection_pair_buffer(flat::FlatContourTopology,
                                                  candidates::DeviceClosePairCandidates,
                                                  domain::AbstractDomain,
@@ -633,28 +642,18 @@ function _device_select_reconnection_pair_buffer(flat::FlatContourTopology,
     end
 
     plan = _device_reconnection_plan(flat, candidates, domain, dev)
-    used_contours = device_zeros(dev, UInt8, _flat_ncontours(flat))
-    # `slots` holds each selected pair's pick order, which doubles as its
-    # compaction slot: the output buffer is sorted by proximity, not by
-    # candidate-buffer position.
-    slots = device_zeros(dev, Int, npairs)
-    count_store = device_zeros(dev, Int, 1)
-    @_ka_launch dev 1 _select_independent_pairs_kernel!(
-        plan.selected, slots, count_store, used_contours, plan.distance2,
-        plan.ci, plan.i, plan.cj, plan.j, npairs)
-    nselected = to_cpu(count_store)[1]
+    h_ci = to_cpu(plan.ci)
+    h_i = to_cpu(plan.i)
+    h_cj = to_cpu(plan.cj)
+    h_j = to_cpu(plan.j)
+    selected, picks = _select_independent_pairs_host(
+        h_ci, h_i, h_cj, h_j, to_cpu(plan.distance2), _flat_ncontours(flat))
+    copyto!(plan.selected, selected)
 
-    out_ci = device_zeros(dev, Int, nselected)
-    out_i = device_zeros(dev, Int, nselected)
-    out_cj = device_zeros(dev, Int, nselected)
-    out_j = device_zeros(dev, Int, nselected)
-    if nselected > 0
-        @_ka_launch dev npairs _compact_selected_pair_candidates_kernel!(
-            out_ci, out_i, out_cj, out_j, slots, plan.selected, plan.ci,
-            plan.i, plan.cj, plan.j, npairs)
-    end
-
-    return DeviceClosePairCandidates(out_ci, out_i, out_cj, out_j)
+    return DeviceClosePairCandidates(to_device(dev, h_ci[picks]),
+                                     to_device(dev, h_i[picks]),
+                                     to_device(dev, h_cj[picks]),
+                                     to_device(dev, h_j[picks]))
 end
 
 # Adapters: any contour container and pair list, domain defaults to unbounded.

@@ -278,14 +278,42 @@ end
             with_spanning, δ, CPU())) == dev_pairs
     end
 
+    @testset "Triangular pair index enumerates every unordered pair once" begin
+        for n in (0, 1, 2, 3, 7, 64, 1500)
+            npairs = ContourDynamics._triangular_pair_count(n)
+            @test npairs == n * (n - 1) ÷ 2
+            seen = Set{Tuple{Int,Int}}()
+            prev = (0, 0)
+            in_range = true
+            ordered = true
+            for p in 1:npairs
+                a, b = ContourDynamics._triangular_pair(p)
+                in_range &= 1 <= a < b <= n
+                # Same order as the former full-square sweep: b outer, a inner.
+                ordered &= (b, a) > prev
+                prev = (b, a)
+                push!(seen, (a, b))
+            end
+            @test in_range
+            @test ordered
+            @test length(seen) == npairs
+        end
+        # Spot-check far beyond the Float32-exact range of the square root.
+        for p in (2^31 - 1, 2^31, 10^12 + 7, 2^41 + 12345)
+            a, b = ContourDynamics._triangular_pair(p)
+            @test 1 <= a < b
+            @test (b - 1) * (b - 2) ÷ 2 + a == p
+        end
+    end
+
     @testset "Chunked pair scan matches CPU reference across chunk boundary" begin
-        # 1200 eligible segments → npairs = 1.44e6 > _PAIR_SCAN_CHUNK, so the
-        # candidate sweep spans two chunks; results must match the CPU
-        # spatial-index reference exactly.
+        # 3000 eligible segments → npairs = 3000·2999/2 ≈ 4.5e6 >
+        # _PAIR_SCAN_CHUNK, so the candidate sweep spans several chunks;
+        # results must match the CPU spatial-index reference exactly.
         δ = 0.05
-        contours = [circular_patch(1.0, 600, 1.0),
-                    circular_patch(1.0, 600, 1.0; cx=2.03)]
-        @test 600 * 600 * 4 > ContourDynamics._PAIR_SCAN_CHUNK
+        contours = [circular_patch(1.0, 1500, 1.0),
+                    circular_patch(1.0, 1500, 1.0; cx=2.03)]
+        @test ContourDynamics._triangular_pair_count(3000) > ContourDynamics._PAIR_SCAN_CHUNK
         idx = ContourDynamics.build_spatial_index(contours, δ)
         cpu_pairs = Set(ContourDynamics.find_close_segments(contours, idx, δ))
         buffer = ContourDynamics._device_close_pair_candidate_buffer(contours, δ, CPU())
@@ -899,6 +927,45 @@ end
         @test nnodes(dev_c) == nnodes(cpu_c)
         @test dev_c.corners == cpu_c.corners
         @test dev_c.nodes == cpu_c.nodes
+    end
+
+    @testset "Segmented scan helpers match serial per-contour reductions" begin
+        # Ragged layout with an empty contour in the middle and at the end.
+        lengths = [3, 0, 5, 1, 0]
+        n = sum(lengths)
+        offsets = zeros(Int, 5)
+        total = zeros(Int, 1)
+        ContourDynamics.@_ka_launch CPU() 5 ContourDynamics._prefix_lengths_kernel!(
+            offsets, total, lengths, 5)
+        @test offsets == [1, 4, 4, 9, 10]
+        @test total == [9]
+        contour_of_node = zeros(Int, n)
+        ContourDynamics.@_ka_launch CPU() 5 ContourDynamics._out_node_contour_kernel!(
+            contour_of_node, offsets, lengths, 5)
+        @test contour_of_node == [1, 1, 1, 3, 3, 3, 3, 3, 4]
+
+        vals = (collect(1.0:n), [0.5, 2.0, 1.5, 3.0, 0.25, 7.0, 1.0, 2.5, 4.0])
+        sums, maxes = ContourDynamics._device_segmented_scan(
+            vals, contour_of_node, n, (+, max), CPU())
+        expect_sum = [1, 3, 6, 4, 9, 15, 22, 30, 9]
+        expect_max = [0.5, 2.0, 2.0, 3.0, 3.0, 7.0, 7.0, 7.0, 4.0]
+        @test sums == expect_sum
+        @test maxes == expect_max
+        @test vals[1] == collect(1.0:n)   # inputs are left intact
+
+        # Single-node input returns the inputs themselves.
+        one_val = ([2.0],)
+        @test ContourDynamics._device_segmented_scan(one_val, [1], 1, (+,), CPU())[1] === one_val[1]
+    end
+
+    @testset "Filament removal with nothing flagged leaves the state untouched" begin
+        contours = [circular_patch(1.0, 48, 1.0), circular_patch(0.7, 40, -1.0)]
+        state = DeviceContourState(contours, CPU())
+        params = SurgeryParams(0.001, 0.005, 0.1, 1e-4, 10)
+        x_before = state.x
+        ContourDynamics._device_remove_filaments!(state, params, CPU())
+        @test state.x === x_before
+        @test length(state.lengths) == 2
     end
 
     @testset "Multi-layer device stall warnings name the layer" begin

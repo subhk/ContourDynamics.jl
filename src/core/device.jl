@@ -56,7 +56,12 @@ _ka_backend(::AbstractDevice) = error("GPU support requires CUDA.jl. Load it wit
     @_ka_launch dev ndrange kernel_builder(args...)
 
 Build the KernelAbstractions backend for `dev`, instantiate `kernel_builder`,
-launch it with `ndrange`, synchronize the backend, and return `nothing`.
+launch it with `ndrange`, and return `nothing`.
+
+The launch is not synchronized: successive launches on one backend are
+stream-ordered, so device-to-device work may be queued back to back. Host
+reads go through [`to_cpu`](@ref) or [`_device_synchronize`](@ref), which wait
+for the queued work. (The KA CPU backend runs each launch to completion.)
 
 This is intentionally small: it only removes the repeated KA launch boilerplate
 while leaving data layout, bounds, and topology rules explicit at each call site.
@@ -71,7 +76,15 @@ macro _ka_launch(dev, ndrange, call)
         local $backend = _ka_backend($(esc(dev)))
         local $kernel = $(esc(builder))($backend)
         $kernel($(map(esc, args)...); ndrange=$(esc(ndrange)))
-        KernelAbstractions.synchronize($backend)
         nothing
     end
 end
+
+"""
+    _device_synchronize(dev)
+
+Wait for all queued kernel launches on `dev` to finish. Call it before reading
+device results into host memory by a route other than [`to_cpu`](@ref), e.g. a
+`copyto!` into a preallocated host buffer.
+"""
+_device_synchronize(dev::AbstractDevice) = KernelAbstractions.synchronize(_ka_backend(dev))

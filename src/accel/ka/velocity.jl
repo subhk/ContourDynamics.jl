@@ -222,6 +222,9 @@ end
 end
 
 @inline function _copy_workspace_velocity!(ws::_GPUWorkspace)
+    # Launches are not synchronized individually; drain the device queue
+    # before copying its results into host memory.
+    KernelAbstractions.synchronize(KernelAbstractions.get_backend(ws.dev_vel_x))
     copyto!(ws.cpu_vx, ws.dev_vel_x)
     copyto!(ws.cpu_vy, ws.dev_vel_y)
     return nothing
@@ -335,26 +338,62 @@ function _ka_velocity_from_state!(vel::AbstractVector{SVector{2,T}},
     return _state_velocity_with_ws!(vel, ws, state, kernel, domain, dev, N)
 end
 
-function _ka_point_result(vel_x, vel_y, ::Type{T}) where {T}
+# ── Batched point probes ─────────────────────────────────────────────────
+#
+# `velocity(prob, points)` on a device problem packs the segments once and
+# evaluates every target in a single launch (ndrange = number of points). The
+# single-point probe is the one-element case of the same path, so there is one
+# set of launches to keep correct.
+
+# Split host or device points into flat device target buffers plus zeroed
+# device velocity buffers of the same length.
+function _ka_point_targets(points::AbstractVector{SVector{2,T}},
+                           dev::AbstractDevice) where {T}
+    host = to_cpu(points)
+    M = length(host)
+    tx = Vector{T}(undef, M)
+    ty = Vector{T}(undef, M)
+    @inbounds for i in 1:M
+        p = host[i]
+        tx[i] = p[1]
+        ty[i] = p[2]
+    end
+    return (to_device(dev, tx), to_device(dev, ty),
+            device_zeros(dev, T, M), device_zeros(dev, T, M))
+end
+
+function _ka_points_result(vel_x, vel_y, ::Type{T}, M::Int) where {T}
     host_x = to_cpu(vel_x)
     host_y = to_cpu(vel_y)
-    return SVector{2,T}(host_x[1], host_y[1])
+    out = Vector{SVector{2,T}}(undef, M)
+    @inbounds for i in 1:M
+        out[i] = SVector{2,T}(host_x[i], host_y[i])
+    end
+    return out
+end
+
+function _ka_velocity_at_state(state::DeviceContourState{T},
+                               kernel::Union{EulerKernel,QGKernel{T},SQGKernel{T}},
+                               domain::AbstractDomain,
+                               points::AbstractVector{SVector{2,T}},
+                               dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    M = length(points)
+    M == 0 && return SVector{2,T}[]
+    N = _device_state_nnodes(state)
+    ws = _get_state_workspace(dev, T, N; workspace=workspace)
+    seg = _state_segment_data!(ws, state, dev)
+    target_x, target_y, vel_x, vel_y = _ka_point_targets(points, dev)
+    _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg,
+                        kernel, domain, dev, ws)
+    return _ka_points_result(vel_x, vel_y, T, M)
 end
 
 function _ka_velocity_at_state(state::DeviceContourState{T},
                                kernel::Union{EulerKernel,QGKernel{T},SQGKernel{T}},
                                domain::AbstractDomain, x::SVector{2,T},
                                dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
-    N = _device_state_nnodes(state)
-    ws = _get_state_workspace(dev, T, N; workspace=workspace)
-    seg = _state_segment_data!(ws, state, dev)
-    target_x = to_device(dev, T[x[1]])
-    target_y = to_device(dev, T[x[2]])
-    vel_x = device_zeros(dev, T, 1)
-    vel_y = device_zeros(dev, T, 1)
-    _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg,
-                        kernel, domain, dev, ws)
-    return _ka_point_result(vel_x, vel_y, T)
+    return only(_ka_velocity_at_state(state, kernel, domain, SVector{2,T}[x], dev;
+                                      workspace=workspace))
 end
 
 """
@@ -482,6 +521,7 @@ function _multilayer_velocity_to_host_with_ws!(
         domain::AbstractDomain, dev::AbstractDevice, ranges, total::Int) where {N,T}
     _multilayer_velocity_with_ws!(ws.flat_vel, ws, states, kernel, domain,
                                   dev, ranges, total)
+    _device_synchronize(dev)
     copyto!(ws.host_flat, ws.flat_vel)
 
     for layer in 1:N
@@ -542,36 +582,40 @@ function _multilayer_velocity_with_ws!(vel::AbstractVector{SVector{2,T}},
     return _copy_velocity_output!(vel, vel_x, vel_y, dev, total)
 end
 
+# Modal results and layer outputs are stored point-major per mode/layer:
+# entry `(k - 1) * npoints + i` holds point `i` of mode/layer `k`.
 @kernel function _project_point_modes_ka!(out_x, out_y, mode_x, mode_y,
-                                          to_physical, nlayers)
-    layer = @index(Global)
-    if layer <= nlayers
+                                          to_physical, nlayers, npoints)
+    idx = @index(Global)
+    if idx <= nlayers * npoints
         T = eltype(out_x)
+        layer = (idx - 1) ÷ npoints + 1
+        i = (idx - 1) % npoints + 1
         vx = zero(T)
         vy = zero(T)
         @inbounds for mode in 1:nlayers
             weight = to_physical[layer, mode]
-            vx += weight * mode_x[mode]
-            vy += weight * mode_y[mode]
+            vx += weight * mode_x[(mode - 1) * npoints + i]
+            vy += weight * mode_y[(mode - 1) * npoints + i]
         end
-        out_x[layer] = vx
-        out_y[layer] = vy
+        @inbounds out_x[idx] = vx
+        @inbounds out_y[idx] = vy
     end
 end
 
 function _ka_multilayer_velocity_at_states(
         states::NTuple{N,<:DeviceContourState{T}},
         kernel::MultiLayerQGKernel{N}, domain::AbstractDomain,
-        x::SVector{2,T}, dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N,T}
+        points::AbstractVector{SVector{2,T}}, dev::AbstractDevice;
+        workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N,T}
+    M = length(points)
+    M == 0 && return NTuple{N,SVector{2,T}}[]
     ranges = _layer_state_ranges(states)
     total = sum(length, ranges)
     ws = _get_multilayer_workspace(dev, T, total; workspace=workspace)
-    target_x = to_device(dev, T[x[1]])
-    target_y = to_device(dev, T[x[2]])
-    point_x = device_zeros(dev, T, 1)
-    point_y = device_zeros(dev, T, 1)
-    mode_x = device_zeros(dev, T, N)
-    mode_y = device_zeros(dev, T, N)
+    target_x, target_y, point_x, point_y = _ka_point_targets(points, dev)
+    mode_x = device_zeros(dev, T, N * M)
+    mode_y = device_zeros(dev, T, N * M)
     to_modal = kernel.physical_to_modal
 
     for mode in 1:N
@@ -581,17 +625,28 @@ function _ka_multilayer_velocity_at_states(
         _dispatch_qg_mode(
             _ka_apply_modal_velocity!, kernel, lam,
             point_x, point_y, target_x, target_y, segments, domain, dev, ws)
-        copyto!(view(mode_x, mode:mode), point_x)
-        copyto!(view(mode_y, mode:mode), point_y)
+        slot = ((mode - 1) * M + 1):(mode * M)
+        copyto!(view(mode_x, slot), point_x)
+        copyto!(view(mode_y, slot), point_y)
     end
 
-    out_x = device_zeros(dev, T, N)
-    out_y = device_zeros(dev, T, N)
-    @_ka_launch dev N _project_point_modes_ka!(
-        out_x, out_y, mode_x, mode_y, kernel.modal_to_physical, N)
+    out_x = device_zeros(dev, T, N * M)
+    out_y = device_zeros(dev, T, N * M)
+    @_ka_launch dev N * M _project_point_modes_ka!(
+        out_x, out_y, mode_x, mode_y, kernel.modal_to_physical, N, M)
     host_x = to_cpu(out_x)
     host_y = to_cpu(out_y)
-    return ntuple(layer -> SVector{2,T}(host_x[layer], host_y[layer]), Val(N))
+    return [ntuple(layer -> SVector{2,T}(host_x[(layer - 1) * M + i],
+                                         host_y[(layer - 1) * M + i]), Val(N))
+            for i in 1:M]
+end
+
+function _ka_multilayer_velocity_at_states(
+        states::NTuple{N,<:DeviceContourState{T}},
+        kernel::MultiLayerQGKernel{N}, domain::AbstractDomain,
+        x::SVector{2,T}, dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {N,T}
+    return only(_ka_multilayer_velocity_at_states(states, kernel, domain, SVector{2,T}[x],
+                                                  dev; workspace=workspace))
 end
 
 # ── Beta-plane device velocity ───────────────────────────────────────────
@@ -705,8 +760,11 @@ end
 
 function _ka_velocity_at_state(state::DeviceContourState{T},
                                kernel::BetaPlaneQGKernel{T},
-                               domain::PeriodicDomain{T}, x::SVector{2,T},
+                               domain::PeriodicDomain{T},
+                               points::AbstractVector{SVector{2,T}},
                                dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    M = length(points)
+    M == 0 && return SVector{2,T}[]
     N = _device_state_nnodes(state)
     gws = _get_state_workspace(dev, T, N; workspace=workspace)
     bws = _get_beta_plane_workspace(dev, T, N, kernel.reference_contours; workspace=workspace)
@@ -720,15 +778,20 @@ function _ka_velocity_at_state(state::DeviceContourState{T},
             state.contour_of_node, state.local_index, one(T), N)
     end
     seg = SegmentData(bws.ax, bws.ay, bws.bx, bws.by, bws.pv, bws.ka, bws.kb)
-    target_x = to_device(dev, T[x[1]])
-    target_y = to_device(dev, T[x[2]])
-    vel_x = device_zeros(dev, T, 1)
-    vel_y = device_zeros(dev, T, 1)
+    target_x, target_y, vel_x, vel_y = _ka_point_targets(points, dev)
     _ka_apply_velocity!(vel_x, vel_y, target_x, target_y, seg,
                         QGKernel(kernel.Ld), domain, dev, gws)
     dy = 2 * domain.Ly / T(length(kernel.reference_contours))
-    @_ka_launch dev 1 _beta_sawtooth_add_ka!(vel_x, target_y,
+    @_ka_launch dev M _beta_sawtooth_add_ka!(vel_x, target_y,
                                              kernel.beta, inv(kernel.Ld), dy,
-                                             domain.Ly, 1)
-    return _ka_point_result(vel_x, vel_y, T)
+                                             domain.Ly, M)
+    return _ka_points_result(vel_x, vel_y, T, M)
+end
+
+function _ka_velocity_at_state(state::DeviceContourState{T},
+                               kernel::BetaPlaneQGKernel{T},
+                               domain::PeriodicDomain{T}, x::SVector{2,T},
+                               dev::AbstractDevice; workspace::ExecutionWorkspace{T}=_default_execution_workspace(T)) where {T}
+    return only(_ka_velocity_at_state(state, kernel, domain, SVector{2,T}[x], dev;
+                                      workspace=workspace))
 end

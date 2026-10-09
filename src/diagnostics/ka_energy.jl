@@ -69,30 +69,34 @@ end
     end
 end
 
+# Node-parallel packing: every input node of a valid contour writes its own
+# output segment (endpoints and PV jump).
 @kernel function _state_energy_segments_kernel!(ax, ay, bx, by, out_pv,
-                                                out_offsets, source_contour,
+                                                out_offsets, valid, valid_slots,
                                                 x, y, pv, wrapx, wrapy,
                                                 in_offsets, in_lengths,
-                                                output_offset, nvalid)
-    out_ci = @index(Global)
-    if out_ci <= nvalid
-        ci = source_contour[out_ci]
-        out_off = out_offsets[out_ci]
-        in_off = in_offsets[ci]
-        n = in_lengths[ci]
-        @inbounds for li in 1:n
-            out_g = output_offset + out_off + li - 1
-            in_g = in_off + li - 1
-            ax[out_g] = x[in_g]
-            ay[out_g] = y[in_g]
-            if li < n
-                bx[out_g] = x[in_g + 1]
-                by[out_g] = y[in_g + 1]
-            else
-                bx[out_g] = x[in_off] + wrapx[ci]
-                by[out_g] = y[in_off] + wrapy[ci]
+                                                contour_of_node, local_index,
+                                                output_offset, total_nodes)
+    in_g = @index(Global)
+    if in_g <= total_nodes
+        @inbounds begin
+            ci = contour_of_node[in_g]
+            if !iszero(valid[ci])
+                li = local_index[in_g]
+                n = in_lengths[ci]
+                in_off = in_offsets[ci]
+                out_g = output_offset + out_offsets[valid_slots[ci]] + li - 1
+                ax[out_g] = x[in_g]
+                ay[out_g] = y[in_g]
+                if li < n
+                    bx[out_g] = x[in_g + 1]
+                    by[out_g] = y[in_g + 1]
+                else
+                    bx[out_g] = x[in_off] + wrapx[ci]
+                    by[out_g] = y[in_off] + wrapy[ci]
+                end
+                out_pv[out_g] = pv[ci]
             end
-            out_pv[out_g] = pv[ci]
         end
     end
 end
@@ -168,6 +172,7 @@ function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
         ws.valid, state.lengths, state.wrapx, state.wrapy, ncontours)
     _device_compact_scan!(ws.valid_slots, ws.valid_count, ws.valid,
                           ncontours, dev, ws.scan_a, ws.scan_b)
+    _device_synchronize(dev)
     copyto!(ws.host_count, ws.valid_count)
     nvalid = ws.host_count[1]
     nvalid == 0 && return 0
@@ -177,14 +182,17 @@ function _pack_energy_workspace!(ws::_EnergyWorkspace{T},
         state.lengths, ncontours)
     @_ka_launch dev nvalid _prefix_lengths_kernel!(
         ws.out_offsets, ws.total_store, ws.out_lengths, nvalid)
+    _device_synchronize(dev)
     copyto!(ws.host_count, ws.total_store)
     n = ws.host_count[1]
     n == 0 && return 0
 
-    @_ka_launch dev nvalid _state_energy_segments_kernel!(
-        ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.out_offsets, ws.source_contour,
-        state.x, state.y, state.pv, state.wrapx, state.wrapy,
-        state.offsets, state.lengths, output_offset, nvalid)
+    total_nodes = length(state.x)
+    @_ka_launch dev total_nodes _state_energy_segments_kernel!(
+        ws.ax, ws.ay, ws.bx, ws.by, ws.pv, ws.out_offsets, ws.valid,
+        ws.valid_slots, state.x, state.y, state.pv, state.wrapx, state.wrapy,
+        state.offsets, state.lengths, state.contour_of_node, state.local_index,
+        output_offset, total_nodes)
     return n
 end
 
@@ -330,6 +338,7 @@ function _ka_energy_raw_with_workspace!(kernel!, ws::_EnergyWorkspace{T}, n::Int
 end
 
 function _reduce_energy_partials!(ws::_EnergyWorkspace{T}, n::Int) where {T}
+    KernelAbstractions.synchronize(KernelAbstractions.get_backend(ws.partial))
     copyto!(ws.host_partial, 1, ws.partial, 1, n)
     total = zero(T)
     @inbounds for i in 1:n

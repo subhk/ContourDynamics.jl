@@ -458,29 +458,162 @@ end
     end
 end
 
-@kernel function _prefix_lengths_kernel!(offsets, total_nodes, lengths, n)
-    idx = @index(Global)
-    if idx <= n
-        offset = 1
-        @inbounds for i in 1:(idx - 1)
-            offset += lengths[i]
-        end
-        offsets[idx] = offset
-        if idx == n
-            total_nodes[1] = offset + lengths[idx] - 1
+# Backend-level launch (same as `@_ka_launch`, for helpers that only hold a
+# KernelAbstractions backend rather than an `AbstractDevice`).
+@inline function _ka_run(backend, n, builder, args...)
+    builder(backend)(args...; ndrange=n)
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
+# Segmented inclusive Hillis–Steele scan step over a tuple of arrays. `seg[i]`
+# is the segment key of item i (segments are contiguous, e.g. `contour_of_node`),
+# so item i combines with item i-offset only when both lie in the same segment.
+# `ops` holds one associative operator per array (`+` for sums, `max` for
+# maxima). Each pass reads `ins` and writes `outs`, so the result is independent
+# of workitem order; floating-point sums therefore reproduce run to run, though
+# their association differs from a serial loop.
+@inline _segscan_write!(::Tuple{}, ::Tuple{}, ::Tuple{}, i, j, take) = nothing
+@inline function _segscan_write!(outs::Tuple, ins::Tuple, ops::Tuple, i, j, take)
+    out = first(outs)
+    in = first(ins)
+    op = first(ops)
+    @inbounds out[i] = take ? op(in[i], in[j]) : in[i]
+    return _segscan_write!(Base.tail(outs), Base.tail(ins), Base.tail(ops), i, j, take)
+end
+
+@kernel function _segmented_scan_step_kernel!(outs, ins, ops, seg, offset, n)
+    i = @index(Global)
+    if i <= n
+        j = i - offset
+        @inbounds take = j >= 1 && seg[j] == seg[i]
+        _segscan_write!(outs, ins, ops, i, j, take)
+    end
+end
+
+# Inclusive segmented scan of each array in `vals` (left intact), keyed by
+# `seg`. Returns the tuple of arrays holding the result: `vals` itself when
+# n <= 1, otherwise one of the caller-owned scratch tuples `a`/`b` (one
+# same-sized array per entry of `vals`). O(n log n) work, O(log n) launches.
+function _device_segmented_scan(vals::Tuple, a::Tuple, b::Tuple, seg, n::Int,
+                                ops::Tuple, dev::AbstractDevice)
+    return _device_segmented_scan(vals, a, b, seg, n, ops, _ka_backend(dev))
+end
+
+function _device_segmented_scan(vals::Tuple, a::Tuple, b::Tuple, seg, n::Int,
+                                ops::Tuple, backend)
+    n <= 1 && return vals
+    cur, other = vals, a
+    offset = 1
+    while offset < n
+        _ka_run(backend, n, _segmented_scan_step_kernel!, other, cur, ops, seg, offset, n)
+        cur, other = other, (other === a ? b : a)
+        offset *= 2
+    end
+    return cur
+end
+
+# Convenience: allocate the scratch tuples for `_device_segmented_scan`.
+function _device_segmented_scan(vals::Tuple, seg, n::Int, ops::Tuple, dev::AbstractDevice)
+    backend = _ka_backend(dev)
+    a = map(v -> KernelAbstractions.zeros(backend, eltype(v), n), vals)
+    b = map(v -> KernelAbstractions.zeros(backend, eltype(v), n), vals)
+    return _device_segmented_scan(vals, a, b, seg, n, ops, backend)
+end
+
+# Per-segment totals: the inclusive scan value at the last item of each
+# segment (`zero` for an empty segment).
+@kernel function _segment_last_kernel!(totals, scan, offsets, lengths, nseg)
+    ci = @index(Global)
+    if ci <= nseg
+        @inbounds begin
+            n = lengths[ci]
+            totals[ci] = n > 0 ? scan[offsets[ci] + n - 1] : zero(eltype(totals))
         end
     end
 end
 
-@kernel function _out_node_contour_kernel!(out_node_contour, offsets, lengths, nout)
-    out_ci = @index(Global)
-    if out_ci <= nout
-        first = offsets[out_ci]
-        last = first + lengths[out_ci] - 1
-        @inbounds for g in first:last
-            out_node_contour[g] = out_ci
+@kernel function _prefix_lengths_finalize_kernel!(offsets, total_nodes, scan, lengths, n)
+    i = @index(Global)
+    if i <= n
+        @inbounds begin
+            incl = scan[i]
+            offsets[i] = incl - lengths[i] + 1
+            if i == n
+                total_nodes[1] = incl
+            end
         end
     end
+end
+
+# Exclusive prefix sum of `lengths` (1-based offsets) and the node total, via
+# an inclusive Hillis–Steele scan (O(n log n) work, O(log n) launches) in place
+# of the earlier O(n) per-item loop. Integer arithmetic, so the output matches
+# the serial version exactly.
+#
+# `_prefix_lengths_kernel!` keeps its kernel-style call sites: `builder(backend)`
+# returns a launcher whose call `(offsets, total, lengths, n; ndrange)` runs the
+# scan, so `@_ka_launch dev n _prefix_lengths_kernel!(offsets, total, lengths, n)`
+# is unchanged. The `ndrange` is ignored in favor of `n`.
+struct _PrefixLengthsLauncher{B}
+    backend::B
+end
+_prefix_lengths_kernel!(backend) = _PrefixLengthsLauncher(backend)
+
+function (k::_PrefixLengthsLauncher)(offsets, total_nodes, lengths, n; ndrange=n)
+    n == 0 && return nothing
+    backend = k.backend
+    a = KernelAbstractions.zeros(backend, Int, n)
+    b = KernelAbstractions.zeros(backend, Int, n)
+    copyto!(a, 1, lengths, 1, n)
+    cur, other = a, b
+    offset = 1
+    while offset < n
+        _ka_run(backend, n, _scan_step_kernel!, other, cur, offset, n)
+        cur, other = other, cur
+        offset *= 2
+    end
+    _ka_run(backend, n, _prefix_lengths_finalize_kernel!, offsets, total_nodes, cur, lengths, n)
+    return nothing
+end
+
+# Node-parallel contour lookup: binary search over the monotone `offsets` for
+# the last contour whose first node is <= g. An empty contour shares its offset
+# with its successor, which is later and therefore wins the "last" search.
+@kernel function _node_contour_search_kernel!(out_node_contour, offsets, nout,
+                                              total_nodes)
+    g = @index(Global)
+    if g <= total_nodes
+        @inbounds begin
+            lo = 1
+            hi = nout
+            while lo < hi
+                mid = (lo + hi + 1) >> 1
+                if offsets[mid] <= g
+                    lo = mid
+                else
+                    hi = mid - 1
+                end
+            end
+            out_node_contour[g] = lo
+        end
+    end
+end
+
+# Same launcher pattern as `_prefix_lengths_kernel!`: the call sites stay
+# `@_ka_launch dev nout _out_node_contour_kernel!(out_node_contour, offsets, lengths, nout)`
+# while the work is distributed over nodes rather than contours.
+struct _OutNodeContourLauncher{B}
+    backend::B
+end
+_out_node_contour_kernel!(backend) = _OutNodeContourLauncher(backend)
+
+function (k::_OutNodeContourLauncher)(out_node_contour, offsets, lengths, nout; ndrange=nout)
+    total_nodes = length(out_node_contour)
+    (nout == 0 || total_nodes == 0) && return nothing
+    _ka_run(k.backend, total_nodes, _node_contour_search_kernel!,
+            out_node_contour, offsets, nout, total_nodes)
+    return nothing
 end
 
 @kernel function _out_node_local_index_kernel!(local_index, contour_of_node,

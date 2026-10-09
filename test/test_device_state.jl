@@ -493,6 +493,67 @@ end
             state, kernel, domain, point, CPU()) ≈ velocity(prob, point) rtol=1e-8 atol=1e-10
     end
 
+    @testset "Batched point velocity matches per-point probes" begin
+        points = [SVector(0.17, -0.11), SVector(-0.42, 0.33), SVector(0.61, 0.05),
+                  SVector(-0.05, -0.58), SVector(0.9, 0.9)]
+        contours_in = [
+            circular_patch(0.35, 20, 1.0),
+            PVContour([p + SVector(0.7, -0.25) for p in circular_patch(0.16, 12, -0.4).nodes], -0.4),
+        ]
+        cases = (
+            (EulerKernel(), UnboundedDomain()),
+            (QGKernel(1.25), PeriodicDomain(2.0, 2.0)),
+            (SQGKernel(0.02), UnboundedDomain()),
+        )
+        for (kernel, domain) in cases
+            clear_ewald_cache!()
+            domain isa PeriodicDomain && setup_ewald_cache!(domain, kernel)
+            prob = ContourProblem(kernel, domain, deepcopy(contours_in); dev=CPU())
+            state = DeviceContourState(deepcopy(contours_in), CPU())
+            expected = [velocity(prob, x) for x in points]
+
+            # CPU problem: the batched method maps the single-point probe.
+            batched = velocity(prob, points)
+            @test batched isa Vector{SVector{2,Float64}}
+            @test length(batched) == length(points)
+            @test all(isapprox.(batched, expected; rtol=1e-12, atol=1e-12))
+
+            # KA backend: one pack and one launch over all targets must agree
+            # with the per-point launches.
+            ka_batched = ContourDynamics._ka_velocity_at_state(
+                state, kernel, domain, points, CPU())
+            ka_single = [ContourDynamics._ka_velocity_at_state(
+                             state, kernel, domain, x, CPU()) for x in points]
+            @test ka_batched isa Vector{SVector{2,Float64}}
+            @test all(isapprox.(ka_batched, ka_single; rtol=1e-12, atol=1e-12))
+            @test all(isapprox.(ka_batched, expected; rtol=1e-8, atol=1e-10))
+
+            # Mixed precision targets are promoted to the problem precision.
+            @test velocity(prob, SVector{2,Float32}.(points)) isa Vector{SVector{2,Float64}}
+            @test isempty(velocity(prob, SVector{2,Float64}[]))
+        end
+
+        # Multi-layer: batched modal projection equals the per-point one.
+        F = 0.5
+        kernel = MultiLayerQGKernel(SVector(1 / sqrt(2F)),
+                                    SMatrix{2,2,Float64}(-F, F, F, -F))
+        layers = ([circular_patch(0.35, 16, 1.0)],
+                  [circular_patch(0.25, 12, -0.5; cx=0.4)])
+        multi = MultiLayerContourProblem(kernel, UnboundedDomain(), deepcopy(layers))
+        states = ntuple(i -> DeviceContourState(deepcopy(layers[i]), CPU()), 2)
+        expected_multi = [velocity(multi, x) for x in points]
+        batched_multi = velocity(multi, points)
+        ka_multi = ContourDynamics._ka_multilayer_velocity_at_states(
+            states, kernel, UnboundedDomain(), points, CPU())
+        @test batched_multi isa Vector{NTuple{2,SVector{2,Float64}}}
+        @test all(zip(batched_multi, expected_multi)) do (a, b)
+            all(isapprox.(a, b; rtol=1e-12, atol=1e-12))
+        end
+        @test all(zip(ka_multi, expected_multi)) do (a, b)
+            all(isapprox.(a, b; rtol=1e-12, atol=1e-12))
+        end
+    end
+
     # (name, kernel, domain, patch, isapprox keywords). `atol` alone implies rtol=0 in
     # isapprox, so the keyword sets are kept verbatim rather than normalised.
     ka_velocity_cases = [

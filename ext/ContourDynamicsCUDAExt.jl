@@ -19,6 +19,15 @@ ContourDynamics.device_zeros(::ContourDynamics.GPU, ::Type{T}, dims...) where {T
 
 ContourDynamics.to_device(::ContourDynamics.GPU, x) = adapt(CuArray, x)
 
+# Kernel launches are not synchronized individually (see `@_ka_launch`), so a
+# host read must first drain the stream. `Array(::CuArray)` already waits for
+# an unpinned destination; the explicit synchronize makes that contract
+# independent of CUDA.jl's copy implementation.
+function ContourDynamics.to_cpu(x::CuArray)
+    CUDA.synchronize()
+    return Array(x)
+end
+
 ContourDynamics._ka_backend(::ContourDynamics.GPU) = CUDABackend()
 
 # Adapt.jl integration for ContourProblem and MultiLayerContourProblem.

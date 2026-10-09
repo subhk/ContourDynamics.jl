@@ -131,67 +131,69 @@ function _promote_high_curvature_corners!(state::DeviceContourState{T}, δ,
     return state
 end
 
+# Per-node remesh inputs. Besides the per-segment length and node curvature,
+# this precomputes what the O(n²) density loop reads per source segment
+# (midpoint and |pv|·length) and the per-node partials of the per-contour
+# perimeter and signed area, which a segmented scan then reduces.
 @kernel function _remesh_input_geometry_kernel!(seg_lengths, signed_curvatures,
-                                                abs_curvatures, perimeters,
-                                                target_area,
+                                                abs_curvatures, seg_midx, seg_midy,
+                                                seg_weight, area_part,
                                                 x, y, pv, wrapx, wrapy, offsets,
                                                 lengths, contour_of_node,
                                                 local_index, corners,
-                                                total_nodes, ncontours)
+                                                total_nodes)
     g = @index(Global)
     if g <= total_nodes
-        ci = contour_of_node[g]
-        li = local_index[g]
-        off = offsets[ci]
-        ax = x[g]
-        ay = y[g]
-        bx = li < lengths[ci] ? x[g + 1] : x[off] + wrapx[ci]
-        by = li < lengths[ci] ? y[g + 1] : y[off] + wrapy[ci]
-        dx = bx - ax
-        dy = by - ay
-        seg_lengths[g] = sqrt(dx * dx + dy * dy)
-        κ = _state_signed_node_curvature(x, y, wrapx, wrapy, offsets,
-                                         lengths, corners, ci, li)
-        signed_curvatures[g] = κ
-        abs_curvatures[g] = abs(κ)
-    end
-
-    if g <= ncontours
-        ci = g
-        off = offsets[ci]
-        n = lengths[ci]
-        T = eltype(perimeters)
-        # An empty (spanning) contour has no node at `off` to read.
-        ox = n > 0 ? x[off] : zero(T)
-        oy = n > 0 ? y[off] : zero(T)
-        perimeter = zero(T)
-        area2 = zero(T)
-        scale = max(abs(wrapx[ci]), abs(wrapy[ci]))
-        @inbounds for li in 1:n
-            gi = off + li - 1
-            nx = li < n ? x[gi + 1] : x[off] + wrapx[ci]
-            ny = li < n ? y[gi + 1] : y[off] + wrapy[ci]
-            dx = nx - x[gi]
-            dy = ny - y[gi]
-            perimeter += sqrt(dx * dx + dy * dy)
-            px = x[gi] - ox
-            py = y[gi] - oy
-            next_x = nx - ox
-            next_y = ny - oy
-            area2 += px * next_y - next_x * py
-            scale = max(scale, abs(px), abs(py))
+        @inbounds begin
+            ci = contour_of_node[g]
+            li = local_index[g]
+            off = offsets[ci]
+            ax = x[g]
+            ay = y[g]
+            bx = li < lengths[ci] ? x[g + 1] : x[off] + wrapx[ci]
+            by = li < lengths[ci] ? y[g + 1] : y[off] + wrapy[ci]
+            dx = bx - ax
+            dy = by - ay
+            ei = sqrt(dx * dx + dy * dy)
+            seg_lengths[g] = ei
+            seg_midx[g] = (ax + bx) / 2
+            seg_midy[g] = (ay + by) / 2
+            seg_weight[g] = ei * abs(pv[ci])
+            κ = _state_signed_node_curvature(x, y, wrapx, wrapy, offsets,
+                                             lengths, corners, ci, li)
+            signed_curvatures[g] = κ
+            abs_curvatures[g] = abs(κ)
+            ox = x[off]
+            oy = y[off]
+            px = ax - ox
+            py = ay - oy
+            next_x = bx - ox
+            next_y = by - oy
+            area_part[g] = px * next_y - next_x * py
         end
-        perimeters[ci] = perimeter
-        target_area[ci] = area2 / 2
     end
 end
 
-@kernel function _remesh_node_density_kernel!(node_density_curvatures, x, y, pv,
-                                              wrapx, wrapy, offsets, lengths,
-                                              contour_of_node, local_index,
-                                              seg_lengths, abs_curvatures,
-                                              perimeters, μ, Δ_max,
-                                              total_nodes)
+@kernel function _remesh_contour_geometry_kernel!(perimeters, target_area,
+                                                  perim_scan, area_scan,
+                                                  offsets, lengths, ncontours)
+    ci = @index(Global)
+    if ci <= ncontours
+        @inbounds begin
+            T = eltype(perimeters)
+            n = lengths[ci]
+            last = offsets[ci] + n - 1
+            perimeters[ci] = n > 0 ? perim_scan[last] : zero(T)
+            target_area[ci] = n > 0 ? area_scan[last] / 2 : zero(T)
+        end
+    end
+end
+
+@kernel function _remesh_node_density_kernel!(node_density_curvatures, x, y,
+                                              contour_of_node, seg_midx,
+                                              seg_midy, seg_weight,
+                                              abs_curvatures, perimeters, μ,
+                                              Δ_max, total_nodes)
     g = @index(Global)
     if g <= total_nodes
         ci = contour_of_node[g]
@@ -202,20 +204,16 @@ end
         numerator = zero(L)
         denominator = zero(L)
 
+        # Four contiguous loads per source segment (midpoint, |pv|·length,
+        # |κ|); the per-segment geometry is precomputed by
+        # `_remesh_input_geometry_kernel!`.
         @inbounds for sg in 1:total_nodes
-            sc = contour_of_node[sg]
-            sli = local_index[sg]
-            off = offsets[sc]
-            ei = seg_lengths[sg]
-            iszero(ei) && continue
-            mx = sli < lengths[sc] ? (x[sg] + x[sg + 1]) / 2 :
-                 (x[sg] + x[off] + wrapx[sc]) / 2
-            my = sli < lengths[sc] ? (y[sg] + y[sg + 1]) / 2 :
-                 (y[sg] + y[off] + wrapy[sc]) / 2
-            dx = xj - mx
-            dy = yj - my
+            w = seg_weight[sg]
+            iszero(w) && continue
+            dx = xj - seg_midx[sg]
+            dy = yj - seg_midy[sg]
             d2 = max(dx * dx + dy * dy, d2_floor)
-            weight = ei * abs(pv[sc]) / d2
+            weight = w / d2
             denominator += weight
             numerator += weight * abs_curvatures[sg]
         end
@@ -229,8 +227,9 @@ end
     end
 end
 
-@kernel function _remesh_raw_density_kernel!(raw_densities, x, offsets, lengths,
-                                             contour_of_node, local_index,
+@kernel function _remesh_raw_density_kernel!(raw_densities, raw_weighted, x,
+                                             offsets, lengths, contour_of_node,
+                                             local_index, seg_lengths,
                                              node_density_curvatures, δ,
                                              total_nodes)
     g = @index(Global)
@@ -240,24 +239,20 @@ end
         next_g = li < lengths[ci] ? g + 1 : offsets[ci]
         sqrt2 = sqrt(eltype(x)(2))
         κ̃ = (node_density_curvatures[g] + node_density_curvatures[next_g]) / 2
-        raw_densities[g] = κ̃ <= zero(κ̃) ? zero(κ̃) :
-                           κ̃ / (one(κ̃) + δ * κ̃ / sqrt2)
+        raw = κ̃ <= zero(κ̃) ? zero(κ̃) : κ̃ / (one(κ̃) + δ * κ̃ / sqrt2)
+        raw_densities[g] = raw
+        raw_weighted[g] = raw * seg_lengths[g]
     end
 end
 
 @kernel function _remesh_density_scale_kernel!(density_scale, x, offsets,
-                                               lengths, seg_lengths,
-                                               raw_densities, perimeters,
-                                               μ, Δ_max, ncontours)
+                                               lengths, weighted_scan,
+                                               perimeters, μ, Δ_max, ncontours)
     ci = @index(Global)
     if ci <= ncontours
-        off = offsets[ci]
         n = lengths[ci]
-        weighted = zero(eltype(x))
-        @inbounds for li in 1:n
-            gi = off + li - 1
-            weighted += raw_densities[gi] * seg_lengths[gi]
-        end
+        @inbounds weighted = n > 0 ? weighted_scan[offsets[ci] + n - 1] :
+                                     zero(eltype(x))
 
         min_density = one(eltype(x)) / Δ_max
         target_intervals = _flat_target_interval_count(perimeters[ci], n, μ, Δ_max)
@@ -267,12 +262,47 @@ end
     end
 end
 
-@kernel function _remesh_measure_kernel!(densities, measure_start,
-                                         q_measure, out_lengths,
+# Per-node clamped density and the weighted-measure / corner partials that a
+# segmented scan turns into the per-contour measure prefix (`measure_start`),
+# total measure, and corner presence.
+@kernel function _remesh_density_measure_kernel!(densities, measure_part,
+                                                 corner_part, raw_densities,
+                                                 density_scale, seg_lengths,
+                                                 corners, contour_of_node,
+                                                 μ, Δ_max, total_nodes)
+    g = @index(Global)
+    if g <= total_nodes
+        @inbounds begin
+            ci = contour_of_node[g]
+            T = eltype(densities)
+            density = clamp(raw_densities[g] * density_scale[ci],
+                            one(T) / Δ_max, one(T) / μ)
+            densities[g] = density
+            measure_part[g] = seg_lengths[g] * density
+            corner_part[g] = iszero(corners[g]) ? zero(T) : one(T)
+        end
+    end
+end
+
+# Exclusive measure prefix within each contour from the inclusive scan.
+@kernel function _remesh_measure_start_kernel!(measure_start, measure_scan,
+                                               local_index, total_nodes)
+    g = @index(Global)
+    if g <= total_nodes
+        @inbounds measure_start[g] = local_index[g] == 1 ?
+                                     zero(eltype(measure_start)) :
+                                     measure_scan[g - 1]
+    end
+end
+
+# Per-contour remesh sizing. The measure totals come from the segmented scan;
+# only the fixed-corner span walk (inherently sequential per contour) remains
+# a per-contour loop.
+@kernel function _remesh_measure_kernel!(q_measure, out_lengths,
                                          remesh_mode,
                                          out_pv, out_wrapx, out_wrapy,
-                                         raw_densities, density_scale,
-                                         corners,
+                                         measure_scan, corner_scan,
+                                         densities, corners,
                                          seg_lengths, perimeters,
                                          in_pv, in_wrapx, in_wrapy,
                                          offsets, lengths, μ, Δ_max,
@@ -281,28 +311,14 @@ end
     if ci <= ncontours
         off = offsets[ci]
         n = lengths[ci]
-        min_density = one(eltype(densities)) / Δ_max
-        max_density = one(eltype(densities)) / μ
-        measure = zero(eltype(densities))
-        @inbounds for li in 1:n
-            g = off + li - 1
-            density = clamp(raw_densities[g] * density_scale[ci],
-                            min_density, max_density)
-            densities[g] = density
-            measure_start[g] = measure
-            measure += seg_lengths[g] * density
-        end
+        @inbounds measure = n > 0 ? measure_scan[off + n - 1] : zero(eltype(densities))
+        @inbounds has_corner = n > 0 && !iszero(corner_scan[off + n - 1])
         q_measure[ci] = measure
         out_pv[ci] = in_pv[ci]
         out_wrapx[ci] = in_wrapx[ci]
         out_wrapy[ci] = in_wrapy[ci]
 
-        corner_count = 0
-        @inbounds for li in 1:n
-            corner_count += Int(!iszero(corners[off + li - 1]))
-        end
-
-        fixed_corners = corner_count > 0 && iszero(in_wrapx[ci]) && iszero(in_wrapy[ci])
+        fixed_corners = has_corner && iszero(in_wrapx[ci]) && iszero(in_wrapy[ci])
         if n < 3
             # Like the CPU `remesh`, contours too short to define a curve
             # (possible for spanning contours) are copied unchanged.
@@ -451,6 +467,7 @@ end
                             chosen_segments = span_segments
                             chosen_measure = span_measure
                             chosen_len = span_len
+                            break
                         end
                     end
                     prev_corner = li
@@ -534,15 +551,21 @@ end
         if !written
             nout = out_lengths[ci]
             s_target = q_measure[ci] * (out_local - 1) / nout
-            seg = 1
-            @inbounds for li in 1:n
-                gi = off + li - 1
-                next_measure = measure_start[gi] + seg_lengths[gi] * densities[gi]
-                if s_target <= next_measure || li == n
-                    seg = li
-                    break
+            # `measure_start + seg_measure` is the (monotone) cumulative
+            # measure, so the first segment whose end reaches `s_target` is
+            # found by binary search; none reaching it selects the last.
+            lo = 1
+            hi = n
+            @inbounds while lo < hi
+                mid = (lo + hi) >> 1
+                gi = off + mid - 1
+                if s_target <= measure_start[gi] + seg_lengths[gi] * densities[gi]
+                    hi = mid
+                else
+                    lo = mid + 1
                 end
             end
+            seg = lo
 
             in_g = off + seg - 1
             seg_measure = seg_lengths[in_g] * densities[in_g]
@@ -566,8 +589,41 @@ end
     end
 end
 
+# Per-output-node polygon partials (relative to the contour's first node):
+# cross product, centroid numerators, coordinate sums, and coordinate scale.
+@kernel function _remesh_output_node_moments_kernel!(cross_part, cx_part, cy_part,
+                                                     sx_part, sy_part, scale_part,
+                                                     out_x, out_y, out_offsets,
+                                                     out_lengths, out_node_contour,
+                                                     total_out_nodes)
+    g = @index(Global)
+    if g <= total_out_nodes
+        @inbounds begin
+            ci = out_node_contour[g]
+            off = out_offsets[ci]
+            n = out_lengths[ci]
+            ng = g - off + 1 < n ? g + 1 : off
+            ox = out_x[off]
+            oy = out_y[off]
+            px = out_x[g] - ox
+            py = out_y[g] - oy
+            next_x = out_x[ng] - ox
+            next_y = out_y[ng] - oy
+            cross = px * next_y - next_x * py
+            cross_part[g] = cross
+            cx_part[g] = (px + next_x) * cross
+            cy_part[g] = (py + next_y) * cross
+            sx_part[g] = px
+            sy_part[g] = py
+            scale_part[g] = max(abs(px), abs(py))
+        end
+    end
+end
+
 @kernel function _remesh_output_moments_kernel!(out_area, out_centroid_x,
                                                 out_centroid_y, out_area_tolerance,
+                                                cross_scan, cx_scan, cy_scan,
+                                                sx_scan, sy_scan, scale_scan,
                                                 out_x, out_y, out_offsets,
                                                 out_lengths, ncontours)
     ci = @index(Global)
@@ -581,28 +637,16 @@ end
         off = out_offsets[ci]
         n = out_lengths[ci]
         T = eltype(out_area)
-        ox = out_x[off]
-        oy = out_y[off]
-        area2 = zero(T)
-        cx_num = zero(T)
-        cy_num = zero(T)
-        sx = zero(T)
-        sy = zero(T)
-        scale = zero(T)
-        @inbounds for li in 1:n
-            g = off + li - 1
-            ng = li < n ? g + 1 : off
-            px = out_x[g] - ox
-            py = out_y[g] - oy
-            next_x = out_x[ng] - ox
-            next_y = out_y[ng] - oy
-            cross = px * next_y - next_x * py
-            area2 += cross
-            cx_num += (px + next_x) * cross
-            cy_num += (py + next_y) * cross
-            sx += px
-            sy += py
-            scale = max(scale, abs(px), abs(py))
+        last = off + n - 1
+        @inbounds begin
+            ox = out_x[off]
+            oy = out_y[off]
+            area2 = cross_scan[last]
+            cx_num = cx_scan[last]
+            cy_num = cy_scan[last]
+            sx = sx_scan[last]
+            sy = sy_scan[last]
+            scale = scale_scan[last]
         end
 
         area = area2 / 2
@@ -676,15 +720,50 @@ end
 # (non-corner) nodes along d = (p - centroid); the signed area is quadratic in
 # the scalar step `t`. This kernel computes that `t` per contour (corners pinned),
 # mirroring the CPU `_preserve_closed_area_fixed_corners!`.
+# Per-output-node partials of the quadratic's B and C coefficients (corners
+# pinned: a corner's displacement is zero).
+@kernel function _remesh_corner_area_partials_kernel!(B_part, C_part, out_x, out_y,
+                                                      out_corners, out_offsets,
+                                                      out_lengths, out_node_contour,
+                                                      out_centroid_x, out_centroid_y,
+                                                      total_out_nodes)
+    g = @index(Global)
+    if g <= total_out_nodes
+        @inbounds begin
+            T = eltype(out_x)
+            ci = out_node_contour[g]
+            off = out_offsets[ci]
+            n = out_lengths[ci]
+            ng = g - off + 1 < n ? g + 1 : off
+            cx = out_centroid_x[ci]
+            cy = out_centroid_y[ci]
+            pix = out_x[g]
+            piy = out_y[g]
+            pjx = out_x[ng]
+            pjy = out_y[ng]
+            dix = iszero(out_corners[g]) ? pix - cx : zero(T)
+            diy = iszero(out_corners[g]) ? piy - cy : zero(T)
+            djx = iszero(out_corners[ng]) ? pjx - cx : zero(T)
+            djy = iszero(out_corners[ng]) ? pjy - cy : zero(T)
+            local_pix = pix - cx
+            local_piy = piy - cy
+            local_pjx = pjx - cx
+            local_pjy = pjy - cy
+            B_part[g] = (local_pix * djy - djx * local_piy) +
+                        (dix * local_pjy - local_pjx * diy)
+            C_part[g] = dix * djy - djx * diy
+        end
+    end
+end
+
 @kernel function _remesh_corner_area_step_kernel!(step, target_area, out_area,
                                                   out_area_tolerance,
-                                                  out_centroid_x, out_centroid_y,
-                                                  out_x, out_y, out_corners,
+                                                  B_scan, C_scan,
                                                   out_offsets, out_lengths,
                                                   wrapx, wrapy, remesh_mode, ncontours)
     ci = @index(Global)
     if ci <= ncontours
-        T = eltype(out_x)
+        T = eltype(step)
         step[ci] = zero(T)
         mode = remesh_mode[ci]
         if (mode == UInt8(1) || mode == UInt8(2)) &&
@@ -696,31 +775,10 @@ end
                ((target > zero(target)) == (A0 > zero(A0)))
                 rhs = target - A0
                 if abs(rhs) > sqrt(eps(T)) * abs(target)
-                    cx = out_centroid_x[ci]
-                    cy = out_centroid_y[ci]
-                    off = out_offsets[ci]
                     n = out_lengths[ci]
-                    B = zero(T)
-                    C = zero(T)
-                    @inbounds for li in 1:n
-                        g = off + li - 1
-                        ng = li < n ? g + 1 : off
-                        pix = out_x[g]
-                        piy = out_y[g]
-                        pjx = out_x[ng]
-                        pjy = out_y[ng]
-                        dix = iszero(out_corners[g]) ? pix - cx : zero(T)
-                        diy = iszero(out_corners[g]) ? piy - cy : zero(T)
-                        djx = iszero(out_corners[ng]) ? pjx - cx : zero(T)
-                        djy = iszero(out_corners[ng]) ? pjy - cy : zero(T)
-                        local_pix = pix - cx
-                        local_piy = piy - cy
-                        local_pjx = pjx - cx
-                        local_pjy = pjy - cy
-                        B += (local_pix * djy - djx * local_piy) +
-                             (dix * local_pjy - local_pjx * diy)
-                        C += dix * djy - djx * diy
-                    end
+                    last = out_offsets[ci] + n - 1
+                    @inbounds B = n > 0 ? B_scan[last] : zero(T)
+                    @inbounds C = n > 0 ? C_scan[last] : zero(T)
                     B /= 2
                     C /= 2
                     t, ok = _device_smallest_quadratic_root(C, B, -rhs)
@@ -772,34 +830,63 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
     seg_lengths = device_zeros(dev, T, total_nodes)
     signed_curvatures = device_zeros(dev, T, total_nodes)
     abs_curvatures = device_zeros(dev, T, total_nodes)
-    perimeters = device_zeros(dev, T, ncontours)
-    target_area = device_zeros(dev, T, ncontours)
-    @_ka_launch dev max(total_nodes, ncontours) _remesh_input_geometry_kernel!(
-        seg_lengths, signed_curvatures, abs_curvatures, perimeters,
-        target_area,
+    seg_midx = device_zeros(dev, T, total_nodes)
+    seg_midy = device_zeros(dev, T, total_nodes)
+    seg_weight = device_zeros(dev, T, total_nodes)
+    area_part = device_zeros(dev, T, total_nodes)
+    @_ka_launch dev total_nodes _remesh_input_geometry_kernel!(
+        seg_lengths, signed_curvatures, abs_curvatures, seg_midx, seg_midy,
+        seg_weight, area_part,
         flat.x, flat.y, flat.pv, flat.wrapx, flat.wrapy,
         flat.offsets, flat.lengths, flat.contour_of_node, flat.local_index,
-        flat.corners, total_nodes, ncontours)
+        flat.corners, total_nodes)
+
+    # Scratch for the node→contour segmented reductions (reused per stage).
+    scan_a = ntuple(_ -> device_zeros(dev, T, total_nodes), 2)
+    scan_b = ntuple(_ -> device_zeros(dev, T, total_nodes), 2)
+    perim_scan, area_scan = _device_segmented_scan(
+        (seg_lengths, area_part), scan_a, scan_b, flat.contour_of_node,
+        total_nodes, (+, +), dev)
+    perimeters = device_zeros(dev, T, ncontours)
+    target_area = device_zeros(dev, T, ncontours)
+    @_ka_launch dev ncontours _remesh_contour_geometry_kernel!(
+        perimeters, target_area, perim_scan, area_scan, flat.offsets,
+        flat.lengths, ncontours)
 
     node_density_curvatures = device_zeros(dev, T, total_nodes)
     @_ka_launch dev total_nodes _remesh_node_density_kernel!(
-        node_density_curvatures, flat.x, flat.y, flat.pv, flat.wrapx,
-        flat.wrapy, flat.offsets, flat.lengths, flat.contour_of_node,
-        flat.local_index, seg_lengths, abs_curvatures, perimeters,
+        node_density_curvatures, flat.x, flat.y, flat.contour_of_node,
+        seg_midx, seg_midy, seg_weight, abs_curvatures, perimeters,
         T(params.μ), T(params.Δ_max), total_nodes)
 
     raw_densities = device_zeros(dev, T, total_nodes)
+    raw_weighted = area_part   # input partial no longer needed; reuse
     density_scale = device_zeros(dev, T, ncontours)
     @_ka_launch dev total_nodes _remesh_raw_density_kernel!(
-        raw_densities, flat.x, flat.offsets, flat.lengths,
-        flat.contour_of_node, flat.local_index, node_density_curvatures,
-        T(params.δ), total_nodes)
+        raw_densities, raw_weighted, flat.x, flat.offsets, flat.lengths,
+        flat.contour_of_node, flat.local_index, seg_lengths,
+        node_density_curvatures, T(params.δ), total_nodes)
+    weighted_scan, = _device_segmented_scan(
+        (raw_weighted,), scan_a[1:1], scan_b[1:1], flat.contour_of_node,
+        total_nodes, (+,), dev)
     @_ka_launch dev ncontours _remesh_density_scale_kernel!(
-        density_scale, flat.x, flat.offsets, flat.lengths, seg_lengths,
-        raw_densities, perimeters, T(params.μ), T(params.Δ_max), ncontours)
+        density_scale, flat.x, flat.offsets, flat.lengths, weighted_scan,
+        perimeters, T(params.μ), T(params.Δ_max), ncontours)
 
     densities = device_zeros(dev, T, total_nodes)
+    measure_part = device_zeros(dev, T, total_nodes)
+    corner_part = raw_weighted
+    @_ka_launch dev total_nodes _remesh_density_measure_kernel!(
+        densities, measure_part, corner_part, raw_densities, density_scale,
+        seg_lengths, flat.corners, flat.contour_of_node, T(params.μ),
+        T(params.Δ_max), total_nodes)
+    measure_scan, corner_scan = _device_segmented_scan(
+        (measure_part, corner_part), scan_a, scan_b, flat.contour_of_node,
+        total_nodes, (+, max), dev)
     measure_start = device_zeros(dev, T, total_nodes)
+    @_ka_launch dev total_nodes _remesh_measure_start_kernel!(
+        measure_start, measure_scan, flat.local_index, total_nodes)
+
     q_measure = device_zeros(dev, T, ncontours)
     out_lengths = device_zeros(dev, Int, ncontours)
     remesh_mode = device_zeros(dev, UInt8, ncontours)
@@ -807,11 +894,10 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
     out_wrapx = device_zeros(dev, T, ncontours)
     out_wrapy = device_zeros(dev, T, ncontours)
     @_ka_launch dev ncontours _remesh_measure_kernel!(
-        densities, measure_start, q_measure, out_lengths, remesh_mode,
-        out_pv, out_wrapx, out_wrapy, raw_densities, density_scale,
-        flat.corners, seg_lengths, perimeters, flat.pv, flat.wrapx,
-        flat.wrapy, flat.offsets, flat.lengths, T(params.μ),
-        T(params.Δ_max), ncontours)
+        q_measure, out_lengths, remesh_mode, out_pv, out_wrapx, out_wrapy,
+        measure_scan, corner_scan, densities, flat.corners, seg_lengths,
+        perimeters, flat.pv, flat.wrapx, flat.wrapy, flat.offsets,
+        flat.lengths, T(params.μ), T(params.Δ_max), ncontours)
 
     out_offsets = device_zeros(dev, Int, ncontours)
     total_store = device_zeros(dev, Int, 1)
@@ -833,25 +919,40 @@ function _device_remesh_outputs(flat::FlatContourTopology{T},
         densities, measure_start, q_measure, remesh_mode, flat.corners,
         T(params.μ), T(params.Δ_max), total_out_nodes)
 
+    moment_parts = ntuple(_ -> device_zeros(dev, T, total_out_nodes), 6)
+    out_scan_a = ntuple(_ -> device_zeros(dev, T, total_out_nodes), 6)
+    out_scan_b = ntuple(_ -> device_zeros(dev, T, total_out_nodes), 6)
+    @_ka_launch dev total_out_nodes _remesh_output_node_moments_kernel!(
+        moment_parts..., out_x, out_y, out_offsets, out_lengths,
+        out_node_contour, total_out_nodes)
+    moment_scans = _device_segmented_scan(
+        moment_parts, out_scan_a, out_scan_b, out_node_contour,
+        total_out_nodes, (+, +, +, +, +, max), dev)
     out_area = device_zeros(dev, T, ncontours)
     out_centroid_x = device_zeros(dev, T, ncontours)
     out_centroid_y = device_zeros(dev, T, ncontours)
     out_area_tolerance = device_zeros(dev, T, ncontours)
     @_ka_launch dev ncontours _remesh_output_moments_kernel!(
         out_area, out_centroid_x, out_centroid_y, out_area_tolerance,
-        out_x, out_y, out_offsets, out_lengths, ncontours)
+        moment_scans..., out_x, out_y, out_offsets, out_lengths, ncontours)
     @_ka_launch dev total_out_nodes _preserve_remesh_area_kernel!(
         out_x, out_y, out_node_contour, out_area, out_centroid_x,
         out_centroid_y, target_area,
         out_area_tolerance, out_wrapx, out_wrapy, remesh_mode, total_out_nodes)
 
     # Fixed-corner modes (1, 2) preserve area by moving only free nodes.
+    B_part, C_part = moment_parts[1], moment_parts[2]
+    @_ka_launch dev total_out_nodes _remesh_corner_area_partials_kernel!(
+        B_part, C_part, out_x, out_y, out_corners, out_offsets, out_lengths,
+        out_node_contour, out_centroid_x, out_centroid_y, total_out_nodes)
+    B_scan, C_scan = _device_segmented_scan(
+        (B_part, C_part), out_scan_a[1:2], out_scan_b[1:2], out_node_contour,
+        total_out_nodes, (+, +), dev)
     corner_area_step = device_zeros(dev, T, ncontours)
     @_ka_launch dev ncontours _remesh_corner_area_step_kernel!(
-        corner_area_step, target_area, out_area,
-        out_area_tolerance, out_centroid_x, out_centroid_y,
-        out_x, out_y, out_corners, out_offsets, out_lengths,
-        out_wrapx, out_wrapy, remesh_mode, ncontours)
+        corner_area_step, target_area, out_area, out_area_tolerance,
+        B_scan, C_scan, out_offsets, out_lengths, out_wrapx, out_wrapy,
+        remesh_mode, ncontours)
     @_ka_launch dev total_out_nodes _apply_corner_area_step_kernel!(
         out_x, out_y, out_node_contour, out_centroid_x, out_centroid_y,
         out_corners, corner_area_step, total_out_nodes)

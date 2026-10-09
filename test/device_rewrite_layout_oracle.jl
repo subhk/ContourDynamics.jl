@@ -103,7 +103,7 @@ function _full_rewrite_output_layout(contours::Vector{PVContour{T}},
             total_nodes=total_nodes)
 end
 
-# Serial host reference for `_select_independent_pairs_kernel!`: greedy
+# Serial host reference for `_select_independent_pairs_host`: greedy
 # distance-ranked matching with each contour used at most once.
 function _device_select_reconnection_pairs_from_plan(contours::Vector{PVContour{T}},
                                                      close_pairs::Vector{Tuple{Int,Int,Int,Int}},

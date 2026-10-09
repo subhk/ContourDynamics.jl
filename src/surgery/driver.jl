@@ -103,6 +103,7 @@ function _surgery_pass!(contours::Vector{PVContour{T}}, domain::AbstractDomain,
                         arc_buf::Vector{T}, vnodes_buf::Vector{SVector{2,T}};
                         layer_label::AbstractString="") where {T}
 
+    _check_finite_nodes(contours, layer_label)
     remove_filaments!(contours, params.area_min, params.μ)
     _demote_obtuse_corners!(contours)
     _promote_high_curvature_corners!(contours, params.δ)
@@ -173,4 +174,28 @@ function surgery!(prob::ContourProblem{<:AbstractKernel, <:AbstractDomain, T}, p
     remesh_buf, arc_buf, vnodes_buf = scratch.nodes, scratch.arcs, scratch.virtual_nodes
     _surgery_pass!(_host_contours(prob), prob.domain, params, remesh_buf, arc_buf, vnodes_buf)
     return prob
+end
+
+# Surgery converts arc-length measures to node counts with `round`/`ceil`/
+# `floor`, which throw `InexactError` on NaN or Inf. A non-finite coordinate
+# therefore surfaces as an obscure error deep inside remeshing on the CPU and,
+# worse, as a device-side trap on CUDA that poisons the GPU context. Reject it
+# up front, on both backends, with a message that names the cause.
+function _check_finite_nodes(contours::Vector{PVContour{T}}, layer_label::AbstractString="") where {T}
+    for (ci, c) in pairs(contours)
+        all(p -> isfinite(p[1]) && isfinite(p[2]), c.nodes) || throw(ArgumentError(
+            "surgery!:$(layer_label) contour $ci has non-finite node coordinates; " *
+            "the simulation has diverged or the input is invalid"))
+    end
+    return nothing
+end
+
+function _check_finite_nodes(x::AbstractVector{T}, y::AbstractVector{T},
+                             layer_label::AbstractString="") where {T<:AbstractFloat}
+    # `mapreduce` runs as a device reduction on GPU arrays, so no host copy.
+    finite = mapreduce(isfinite, &, x; init=true) && mapreduce(isfinite, &, y; init=true)
+    finite || throw(ArgumentError(
+        "surgery!:$(layer_label) device state has non-finite node coordinates; " *
+        "the simulation has diverged or the input is invalid"))
+    return nothing
 end

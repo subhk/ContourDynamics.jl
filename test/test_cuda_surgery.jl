@@ -14,18 +14,31 @@ function _cuda_available()
     end
 end
 
-function _test_cuda_velocity_and_energy(kernel, domain; atol=1e-8, rtol=1e-8)
+# Precision-dependent tolerances. Float64 values are the historical ones; the
+# Float32 run only checks that the device path agrees to single precision.
+_cuda_tol(::Type{Float64}) = (atol=1e-8, rtol=1e-8)
+_cuda_tol(::Type{Float32}) = (atol=1e-4, rtol=1e-4)
+_cuda_diag_tol(::Type{Float64}) = (rtol=1e-10, atol=1e-10)
+_cuda_diag_tol(::Type{Float32}) = (rtol=1e-4, atol=1e-5)
+_cuda_energy_tol(::Type{Float64}) = (rtol=1e-7, atol=1e-10)
+_cuda_energy_tol(::Type{Float32}) = (rtol=1e-4, atol=1e-5)
+
+function _test_cuda_velocity_and_energy(kernel, domain; T::Type=Float64,
+                                        atol=_cuda_tol(T).atol, rtol=_cuda_tol(T).rtol)
     clear_ewald_cache!()
-    c1 = circular_patch(0.35, 24, 1.0)
-    c2 = PVContour([p + SVector(0.9, -0.35) for p in circular_patch(0.18, 16, -0.4).nodes], -0.4)
+    c1 = circular_patch(0.35, 24, 1.0; T=T)
+    c2 = PVContour([p + SVector{2,T}(0.9, -0.35)
+                    for p in circular_patch(0.18, 16, -0.4; T=T).nodes], T(-0.4))
     cpu_prob = ContourProblem(kernel, domain, [c1, c2]; dev=CPU())
     gpu_prob = ContourProblem(kernel, domain, deepcopy([c1, c2]); dev=GPU())
     n = total_nodes(cpu_prob)
+    diag_tol = _cuda_diag_tol(T)
+    energy_tol = _cuda_energy_tol(T)
 
-    vel_ref = zeros(SVector{2,Float64}, n)
+    vel_ref = zeros(SVector{2,T}, n)
     ContourDynamics._direct_velocity!(vel_ref, cpu_prob)
 
-    dev_vel = device_zeros(GPU(), SVector{2,Float64}, n)
+    dev_vel = device_zeros(GPU(), SVector{2,T}, n)
     velocity!(dev_vel, gpu_prob)
     @test !(dev_vel isa Vector)
     vel_gpu = to_cpu(dev_vel)
@@ -34,17 +47,32 @@ function _test_cuda_velocity_and_energy(kernel, domain; atol=1e-8, rtol=1e-8)
         isapprox(vel_gpu[i][1], vel_ref[i][1]; atol, rtol) &&
             isapprox(vel_gpu[i][2], vel_ref[i][2]; atol, rtol)
     end
-    point = SVector(0.13, -0.17)
+    point = SVector{2,T}(0.13, -0.17)
     @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) atol=atol rtol=rtol
+
+    # Batched probe: one pack and one launch over all targets must agree with
+    # the CPU reference and with the per-point device probes.
+    points = [point, SVector{2,T}(-0.42, 0.33), SVector{2,T}(0.61, 0.05),
+              SVector{2,T}(-0.05, -0.58), SVector{2,T}(0.9, 0.9)]
+    batched = velocity(gpu_prob, points)
+    @test batched isa Vector{SVector{2,T}}
+    @test length(batched) == length(points)
+    @test all(isapprox.(batched, velocity(cpu_prob, points); atol, rtol))
+    @test all(isapprox.(batched, [velocity(gpu_prob, x) for x in points]; atol, rtol))
+    @test isempty(velocity(gpu_prob, SVector{2,T}[]))
+
     stale_shadow = deepcopy(gpu_prob.contours)
-    gpu_prob.contours[1].nodes[1] = SVector(99.0, 99.0)
-    mixed_point = SVector{2,Float32}(point)
+    gpu_prob.contours[1].nodes[1] = SVector{2,T}(99.0, 99.0)
+    mixed_point = T === Float64 ? SVector{2,Float32}(point) : SVector{2,Float64}(point)
     @test velocity(gpu_prob, mixed_point) ≈ velocity(cpu_prob, mixed_point) atol=atol rtol=rtol
-    @test energy(gpu_prob) ≈ energy(cpu_prob) rtol=1e-7 atol=1e-10
-    @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
-    @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
-    @test angular_momentum(gpu_prob) ≈ angular_momentum(cpu_prob) rtol=1e-10 atol=1e-10
-    @test vortex_area(gpu_prob) ≈ vortex_area(cpu_prob) rtol=1e-10 atol=1e-10
+    @test velocity(gpu_prob, [mixed_point]) isa Vector{SVector{2,T}}
+    @test all(isapprox.(velocity(gpu_prob, [mixed_point]),
+                        velocity(cpu_prob, [mixed_point]); atol, rtol))
+    @test energy(gpu_prob) ≈ energy(cpu_prob) rtol=energy_tol.rtol atol=energy_tol.atol
+    @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=diag_tol.rtol atol=diag_tol.atol
+    @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=diag_tol.rtol atol=diag_tol.atol
+    @test angular_momentum(gpu_prob) ≈ angular_momentum(cpu_prob) rtol=diag_tol.rtol atol=diag_tol.atol
+    @test vortex_area(gpu_prob) ≈ vortex_area(cpu_prob) rtol=diag_tol.rtol atol=diag_tol.atol
 
     fname = tempname() * ".jld2"
     try
@@ -89,6 +117,12 @@ function _test_cuda_multilayer_paths(domain)
     @test all(isapprox.(velocity(gpu_prob, mixed_point),
                         velocity(cpu_prob, mixed_point);
                         rtol=1e-8, atol=1e-8))
+    points = [point, SVector(-0.42, 0.33), SVector(0.61, 0.05)]
+    batched = velocity(gpu_prob, points)
+    @test batched isa Vector{NTuple{2,SVector{2,Float64}}}
+    @test all(zip(batched, velocity(cpu_prob, points))) do (a, b)
+        all(isapprox.(a, b; rtol=1e-8, atol=1e-8))
+    end
     @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-10 atol=1e-10
     @test enstrophy(gpu_prob) ≈ enstrophy(cpu_prob) rtol=1e-10 atol=1e-10
     @test angular_momentum(gpu_prob) ≈ angular_momentum(cpu_prob) rtol=1e-10 atol=1e-10
@@ -125,10 +159,10 @@ end
     else
         CUDA.allowscalar(false)
 
-        @testset "CUDA single-layer velocity and energy match CPU references" begin
-            for kernel in (EulerKernel(), QGKernel(1.25), SQGKernel(0.02))
-                _test_cuda_velocity_and_energy(kernel, UnboundedDomain())
-                _test_cuda_velocity_and_energy(kernel, PeriodicDomain(2.0, 2.0))
+        @testset "CUDA single-layer velocity and energy match CPU references ($T)" for T in (Float32, Float64)
+            for kernel in (EulerKernel(), QGKernel(T(1.25)), SQGKernel(T(0.02)))
+                _test_cuda_velocity_and_energy(kernel, UnboundedDomain(); T=T)
+                _test_cuda_velocity_and_energy(kernel, PeriodicDomain(T(2), T(2)); T=T)
             end
         end
 
@@ -205,6 +239,156 @@ end
                 a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
                     all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-10))
             end
+        end
+
+        @testset "CUDA evolve! with surgery in the loop matches CPU" begin
+            # Transcription of "Full evolve! with dev=CPU()" (test_device_state.jl)
+            # run on both backends: surgery every step, so remesh, filament
+            # cleanup and the post-surgery stepper resize all run inside the
+            # loop. Positions are compared through node counts, sorted areas
+            # and circulation at a loose tolerance.
+            contours = [
+                circular_patch(0.5, 64, 1.0),
+                PVContour([p + SVector(0.9, -0.3) for p in circular_patch(0.2, 32, -0.6).nodes], -0.6),
+            ]
+            params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 1)
+            cpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=CPU())
+            gpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=GPU())
+            cpu_stepper = RK4Stepper(0.01, total_nodes(cpu_prob); dev=CPU())
+            gpu_stepper = RK4Stepper(0.01, total_nodes(gpu_prob); dev=GPU())
+            circ_before = circulation(gpu_prob)
+
+            evolve!(cpu_prob, cpu_stepper, params; nsteps=10)
+            evolve!(gpu_prob, gpu_stepper, params; nsteps=10)
+            gpu_contours = materialize_contours(gpu_prob)
+
+            @test !(gpu_stepper.k1 isa Vector)
+            @test length(gpu_stepper.k1) == total_nodes(gpu_prob)
+            @test length(gpu_contours) == length(cpu_prob.contours)
+            @test total_nodes(gpu_prob) == total_nodes(cpu_prob)
+            @test nnodes.(gpu_contours) == nnodes.(cpu_prob.contours)
+            @test all(isapprox.(sort(vortex_area.(gpu_contours)),
+                                sort(vortex_area.(cpu_prob.contours)); rtol=1e-6))
+            @test circulation(gpu_prob) ≈ circulation(cpu_prob) rtol=1e-6
+            @test circulation(gpu_prob) ≈ circ_before rtol=1e-6
+        end
+
+        @testset "CUDA periodic single-layer stepping wraps like CPU" begin
+            # Transcription of the CPU-backend RK4 and periodic wrapping parity
+            # tests in test_device_state.jl, iterated for three steps so that
+            # wrapped coordinates feed the next velocity evaluation.
+            clear_ewald_cache!()
+            domain = PeriodicDomain(2.0, 2.0)
+            # The first patch starts just past the x seam, so the first
+            # wrap_nodes! translates it as a whole across the box.
+            contours = [
+                circular_patch(0.3, 24, 1.0; cx=2.05),
+                circular_patch(0.2, 16, -0.5; cx=-0.5, cy=0.4),
+            ]
+            cpu_prob = ContourProblem(EulerKernel(), domain, deepcopy(contours); dev=CPU())
+            gpu_prob = ContourProblem(EulerKernel(), domain, deepcopy(contours); dev=GPU())
+            cpu_stepper = RK4Stepper(0.002, total_nodes(cpu_prob); dev=CPU())
+            gpu_stepper = RK4Stepper(0.002, total_nodes(gpu_prob); dev=GPU())
+
+            for _ in 1:3
+                timestep!(cpu_prob, cpu_stepper)
+                wrap_nodes!(cpu_prob)
+                timestep!(gpu_prob, gpu_stepper)
+                wrap_nodes!(gpu_prob)
+                gpu_contours = materialize_contours(gpu_prob)
+                @test nnodes.(gpu_contours) == nnodes.(cpu_prob.contours)
+                @test all(zip(gpu_contours, cpu_prob.contours)) do (a, b)
+                    a.wrap == b.wrap &&
+                        all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-8))
+                end
+            end
+            # The wrapped device state is what the probe sees.
+            point = SVector(0.1, -0.15)
+            @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) rtol=1e-8 atol=1e-8
+        end
+
+        @testset "CUDA single-layer QG and SQG surgery match CPU" begin
+            # Same style as the multi-layer surgery test: full surgery! on both
+            # backends, compared contour by contour. The periodic QG case reuses
+            # the cross-seam rectangles; the unbounded SQG case reuses the
+            # adjacent-square merge used by the planner/rewrite tests below.
+            cases = (
+                (QGKernel(1.25), PeriodicDomain(2.0, 2.0),
+                 [rectangle_patch(1.2, 1.99, -0.5, 0.5, 8, 1.0),
+                  rectangle_patch(-1.99, -1.2, -0.5, 0.5, 8, 1.0)],
+                 SurgeryParams(0.03, 0.12, 0.25, 1e-8, 10)),
+                (SQGKernel(0.02), UnboundedDomain(),
+                 [rectangle_patch(0.0, 1.0, 0.0, 1.0, 6, 1.0),
+                  rectangle_patch(1.01, 2.0, 0.0, 1.0, 6, 1.0)],
+                 SurgeryParams(0.01, 0.04, 0.16, 1e-6, 10)),
+            )
+            for (kernel, domain, contours, params) in cases
+                clear_ewald_cache!()
+                cpu_prob = ContourProblem(kernel, domain, deepcopy(contours); dev=CPU())
+                gpu_prob = ContourProblem(kernel, domain, deepcopy(contours); dev=GPU())
+                stale_shadow = deepcopy(gpu_prob.contours)
+
+                surgery!(cpu_prob, params)
+                surgery!(gpu_prob, params)
+                actual = materialize_contours(gpu_prob)
+
+                @test all(zip(gpu_prob.contours, stale_shadow)) do (actual_shadow, stale)
+                    actual_shadow.nodes == stale.nodes && actual_shadow.pv == stale.pv
+                end
+                @test length(actual) == length(cpu_prob.contours)
+                @test nnodes.(actual) == nnodes.(cpu_prob.contours)
+                @test all(zip(actual, cpu_prob.contours)) do (a, b)
+                    a.pv == b.pv && a.wrap == b.wrap && a.corners == b.corners &&
+                        all(isapprox.(a.nodes, b.nodes; rtol=1e-8, atol=1e-10))
+                end
+                # Post-surgery device topology still feeds the velocity path.
+                point = SVector(0.1, -0.15)
+                @test velocity(gpu_prob, point) ≈ velocity(cpu_prob, point) rtol=1e-8 atol=1e-8
+            end
+        end
+
+        @testset "CUDA surgery removes a tiny filament on both backends" begin
+            # Transcription of the unbounded multi-layer surgery test's layer 1
+            # (a healthy patch plus a three-node filament) as a single-layer
+            # problem: the filament must be dropped by surgery! on both backends.
+            tiny = PVContour([SVector(2.0, 0.0), SVector(2.0 + 1e-6, 0.0), SVector(2.0, 1e-6)], 1.0)
+            contours = [circular_patch(0.5, 32, 1.0), tiny]
+            params = SurgeryParams(0.002, 0.01, 0.2, 1e-8, 100)
+            cpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=CPU())
+            gpu_prob = ContourProblem(EulerKernel(), UnboundedDomain(), deepcopy(contours); dev=GPU())
+            @test length(materialize_contours(gpu_prob)) == 2
+
+            surgery!(cpu_prob, params)
+            surgery!(gpu_prob, params)
+            actual = materialize_contours(gpu_prob)
+
+            @test length(cpu_prob.contours) == 1
+            @test length(actual) == 1
+            @test total_nodes(gpu_prob) == total_nodes(cpu_prob)
+            @test all(zip(actual, cpu_prob.contours)) do (a, e)
+                a.pv == e.pv && length(a.nodes) == length(e.nodes) &&
+                    all(isapprox.(a.nodes, e.nodes; rtol=1e-8, atol=1e-10))
+            end
+        end
+
+        @testset "CUDA fixed-corner remesh of a zero-length span matches CPU" begin
+            # Transcription of the CPU-backend fixed-corner remesh test in
+            # test_device_surgery.jl.
+            base = circular_patch(1.0, 40, 1.0)
+            nodes = copy(base.nodes)
+            insert!(nodes, 11, nodes[10])
+            corners = falses(length(nodes))
+            corners[10] = true
+            corners[11] = true
+            corners[31] = true
+            c = PVContour(nodes, 1.0, zero(SVector{2,Float64}), corners)
+            params = SurgeryParams(0.005, 0.04, 0.16, 1e-6, 10)
+
+            cpu_c = remesh(c, params; _density_sources=[c])
+            gpu_c = only(ContourDynamics._device_remesh_contours([c], params, GPU()))
+            @test nnodes(gpu_c) == nnodes(cpu_c)
+            @test gpu_c.corners == cpu_c.corners
+            @test all(isapprox.(gpu_c.nodes, cpu_c.nodes; atol=1e-10, rtol=1e-10))
         end
 
         @testset "CUDA beta-plane velocity matches CPU reference" begin

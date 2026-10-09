@@ -39,3 +39,11 @@ For a GPU problem, the single-point `velocity(prob, x)` probe uploads one target
 runs the applicable KA segment kernels against authoritative device state, and
 copies back only the returned velocity scalars. Multi-layer probes perform the
 modal projection on-device.
+
+To probe many points, pass them as a vector: `velocity(prob, points)` with
+`points::AbstractVector{<:SVector{2}}` packs the segments once and evaluates
+every target in a single launch (one work-item per point), returning a
+`Vector{SVector{2,T}}` (single-layer) or `Vector{NTuple{N,SVector{2,T}}}`
+(multi-layer). This is the right call for sampling a velocity field on a grid or
+along a set of tracers; the single-point probe is its one-element case. On CPU
+problems the batched form simply maps the single-point probe.

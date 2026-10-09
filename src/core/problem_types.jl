@@ -32,10 +32,11 @@ _check_gpu_support(::AbstractKernel, ::AbstractDomain, ::CPU) = nothing
 _check_gpu_support(::Union{EulerKernel, QGKernel, SQGKernel},
                    ::Union{UnboundedDomain, PeriodicDomain}, ::GPU) = nothing
 _check_gpu_support(::BetaPlaneQGKernel, ::PeriodicDomain, ::GPU) = nothing
+_check_gpu_support(::MultiLayerQGKernel, ::Union{UnboundedDomain, PeriodicDomain}, ::GPU) = nothing
 _check_gpu_support(kernel, domain, ::GPU) = throw(ArgumentError(
-    "GPU velocity is supported for single-layer EulerKernel, QGKernel, and SQGKernel " *
-    "on UnboundedDomain or PeriodicDomain, and BetaPlaneQGKernel on PeriodicDomain. " *
-    "Got $(typeof(kernel)) on $(typeof(domain)). Use dev=CPU()."))
+    "GPU execution is supported for EulerKernel, QGKernel, SQGKernel, and " *
+    "MultiLayerQGKernel on UnboundedDomain or PeriodicDomain, and BetaPlaneQGKernel " *
+    "on PeriodicDomain. Got $(typeof(kernel)) on $(typeof(domain)). Use dev=CPU()."))
 
 _check_kernel_type(::AbstractKernel, ::Type) = nothing
 const _FloatTypedKernel{Tk} = Union{QGKernel{Tk}, BetaPlaneQGKernel{Tk}, SQGKernel{Tk},
@@ -94,6 +95,7 @@ struct MultiLayerContourProblem{N, K<:MultiLayerQGKernel{N}, D<:AbstractDomain, 
         _check_kernel_type(kernel, T)
         _check_domain_type(domain, T)
         foreach(layer -> _check_contour_wraps(layer, domain), layers)
+        _check_gpu_support(kernel, domain, dev)
         storage = _storage(layers, dev)
         new{N, K, D, T, Dev, typeof(storage)}(kernel, domain, storage, dev, workspace)
     end

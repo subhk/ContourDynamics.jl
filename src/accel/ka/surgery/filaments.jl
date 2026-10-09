@@ -1,8 +1,41 @@
 # Filament removal: flag contours below the area/aspect thresholds and
 # stream-compact the survivors.
 
-@kernel function _mark_filament_contours_kernel!(remove, x, y, wrapx, wrapy, offsets,
-                                                 lengths, corners, area_min, μ,
+# Node-parallel partials for the filament test: the signed-area cross term and
+# segment length of node g's outgoing segment (both relative to the contour's
+# first node) and its corner flag, reduced per contour by a segmented scan.
+@kernel function _filament_node_partials_kernel!(area_part, perim_part, corner_part,
+                                                 x, y, wrapx, wrapy, offsets, lengths,
+                                                 contour_of_node, local_index,
+                                                 corners, total_nodes)
+    g = @index(Global)
+    if g <= total_nodes
+        @inbounds begin
+            ci = contour_of_node[g]
+            li = local_index[g]
+            nc = lengths[ci]
+            off = offsets[ci]
+            ox = x[off]
+            oy = y[off]
+            nx = li < nc ? x[g + 1] : x[off] + wrapx[ci]
+            ny = li < nc ? y[g + 1] : y[off] + wrapy[ci]
+            px = x[g] - ox
+            py = y[g] - oy
+            next_x = nx - ox
+            next_y = ny - oy
+            area_part[g] = px * next_y - next_x * py
+            dx = nx - x[g]
+            dy = ny - y[g]
+            perim_part[g] = sqrt(dx * dx + dy * dy)
+            corner_part[g] = iszero(corners[g]) ? zero(eltype(corner_part)) :
+                             one(eltype(corner_part))
+        end
+    end
+end
+
+@kernel function _mark_filament_contours_kernel!(remove, area2_scan, perim_scan,
+                                                 corner_scan, wrapx, wrapy,
+                                                 offsets, lengths, area_min, μ,
                                                  ncontours)
     ci = @index(Global)
     if ci <= ncontours
@@ -13,31 +46,10 @@
         elseif nc < 3
             drop = true
         else
-            off = offsets[ci]
-            ox = x[off]
-            oy = y[off]
-            area2 = zero(area_min)
-            perimeter = zero(area_min)
-            has_corner = false
-            @inbounds for li in 1:nc
-                g = off + li - 1
-                if li < nc
-                    nx = x[g + 1]
-                    ny = y[g + 1]
-                else
-                    nx = x[off] + wrapx[ci]
-                    ny = y[off] + wrapy[ci]
-                end
-                px = x[g] - ox
-                py = y[g] - oy
-                next_x = nx - ox
-                next_y = ny - oy
-                area2 += px * next_y - next_x * py
-                dx = nx - x[g]
-                dy = ny - y[g]
-                perimeter += sqrt(dx * dx + dy * dy)
-                has_corner |= !iszero(corners[g])
-            end
+            last = offsets[ci] + nc - 1
+            @inbounds area2 = area2_scan[last]
+            @inbounds perimeter = perim_scan[last]
+            @inbounds has_corner = !iszero(corner_scan[last])
 
             area = abs(area2) / 2
             drop = area < area_min
@@ -60,9 +72,22 @@ function _device_filament_flags_buffer(flat::FlatContourTopology{T},
     ncontours = _flat_ncontours(flat)
     remove = device_zeros(dev, UInt8, ncontours)
     ncontours == 0 && return remove
+    total_nodes = _flat_nnodes(flat)
+    area_part = device_zeros(dev, T, total_nodes)
+    perim_part = device_zeros(dev, T, total_nodes)
+    corner_part = device_zeros(dev, T, total_nodes)
+    if total_nodes > 0
+        @_ka_launch dev total_nodes _filament_node_partials_kernel!(
+            area_part, perim_part, corner_part, flat.x, flat.y, flat.wrapx,
+            flat.wrapy, flat.offsets, flat.lengths, flat.contour_of_node,
+            flat.local_index, flat.corners, total_nodes)
+    end
+    area2_scan, perim_scan, corner_scan = _device_segmented_scan(
+        (area_part, perim_part, corner_part), flat.contour_of_node, total_nodes,
+        (+, +, max), dev)
     @_ka_launch dev ncontours _mark_filament_contours_kernel!(
-        remove, flat.x, flat.y, flat.wrapx, flat.wrapy, flat.offsets,
-        flat.lengths, flat.corners, T(params.area_min), T(params.μ), ncontours)
+        remove, area2_scan, perim_scan, corner_scan, flat.wrapx, flat.wrapy,
+        flat.offsets, flat.lengths, T(params.area_min), T(params.μ), ncontours)
     return remove
 end
 
@@ -194,6 +219,8 @@ function _device_remove_filaments!(state::DeviceContourState{T},
     ncontours = _flat_ncontours(flat)
     ncontours == 0 && return state
     remove = _device_filament_flags_buffer(flat, params, dev)
+    # Nothing flagged: the state is already the compacted result.
+    count(!iszero, to_cpu(remove)) == 0 && return state
     keep = device_zeros(dev, UInt8, ncontours)
     @_ka_launch dev ncontours _invert_remove_flags_kernel!(keep, remove, ncontours)
     outputs = _device_compact_kept_contours_outputs(flat, keep, dev)

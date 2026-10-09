@@ -317,17 +317,18 @@ function _check_spanning_proximity(state::DeviceContourState{T}, δ,
     total_nodes = length(state.x)
     ncontours = length(state.lengths)
     (total_nodes == 0 || ncontours == 0) && return nothing
+    # Only spanning contours can trigger the warning; the check is an O(N·M)
+    # kernel, so skip it entirely when no contour spans (two small device
+    # reductions, no host copy).
+    (any(!iszero, state.wrapx) || any(!iszero, state.wrapy)) || return nothing
     flags = device_zeros(dev, UInt8, total_nodes)
     periodic, Lx, Ly = _flat_surgery_domain(domain, T)
     @_ka_launch dev total_nodes _spanning_proximity_flags_kernel!(
         flags, state.x, state.y, state.wrapx, state.wrapy, state.offsets,
         state.lengths, state.contour_of_node, total_nodes, ncontours,
         periodic, Lx, Ly, T(δ)^2)
-    slots = device_zeros(dev, Int, total_nodes)
-    count_store = device_zeros(dev, Int, 1)
-    _device_compact_scan!(slots, count_store, flags, total_nodes, dev)
-    nclose = to_cpu(count_store)[1]
-    if nclose > 0
+    # One reduction answers "is any node close?"; no compaction scan needed.
+    if any(!iszero, flags)
         @warn "surgery!: closed contour node within δ of spanning contour — this cannot be resolved by reconnection" δ maxlog=1
     end
     return nothing
@@ -343,6 +344,10 @@ filament sweep, and spanning-proximity check.
 function _device_surgery_pipeline!(state::DeviceContourState, params::SurgeryParams,
                                    domain::AbstractDomain, dev::AbstractDevice;
                                    layer_label::AbstractString="")
+    # Same up-front check as the CPU `_surgery_pass!`. On CUDA a non-finite
+    # coordinate would otherwise trap inside a remesh kernel and poison the
+    # device context, so it must be caught on the host before any launch.
+    _check_finite_nodes(state.x, state.y, layer_label)
     _device_remove_filaments!(state, params, dev)
     _demote_obtuse_corners!(state, dev)
     _promote_high_curvature_corners!(state, params.δ, dev)

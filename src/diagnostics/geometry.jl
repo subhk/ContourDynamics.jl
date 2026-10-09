@@ -388,7 +388,38 @@ function _second_moment_r2(c::PVContour{T}) where {T}
            (ox * ox + oy * oy) * area2 / T(2)
 end
 
-@kernel function _state_area_moment_kernel!(area, moment, x, y, wrapx, wrapy,
+# Per-node partials of the polygon area and second moment, relative to the
+# contour's first node; a segmented scan over `contour_of_node` reduces them.
+@kernel function _state_area_moment_partials_kernel!(cross_part, fmx_part, fmy_part,
+                                                     lm_part, x, y, wrapx, wrapy,
+                                                     offsets, lengths,
+                                                     contour_of_node, local_index,
+                                                     total_nodes)
+    g = @index(Global)
+    if g <= total_nodes
+        @inbounds begin
+            ci = contour_of_node[g]
+            li = local_index[g]
+            n = lengths[ci]
+            off = offsets[ci]
+            ox = x[off]
+            oy = y[off]
+            xi = x[g] - ox
+            yi = y[g] - oy
+            xj = li < n ? x[g + 1] - ox : x[off] + wrapx[ci] - ox
+            yj = li < n ? y[g + 1] - oy : y[off] + wrapy[ci] - oy
+            cross = xi * yj - xj * yi
+            cross_part[g] = cross
+            fmx_part[g] = (xi + xj) * cross
+            fmy_part[g] = (yi + yj) * cross
+            lm_part[g] = (xi * xi + xi * xj + xj * xj) * cross +
+                         (yi * yi + yi * yj + yj * yj) * cross
+        end
+    end
+end
+
+@kernel function _state_area_moment_kernel!(area, moment, cross_scan, fmx_scan,
+                                            fmy_scan, lm_scan, x, y, wrapx, wrapy,
                                             offsets, lengths, ncontours)
     ci = @index(Global)
     if ci <= ncontours
@@ -399,29 +430,14 @@ end
             moment[ci] = zero(T)
         else
             off = offsets[ci]
-            ox = x[off]
-            oy = y[off]
-            area2 = zero(T)
-            first_moment_x6 = zero(T)
-            first_moment_y6 = zero(T)
-            local_moment12 = zero(T)
-            @inbounds for li in 1:n
-                g = off + li - 1
-                xi = x[g] - ox
-                yi = y[g] - oy
-                if li < n
-                    xj = x[g + 1] - ox
-                    yj = y[g + 1] - oy
-                else
-                    xj = x[off] + wrapx[ci] - ox
-                    yj = y[off] + wrapy[ci] - oy
-                end
-                cross = xi * yj - xj * yi
-                area2 += cross
-                first_moment_x6 += (xi + xj) * cross
-                first_moment_y6 += (yi + yj) * cross
-                local_moment12 += (xi * xi + xi * xj + xj * xj) * cross
-                local_moment12 += (yi * yi + yi * yj + yj * yj) * cross
+            last = off + n - 1
+            @inbounds begin
+                ox = x[off]
+                oy = y[off]
+                area2 = cross_scan[last]
+                first_moment_x6 = fmx_scan[last]
+                first_moment_y6 = fmy_scan[last]
+                local_moment12 = lm_scan[last]
             end
             area[ci] = area2 / T(2)
             moment[ci] = local_moment12 / T(12) +
@@ -437,8 +453,18 @@ function _state_area_moment(state::DeviceContourState{T},
     area = device_zeros(dev, T, ncontours)
     moment = device_zeros(dev, T, ncontours)
     if ncontours > 0
+        total_nodes = length(state.x)
+        parts = ntuple(_ -> device_zeros(dev, T, total_nodes), 4)
+        if total_nodes > 0
+            @_ka_launch dev total_nodes _state_area_moment_partials_kernel!(
+                parts..., state.x, state.y, state.wrapx, state.wrapy,
+                state.offsets, state.lengths, state.contour_of_node,
+                state.local_index, total_nodes)
+        end
+        scans = _device_segmented_scan(parts, state.contour_of_node, total_nodes,
+                                       (+, +, +, +), dev)
         @_ka_launch dev ncontours _state_area_moment_kernel!(
-            area, moment, state.x, state.y, state.wrapx, state.wrapy,
+            area, moment, scans..., state.x, state.y, state.wrapx, state.wrapy,
             state.offsets, state.lengths, ncontours)
     end
     return area, moment
